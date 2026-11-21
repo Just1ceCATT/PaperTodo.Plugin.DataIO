@@ -48,6 +48,56 @@
       <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
     </Style>
 
+    <!-- 展开后的具体纸片行 -->
+    <DataTemplate x:Key="PaperRowTemplate">
+      <Border Padding="10,8"
+              Margin="0,0,0,6"
+              BorderThickness="1"
+              CornerRadius="6"
+              BorderBrush="{DynamicResource DataIoBorderBrush}"
+              Background="{DynamicResource DataIoSurfaceBrush}">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <CheckBox Grid.Column="0"
+                    Margin="0,0,10,0"
+                    VerticalAlignment="Top"
+                    IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                    IsEnabled="{Binding CanSelect}" />
+          <StackPanel Grid.Column="1">
+            <TextBlock Text="{Binding Title}"
+                       TextWrapping="Wrap"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+            <TextBlock Text="{Binding Summary}"
+                       Margin="0,3,0,0"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource DataIoWeakFontSize}"
+                       Foreground="{DynamicResource DataIoWeakBrush}" />
+            <TextBlock Text="{Binding Warning}"
+                       Margin="0,2,0,0"
+                       TextWrapping="Wrap"
+                       FontSize="{DynamicResource DataIoWeakFontSize}"
+                       Foreground="{DynamicResource DataIoWarningBrush}"
+                       Visibility="{Binding WarningVisibility}" />
+          </StackPanel>
+          <Border Grid.Column="2"
+                  Margin="8,0,0,0"
+                  Padding="6,2"
+                  CornerRadius="4"
+                  VerticalAlignment="Top"
+                  Background="{DynamicResource DataIoAccentSurfaceBrush}">
+            <TextBlock Text="{Binding TypeLabel}"
+                       FontSize="{DynamicResource DataIoWeakFontSize}"
+                       Foreground="{DynamicResource DataIoAccentBrush}" />
+          </Border>
+        </Grid>
+      </Border>
+    </DataTemplate>
+
     <!-- 模式卡片：同一 GroupName 的 RadioButton 天然互斥 -->
     <Style x:Key="ModeCard" TargetType="RadioButton">
       <Setter Property="Cursor" Value="Hand" />
@@ -142,12 +192,6 @@
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
       <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-    <Style TargetType="TextBox">
-      <Setter Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
-      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource DataIoBorderBrush}" />
-      <Setter Property="Padding" Value="8,4" />
     </Style>
   </UserControl.Resources>
 
@@ -282,248 +326,164 @@
       </RadioButton>
     </UniformGrid>
 
-    <!-- 概要 / 详情 -->
-    <Grid Grid.Row="2" Margin="0,14,0,0">
-      <ScrollViewer x:Name="SummaryScroll"
-                    VerticalScrollBarVisibility="Auto"
-                    HorizontalScrollBarVisibility="Disabled">
-        <StackPanel x:Name="SummaryPanel" Margin="0,0,4,0">
+    <!-- 可滚动内容 -->
+    <ScrollViewer x:Name="SummaryScroll"
+                  Grid.Row="2"
+                  Margin="0,14,0,0"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <StackPanel x:Name="SummaryPanel" Margin="0,0,4,0">
 
-          <!-- 导入文件（仅导入模式） -->
-          <StackPanel x:Name="ImportFileSection" Visibility="Collapsed">
-            <TextBlock Text="导入文件" Style="{StaticResource SectionTitle}" />
-            <Border Style="{StaticResource RowBorder}">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="Auto" />
-                  <ColumnDefinition Width="*" />
-                  <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" />
-                <StackPanel Grid.Column="1" Margin="10,0,0,0">
-                  <TextBlock x:Name="ImportFileNameText"
-                             Text="尚未选择文件"
-                             Style="{StaticResource RowTitle}"
-                             FontWeight="SemiBold" />
-                  <TextBlock Text="支持 PaperTodo 归档 (.zip) 或 .json"
-                             Style="{StaticResource SectionHint}" />
-                </StackPanel>
-                <Button x:Name="ChooseFileButton"
-                        Grid.Column="2"
-                        Content="选择文件"
-                        Style="{StaticResource GhostButton}" />
-              </Grid>
-            </Border>
-          </StackPanel>
-
-          <!-- 内容类型 -->
-          <TextBlock x:Name="ContentSectionTitle"
-                     Text="导出内容"
-                     Style="{StaticResource SectionTitle}" />
-          <TextBlock x:Name="ContentSectionHint"
-                     Text="点击条目选择要导出的具体内容"
-                     Style="{StaticResource SectionHint}" />
-
-          <Border x:Name="NotesRow" Style="{StaticResource RowBorder}" Margin="0,10,0,0" Cursor="Hand">
+        <!-- 导入文件（仅导入模式） -->
+        <StackPanel x:Name="ImportFileSection" Visibility="Collapsed">
+          <TextBlock Text="导入文件" Style="{StaticResource SectionTitle}" />
+          <Border Style="{StaticResource RowBorder}">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <TextBlock Text="&#xE8A5;" Style="{StaticResource Icon}" />
-              <TextBlock Grid.Column="1"
-                         Margin="10,0,0,0"
-                         Text="笔记"
-                         Style="{StaticResource RowTitle}" />
-              <TextBlock x:Name="NotesCountText"
-                         Grid.Column="2"
-                         Text="0 条"
-                         Style="{StaticResource RowValue}" />
-              <TextBlock Grid.Column="3"
-                         Margin="12,0,0,0"
-                         Text="&#xE76C;"
-                         Style="{StaticResource Icon}"
-                         FontSize="12" />
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" />
+              <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                <TextBlock x:Name="ImportFileNameText"
+                           Text="尚未选择文件"
+                           Style="{StaticResource RowTitle}"
+                           FontWeight="SemiBold" />
+                <TextBlock Text="支持 PaperTodo 归档 (.zip) 或 .json"
+                           Style="{StaticResource SectionHint}" />
+              </StackPanel>
+              <Button x:Name="ChooseFileButton"
+                      Grid.Column="2"
+                      Content="选择文件"
+                      Style="{StaticResource GhostButton}" />
             </Grid>
           </Border>
-
-          <Border x:Name="TodosRow" Style="{StaticResource RowBorder}" Cursor="Hand">
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-              <TextBlock Text="&#xE8FD;" Style="{StaticResource Icon}" />
-              <TextBlock Grid.Column="1"
-                         Margin="10,0,0,0"
-                         Text="待办事项"
-                         Style="{StaticResource RowTitle}" />
-              <TextBlock x:Name="TodosCountText"
-                         Grid.Column="2"
-                         Text="0 条"
-                         Style="{StaticResource RowValue}" />
-              <TextBlock Grid.Column="3"
-                         Margin="12,0,0,0"
-                         Text="&#xE76C;"
-                         Style="{StaticResource Icon}"
-                         FontSize="12" />
-            </Grid>
-          </Border>
-
-          <Border Style="{StaticResource Divider}" />
-
-          <!-- 格式 / 策略 -->
-          <Grid x:Name="FormatRow">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" />
-            <TextBlock Grid.Column="1"
-                       Text="PaperTodo Archive (.zip)"
-                       FontWeight="SemiBold"
-                       Foreground="{DynamicResource DataIoTextBrush}" />
-          </Grid>
-
-          <Grid x:Name="StrategyRow" Visibility="Collapsed">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*" />
-              <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="导入策略" Style="{StaticResource SectionTitle}" />
-            <TextBlock Grid.Column="1"
-                       Text="追加为新纸片"
-                       FontWeight="SemiBold"
-                       Foreground="{DynamicResource DataIoTextBrush}" />
-          </Grid>
-
-          <!-- 预估 -->
-          <TextBlock x:Name="EstimateTitle"
-                     Text="导出预估"
-                     Style="{StaticResource SectionHint}" />
-          <TextBlock x:Name="EstimateMain"
-                     Text="0 条笔记 · 0 条待办"
-                     Margin="0,4,0,0"
-                     TextWrapping="Wrap"
-                     FontSize="{DynamicResource DataIoEstimateFontSize}"
-                     FontWeight="Bold"
-                     Foreground="{DynamicResource DataIoTextBrush}" />
-          <TextBlock x:Name="EstimateSub"
-                     Text="包含标题、待办与笔记正文等必要元数据"
-                     Style="{StaticResource SectionHint}" />
         </StackPanel>
-      </ScrollViewer>
 
-      <!-- 详情选择 -->
-      <Grid x:Name="DetailPanel" Visibility="Collapsed">
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto" />
-          <RowDefinition Height="Auto" />
-          <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
+        <!-- 内容类型：点击行就地展开 -->
+        <TextBlock x:Name="ContentSectionTitle"
+                   Text="导出内容"
+                   Style="{StaticResource SectionTitle}" />
+        <TextBlock x:Name="ContentSectionHint"
+                   Text="点击条目展开并选择具体内容"
+                   Style="{StaticResource SectionHint}" />
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button x:Name="BackButton"
-                  ToolTip="返回"
-                  Style="{StaticResource GhostButton}"
-                  Padding="8,4">
-            <TextBlock Text="&#xE72B;"
-                       FontFamily="{DynamicResource DataIoIconFontFamily}"
+        <Border x:Name="NotesRow" Style="{StaticResource RowBorder}" Margin="0,10,0,0" Cursor="Hand">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="&#xE8A5;" Style="{StaticResource Icon}" />
+            <TextBlock Grid.Column="1"
+                       Margin="10,0,0,0"
+                       Text="笔记"
+                       Style="{StaticResource RowTitle}" />
+            <TextBlock x:Name="NotesCountText"
+                       Grid.Column="2"
+                       Text="0 条"
+                       Style="{StaticResource RowValue}" />
+            <TextBlock x:Name="NotesChevron"
+                       Grid.Column="3"
+                       Margin="12,0,0,0"
+                       Text="&#xE76C;"
+                       Style="{StaticResource Icon}"
                        FontSize="12" />
-          </Button>
-          <TextBlock x:Name="DetailTitle"
-                     Text="选择纸片"
-                     Margin="10,0,0,0"
-                     VerticalAlignment="Center"
-                     FontSize="{DynamicResource DataIoTitleFontSize}"
+          </Grid>
+        </Border>
+        <StackPanel x:Name="NotesPanel" Visibility="Collapsed" Margin="0,4,0,2">
+          <WrapPanel Margin="0,0,0,6">
+            <CheckBox x:Name="NotesSelectAll" Content="全选" Margin="0,0,10,0" />
+            <Button x:Name="NotesInvertButton"
+                    Content="反选"
+                    Style="{StaticResource GhostButton}"
+                    Padding="8,2" />
+          </WrapPanel>
+          <ItemsControl x:Name="NotesList" ItemTemplate="{StaticResource PaperRowTemplate}" />
+        </StackPanel>
+
+        <Border x:Name="TodosRow" Style="{StaticResource RowBorder}" Cursor="Hand">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="&#xE8FD;" Style="{StaticResource Icon}" />
+            <TextBlock Grid.Column="1"
+                       Margin="10,0,0,0"
+                       Text="待办事项"
+                       Style="{StaticResource RowTitle}" />
+            <TextBlock x:Name="TodosCountText"
+                       Grid.Column="2"
+                       Text="0 条"
+                       Style="{StaticResource RowValue}" />
+            <TextBlock x:Name="TodosChevron"
+                       Grid.Column="3"
+                       Margin="12,0,0,0"
+                       Text="&#xE76C;"
+                       Style="{StaticResource Icon}"
+                       FontSize="12" />
+          </Grid>
+        </Border>
+        <StackPanel x:Name="TodosPanel" Visibility="Collapsed" Margin="0,4,0,2">
+          <WrapPanel Margin="0,0,0,6">
+            <CheckBox x:Name="TodosSelectAll" Content="全选" Margin="0,0,10,0" />
+            <Button x:Name="TodosInvertButton"
+                    Content="反选"
+                    Style="{StaticResource GhostButton}"
+                    Padding="8,2" />
+          </WrapPanel>
+          <ItemsControl x:Name="TodosList" ItemTemplate="{StaticResource PaperRowTemplate}" />
+        </StackPanel>
+
+        <Border Style="{StaticResource Divider}" />
+
+        <!-- 格式 / 策略 -->
+        <Grid x:Name="FormatRow">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" />
+          <TextBlock Grid.Column="1"
+                     Text="PaperTodo Archive (.zip)"
                      FontWeight="SemiBold"
                      Foreground="{DynamicResource DataIoTextBrush}" />
-        </StackPanel>
+        </Grid>
 
-        <WrapPanel Grid.Row="1" Margin="0,12,0,10">
-          <CheckBox x:Name="SelectAllCheckBox" Content="全选" Margin="0,0,12,0" />
-          <Button x:Name="InvertButton"
-                  Content="反选"
-                  Style="{StaticResource GhostButton}"
-                  Margin="0,0,10,0" />
-          <TextBox x:Name="SearchBox" Width="180" ToolTip="按标题搜索" />
-        </WrapPanel>
+        <Grid x:Name="StrategyRow" Visibility="Collapsed">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="导入策略" Style="{StaticResource SectionTitle}" />
+          <TextBlock Grid.Column="1"
+                     Text="追加为新纸片"
+                     FontWeight="SemiBold"
+                     Foreground="{DynamicResource DataIoTextBrush}" />
+        </Grid>
 
-        <ListBox x:Name="PaperList"
-                 Grid.Row="2"
-                 Background="Transparent"
-                 BorderThickness="0"
-                 HorizontalContentAlignment="Stretch"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 VirtualizingPanel.IsVirtualizing="True"
-                 VirtualizingPanel.VirtualizationMode="Recycling">
-          <ListBox.ItemContainerStyle>
-            <Style TargetType="ListBoxItem">
-              <Setter Property="Focusable" Value="False" />
-              <Setter Property="Padding" Value="0" />
-              <Setter Property="Margin" Value="0" />
-              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-              <Setter Property="Background" Value="Transparent" />
-            </Style>
-          </ListBox.ItemContainerStyle>
-          <ListBox.ItemTemplate>
-            <DataTemplate>
-              <Border Padding="10,8"
-                      Margin="0,0,0,6"
-                      BorderThickness="1"
-                      CornerRadius="7"
-                      BorderBrush="{DynamicResource DataIoBorderBrush}"
-                      Background="{DynamicResource DataIoSurfaceBrush}">
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <CheckBox Grid.Column="0"
-                            Margin="0,0,10,0"
-                            VerticalAlignment="Top"
-                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                            IsEnabled="{Binding CanSelect}" />
-                  <StackPanel Grid.Column="1">
-                    <TextBlock Text="{Binding Title}"
-                               TextWrapping="Wrap"
-                               FontWeight="SemiBold"
-                               Foreground="{DynamicResource DataIoTextBrush}" />
-                    <TextBlock Text="{Binding Summary}"
-                               Margin="0,3,0,0"
-                               TextWrapping="Wrap"
-                               FontSize="{DynamicResource DataIoWeakFontSize}"
-                               Foreground="{DynamicResource DataIoWeakBrush}" />
-                    <TextBlock Text="{Binding Warning}"
-                               Margin="0,2,0,0"
-                               TextWrapping="Wrap"
-                               FontSize="{DynamicResource DataIoWeakFontSize}"
-                               Foreground="{DynamicResource DataIoWarningBrush}"
-                               Visibility="{Binding WarningVisibility}" />
-                  </StackPanel>
-                  <Border Grid.Column="2"
-                          Margin="8,0,0,0"
-                          Padding="6,2"
-                          CornerRadius="4"
-                          VerticalAlignment="Top"
-                          Background="{DynamicResource DataIoAccentSurfaceBrush}">
-                    <TextBlock Text="{Binding TypeLabel}"
-                               FontSize="{DynamicResource DataIoWeakFontSize}"
-                               Foreground="{DynamicResource DataIoAccentBrush}" />
-                  </Border>
-                </Grid>
-              </Border>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </Grid>
-    </Grid>
+        <!-- 预估 -->
+        <TextBlock x:Name="EstimateTitle"
+                   Text="导出预估"
+                   Style="{StaticResource SectionHint}" />
+        <TextBlock x:Name="EstimateMain"
+                   Text="0 条笔记 · 0 条待办"
+                   Margin="0,4,0,0"
+                   TextWrapping="Wrap"
+                   FontSize="{DynamicResource DataIoEstimateFontSize}"
+                   FontWeight="Bold"
+                   Foreground="{DynamicResource DataIoTextBrush}" />
+        <TextBlock x:Name="EstimateSub"
+                   Text="包含标题、待办与笔记正文等必要元数据"
+                   Style="{StaticResource SectionHint}" />
+      </StackPanel>
+    </ScrollViewer>
 
     <!-- 主操作按钮 -->
     <Button x:Name="PrimaryButton"

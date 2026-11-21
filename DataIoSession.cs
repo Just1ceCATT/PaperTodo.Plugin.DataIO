@@ -10,7 +10,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 工具纸片会话：负责生命周期、事件订阅以及导出/导入双模式的编排。
-/// 内容类型行是入口，具体纸片在详情页多选；所有宿主数据调用都经 HostGateway 切回 UI 线程。
+/// 内容类型行就地展开具体纸片并多选；所有宿主数据调用都经 HostGateway 切回 UI 线程。
 /// </summary>
 internal sealed class DataIoSession : IPaperBodySession
 {
@@ -30,7 +30,6 @@ internal sealed class DataIoSession : IPaperBodySession
     private Dictionary<string, TodoSnapshot[]> _todosByPaper = new(StringComparer.Ordinal);
 
     private DataIoMode _mode = DataIoMode.Export;
-    private string _detailType = "note";
 
     /// <summary>null 表示全部候选纸片；非 null 时按纸片 ID 精确选择。</summary>
     private HashSet<string>? _exportSelection;
@@ -56,15 +55,11 @@ internal sealed class DataIoSession : IPaperBodySession
         _exportService = new ExportService(_gateway);
 
         _view.ModeChanged += OnModeChanged;
-        _view.NotesDetailRequested += OnNotesDetailRequested;
-        _view.TodosDetailRequested += OnTodosDetailRequested;
-        _view.BackRequested += OnBackRequested;
+        _view.NoteSelectionChanged += OnNoteSelectionChanged;
+        _view.TodoSelectionChanged += OnTodoSelectionChanged;
         _view.PrimaryActionRequested += OnPrimaryActionRequested;
         _view.ChooseImportFileRequested += OnChooseImportFileRequested;
-        _view.DetailSelectionChanged += OnDetailSelectionChanged;
-        _view.SearchChanged += OnSearchChanged;
 
-        _view.SetSearch(_state.Search);
         _view.ApplyTheme(context.Theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
         _view.SetImportFileName(null);
@@ -138,13 +133,10 @@ internal sealed class DataIoSession : IPaperBodySession
         _subscription?.Dispose();
 
         _view.ModeChanged -= OnModeChanged;
-        _view.NotesDetailRequested -= OnNotesDetailRequested;
-        _view.TodosDetailRequested -= OnTodosDetailRequested;
-        _view.BackRequested -= OnBackRequested;
+        _view.NoteSelectionChanged -= OnNoteSelectionChanged;
+        _view.TodoSelectionChanged -= OnTodoSelectionChanged;
         _view.PrimaryActionRequested -= OnPrimaryActionRequested;
         _view.ChooseImportFileRequested -= OnChooseImportFileRequested;
-        _view.DetailSelectionChanged -= OnDetailSelectionChanged;
-        _view.SearchChanged -= OnSearchChanged;
     }
 
     // ---------- 模式与刷新 ----------
@@ -152,8 +144,6 @@ internal sealed class DataIoSession : IPaperBodySession
     private void OnModeChanged(object? sender, EventArgs e)
     {
         _mode = _view.Mode;
-        _detailType = "note";
-        _view.ShowDetail(false);
 
         if (_mode == DataIoMode.Export)
         {
@@ -257,12 +247,8 @@ internal sealed class DataIoSession : IPaperBodySession
                 _gateway.Can(PaperTodoPermissionNames.PapersRead),
                 _gateway.Can(PaperTodoPermissionNames.PapersCreate));
 
+            RefreshRows();
             UpdateExportSummary();
-
-            if (_view.IsDetailVisible)
-            {
-                RefreshDetailRows();
-            }
 
             if (!_busy)
             {
@@ -287,12 +273,8 @@ internal sealed class DataIoSession : IPaperBodySession
             _gateway.Can(PaperTodoPermissionNames.PapersCreate));
         _view.SetImportFileName(_importFilePath is null ? null : Path.GetFileName(_importFilePath));
 
+        RefreshRows();
         UpdateImportSummary();
-
-        if (_view.IsDetailVisible && _importPlan is not null)
-        {
-            RefreshDetailRows();
-        }
 
         if (!_busy)
         {
@@ -423,7 +405,74 @@ internal sealed class DataIoSession : IPaperBodySession
         return candidates.Select(c => c.Paper).ToList();
     }
 
-    // ---------- 汇总 ----------
+    // ---------- 行与汇总 ----------
+
+    private void RefreshRows()
+    {
+        var rows = _mode == DataIoMode.Export ? BuildExportRows() : BuildImportRows();
+        var selection = _mode == DataIoMode.Export ? _exportSelection : _importSelection;
+
+        // selection 为 null 时由视图默认全选。
+        _view.SetRows(rows, selection);
+    }
+
+    private IReadOnlyList<PaperRowItem> BuildExportRows()
+    {
+        var rows = new List<PaperRowItem>();
+
+        foreach (var paper in GetExportCandidates(null))
+        {
+            var isNote = string.Equals(paper.Type, "note", StringComparison.Ordinal);
+            var isPluginProvider =
+                !string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal);
+
+            rows.Add(new PaperRowItem
+            {
+                Key = paper.Id,
+                Title = string.IsNullOrWhiteSpace(paper.Title) ? "（无标题）" : paper.Title,
+                Type = isNote ? "note" : "todo",
+                TypeLabel = isNote ? "笔记" : "待办",
+                Summary = isNote
+                    ? (isPluginProvider ? "其他插件纸片" : "内置 Markdown 笔记")
+                    : (TodoCount(paper.Id) == 0
+                        ? "暂无待办"
+                        : $"{TodoCount(paper.Id)} 项待办 · {DoneCount(paper.Id)} 项已完成"),
+                Warning = isNote && isPluginProvider
+                    ? "正文由其他插件提供，导入后为空笔记"
+                    : "",
+                CanSelect = true
+            });
+        }
+
+        return rows;
+    }
+
+    private IReadOnlyList<PaperRowItem> BuildImportRows()
+    {
+        var rows = new List<PaperRowItem>();
+
+        foreach (var (index, paper) in GetImportCandidates(null))
+        {
+            var isNote = string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase);
+            var contentLength = paper.Source.Content?.Length ?? 0;
+            var todoCount = paper.Source.Todos?.Count ?? 0;
+
+            rows.Add(new PaperRowItem
+            {
+                Key = ImportKey(index),
+                Title = string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title,
+                Type = isNote ? "note" : "todo",
+                TypeLabel = isNote ? "笔记" : "待办",
+                Summary = isNote
+                    ? (contentLength > 0 ? $"{contentLength} 字" : "空笔记")
+                    : $"{todoCount} 项待办",
+                Warning = isNote && contentLength == 0 ? "文件未包含笔记正文" : "",
+                CanSelect = true
+            });
+        }
+
+        return rows;
+    }
 
     private void UpdateExportSummary()
     {
@@ -454,7 +503,6 @@ internal sealed class DataIoSession : IPaperBodySession
             _gateway.Can(PaperTodoPermissionNames.TodosRead) && todos.Count > 0);
 
         var selectedPapers = GetExportSelectedPapers();
-
         _view.SetEstimate(
             $"{selectedNotes} 条笔记 · {selectedTodoItems} 条待办",
             "包含标题、待办与笔记正文等必要元数据");
@@ -507,167 +555,52 @@ internal sealed class DataIoSession : IPaperBodySession
         return selected >= total ? $"{total} 条" : $"已选 {selected} / {total} 条";
     }
 
-    // ---------- 详情 ----------
+    // ---------- 选择变化 ----------
 
-    private void OnNotesDetailRequested(object? sender, EventArgs e) => OpenDetail("note");
-
-    private void OnTodosDetailRequested(object? sender, EventArgs e) => OpenDetail("todo");
-
-    private void OpenDetail(string type)
+    private void OnNoteSelectionChanged(object? sender, EventArgs e)
     {
         if (_busy)
         {
             return;
         }
 
-        if (_mode == DataIoMode.Import && _importPlan is null)
-        {
-            SetStatus("请先选择导入文件。");
-            return;
-        }
-
-        _detailType = type;
-        RefreshDetailRows();
-        _view.SetDetailType(type, BuildDetailTitle(type));
-        _view.ShowDetail(true);
+        MergeSelection("note");
         UpdateSummary();
     }
 
-    private void RefreshDetailRows()
+    private void OnTodoSelectionChanged(object? sender, EventArgs e)
     {
-        var rows = _mode == DataIoMode.Export
-            ? BuildExportRows(_detailType)
-            : BuildImportRows(_detailType);
-
-        _view.SetRows(rows);
-
-        // null 表示全部候选，刷新时也要把新增纸片纳入选中，保持汇总与列表一致。
-        var allKeys = rows.Where(r => r.CanSelect).Select(r => r.Key).ToHashSet(StringComparer.Ordinal);
-        var selection = _mode == DataIoMode.Export ? _exportSelection : _importSelection;
-        if (selection is null)
-        {
-            _view.SetSelection(allKeys);
-        }
-        else
-        {
-            _view.SetSelection(allKeys.Where(selection.Contains));
-        }
-    }
-
-    private IReadOnlyList<PaperRowItem> BuildExportRows(string type)
-    {
-        var isNote = type == "note";
-        var rows = new List<PaperRowItem>();
-
-        foreach (var paper in GetExportCandidates(type))
-        {
-            var isPluginProvider =
-                !string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal);
-
-            rows.Add(new PaperRowItem
-            {
-                Key = paper.Id,
-                Title = string.IsNullOrWhiteSpace(paper.Title) ? "（无标题）" : paper.Title,
-                Type = type,
-                TypeLabel = isNote ? "笔记" : "待办",
-                Summary = isNote
-                    ? (isPluginProvider ? "其他插件纸片" : "内置 Markdown 笔记")
-                    : (TodoCount(paper.Id) == 0
-                        ? "暂无待办"
-                        : $"{TodoCount(paper.Id)} 项待办 · {DoneCount(paper.Id)} 项已完成"),
-                Warning = isNote && isPluginProvider
-                    ? "正文由其他插件提供，导入后为空笔记"
-                    : "",
-                CanSelect = true
-            });
-        }
-
-        return rows;
-    }
-
-    private IReadOnlyList<PaperRowItem> BuildImportRows(string type)
-    {
-        var isNote = type == "note";
-        var rows = new List<PaperRowItem>();
-
-        foreach (var (index, paper) in GetImportCandidates(type))
-        {
-            var contentLength = paper.Source.Content?.Length ?? 0;
-            var todoCount = paper.Source.Todos?.Count ?? 0;
-
-            rows.Add(new PaperRowItem
-            {
-                Key = ImportKey(index),
-                Title = string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title,
-                Type = type,
-                TypeLabel = isNote ? "笔记" : "待办",
-                Summary = isNote
-                    ? (contentLength > 0 ? $"{contentLength} 字" : "空笔记")
-                    : $"{todoCount} 项待办",
-                Warning = isNote && contentLength == 0 ? "文件未包含笔记正文" : "",
-                CanSelect = true
-            });
-        }
-
-        return rows;
-    }
-
-    private string BuildDetailTitle(string type)
-    {
-        var isNote = type == "note";
-        if (_mode == DataIoMode.Export)
-        {
-            return isNote ? "选择要导出的笔记" : "选择要导出的待办纸片";
-        }
-
-        return isNote ? "选择要导入的笔记" : "选择要导入的待办纸片";
-    }
-
-    private void OnBackRequested(object? sender, EventArgs e)
-    {
-        _view.ShowDetail(false);
-        UpdateSummary();
-    }
-
-    private void OnDetailSelectionChanged(object? sender, EventArgs e)
-    {
-        if (_busy || !_view.IsDetailVisible)
+        if (_busy)
         {
             return;
         }
 
-        if (_mode == DataIoMode.Export)
-        {
-            MergeExportSelection(_detailType);
-        }
-        else
-        {
-            MergeImportSelection(_detailType);
-        }
-
+        MergeSelection("todo");
         UpdateSummary();
     }
 
-    private void MergeExportSelection(string type)
+    private void MergeSelection(string type)
     {
-        var typeIds = GetExportCandidates(type).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
-        _exportSelection ??= GetExportCandidates(null)
-            .Select(p => p.Id)
-            .ToHashSet(StringComparer.Ordinal);
-        _exportSelection.ExceptWith(typeIds);
-        _exportSelection.UnionWith(_view.GetSelectedKeys());
-    }
-
-    private void MergeImportSelection(string type)
-    {
-        var typeKeys = GetImportCandidates(type)
-            .Select(c => ImportKey(c.Index))
-            .ToHashSet(StringComparer.Ordinal);
-        _importSelection ??= GetImportCandidates(null)
-            .Select(c => ImportKey(c.Index))
-            .ToHashSet(StringComparer.Ordinal);
-        _importSelection.ExceptWith(typeKeys);
-        _importSelection.UnionWith(_view.GetSelectedKeys());
+        if (_mode == DataIoMode.Export)
+        {
+            var typeIds = GetExportCandidates(type).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+            _exportSelection ??= GetExportCandidates(null)
+                .Select(p => p.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            _exportSelection.ExceptWith(typeIds);
+            _exportSelection.UnionWith(_view.GetSelectedKeys(type));
+        }
+        else
+        {
+            var typeKeys = GetImportCandidates(type)
+                .Select(c => ImportKey(c.Index))
+                .ToHashSet(StringComparer.Ordinal);
+            _importSelection ??= GetImportCandidates(null)
+                .Select(c => ImportKey(c.Index))
+                .ToHashSet(StringComparer.Ordinal);
+            _importSelection.ExceptWith(typeKeys);
+            _importSelection.UnionWith(_view.GetSelectedKeys(type));
+        }
     }
 
     private void UpdateSummary()
@@ -680,12 +613,6 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             UpdateImportSummary();
         }
-    }
-
-    private void OnSearchChanged(object? sender, EventArgs e)
-    {
-        _state.Search = _view.CurrentSearch;
-        SaveState();
     }
 
     // ---------- 导出 ----------
@@ -808,8 +735,6 @@ internal sealed class DataIoSession : IPaperBodySession
         _importPlan = plan;
         _importFilePath = dialog.FileName;
         _importSelection = null;
-        _detailType = "note";
-        _view.ShowDetail(false);
         RefreshImportView();
 
         SetStatus(plan.Warnings.Count > 0
@@ -879,9 +804,6 @@ internal sealed class DataIoSession : IPaperBodySession
         _importPlan = null;
         _importFilePath = null;
         _importSelection = null;
-        _detailType = "note";
-        _view.ShowDetail(false);
-
         await RefreshAsync(force: true);
         SetStatus(summary);
     }

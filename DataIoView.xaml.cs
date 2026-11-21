@@ -2,23 +2,25 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 工具纸片主体界面：导出/导入双模式、内容类型入口与详情多选。
+/// 工具纸片主体界面：导出/导入双模式、点击内容类型就地展开并多选。
 /// 只负责展示和收集用户输入，不直接调用宿主写 API。
 /// </summary>
 public partial class DataIoView : UserControl
 {
-    private readonly ObservableCollection<PaperRowItem> _rows = [];
+    private readonly ObservableCollection<PaperRowItem> _noteRows = [];
+    private readonly ObservableCollection<PaperRowItem> _todoRows = [];
     private readonly List<PaperRowItem> _allRows = [];
     private bool _suppressModeEvents;
     private bool _suppressSelectionEvents;
-    private string _detailType = "note";
+    private bool _notesExpanded;
+    private bool _todosExpanded;
     private bool _busy;
     private bool _primaryEnabled;
     private bool _canExport = true;
@@ -27,17 +29,12 @@ public partial class DataIoView : UserControl
     private bool _sizeHooked;
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
-    public bool IsDetailVisible => DetailPanel.Visibility == Visibility.Visible;
-    public string CurrentSearch => SearchBox.Text?.Trim() ?? "";
 
     public event EventHandler? ModeChanged;
-    public event EventHandler? NotesDetailRequested;
-    public event EventHandler? TodosDetailRequested;
-    public event EventHandler? BackRequested;
+    public event EventHandler? NoteSelectionChanged;
+    public event EventHandler? TodoSelectionChanged;
     public event EventHandler? PrimaryActionRequested;
     public event EventHandler? ChooseImportFileRequested;
-    public event EventHandler? DetailSelectionChanged;
-    public event EventHandler? SearchChanged;
 
     public DataIoView()
     {
@@ -58,10 +55,12 @@ public partial class DataIoView : UserControl
         ModeCardsGrid.Margin = new Thickness(0);
         SummaryPanel.Children.Insert(0, ModeCardsGrid);
 
-        PaperList.ItemsSource = _rows;
+        NotesList.ItemsSource = _noteRows;
+        TodosList.ItemsSource = _todoRows;
+
         WireEvents();
         ApplyModeVisuals(DataIoMode.Export);
-        ApplyFilter();
+        ApplyExpansion();
     }
 
     // ---------- 模式 ----------
@@ -98,14 +97,39 @@ public partial class DataIoView : UserControl
         ImportFileSection.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         ContentSectionTitle.Text = isExport ? "导出内容" : "导入内容";
         ContentSectionHint.Text = isExport
-            ? "点击条目选择要导出的具体内容"
-            : "点击条目选择要导入的具体内容";
+            ? "点击条目展开并选择要导出的具体内容"
+            : "点击条目展开并选择要导入的具体内容";
         FormatRow.Visibility = isExport ? Visibility.Visible : Visibility.Collapsed;
         StrategyRow.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         EstimateTitle.Text = isExport ? "导出预估" : "导入预估";
         PrimaryButton.Content = isExport ? "导出所选内容" : "导入所选内容";
 
-        ShowDetail(false);
+        _notesExpanded = false;
+        _todosExpanded = false;
+        ApplyExpansion();
+    }
+
+    // ---------- 展开 / 收起 ----------
+
+    private void OnNotesRowClick(object sender, MouseButtonEventArgs e)
+    {
+        _notesExpanded = !_notesExpanded;
+        ApplyExpansion();
+    }
+
+    private void OnTodosRowClick(object sender, MouseButtonEventArgs e)
+    {
+        _todosExpanded = !_todosExpanded;
+        ApplyExpansion();
+    }
+
+    private void ApplyExpansion()
+    {
+        NotesPanel.Visibility = _notesExpanded ? Visibility.Visible : Visibility.Collapsed;
+        TodosPanel.Visibility = _todosExpanded ? Visibility.Visible : Visibility.Collapsed;
+        // E70D = ChevronDown，E76C = ChevronRight（Segoe Fluent Icons）
+        NotesChevron.Text = _notesExpanded ? "" : "";
+        TodosChevron.Text = _todosExpanded ? "" : "";
     }
 
     // ---------- 内容统计 ----------
@@ -122,6 +146,13 @@ public partial class DataIoView : UserControl
         NotesRow.Opacity = notesEnabled ? 1.0 : 0.45;
         TodosRow.IsEnabled = todosEnabled;
         TodosRow.Opacity = todosEnabled ? 1.0 : 0.45;
+
+        if ((!notesEnabled && _notesExpanded) || (!todosEnabled && _todosExpanded))
+        {
+            _notesExpanded = _notesExpanded && notesEnabled;
+            _todosExpanded = _todosExpanded && todosEnabled;
+            ApplyExpansion();
+        }
     }
 
     // ---------- 预估与主操作 ----------
@@ -151,8 +182,10 @@ public partial class DataIoView : UserControl
         BusyBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         PrimaryButton.IsEnabled = !busy && _primaryEnabled;
         ChooseFileButton.IsEnabled = !busy;
-        SelectAllCheckBox.IsEnabled = !busy;
-        InvertButton.IsEnabled = !busy;
+        NotesSelectAll.IsEnabled = !busy;
+        TodosSelectAll.IsEnabled = !busy;
+        NotesInvertButton.IsEnabled = !busy;
+        TodosInvertButton.IsEnabled = !busy;
         ExportModeButton.IsEnabled = !busy && _canExport;
         ImportModeButton.IsEnabled = !busy && _canImport;
     }
@@ -165,29 +198,12 @@ public partial class DataIoView : UserControl
         ImportModeButton.IsEnabled = !_busy && canImport;
     }
 
-    // ---------- 详情 ----------
+    // ---------- 行与选择 ----------
 
-    public void ShowDetail(bool show)
-    {
-        SummaryScroll.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
-        DetailPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    public void SetDetailType(string type, string title)
-    {
-        _detailType = type;
-        DetailTitle.Text = title;
-        ApplyFilter();
-    }
-
-    /// <summary>刷新详情列表；按 Key 保留已有勾选状态。</summary>
-    public void SetRows(IReadOnlyList<PaperRowItem> rows)
+    /// <summary>刷新两个类型的具体条目；selectedKeys 为 null 时默认全选可选项。</summary>
+    public void SetRows(IReadOnlyList<PaperRowItem> rows, IReadOnlyCollection<string>? selectedKeys)
     {
         _suppressSelectionEvents = true;
-
-        var selected = new HashSet<string>(
-            _allRows.Where(r => r.IsSelected).Select(r => r.Key),
-            StringComparer.Ordinal);
 
         foreach (var oldRow in _allRows)
         {
@@ -195,54 +211,39 @@ public partial class DataIoView : UserControl
         }
 
         _allRows.Clear();
+        _noteRows.Clear();
+        _todoRows.Clear();
+
+        var selected = selectedKeys is null
+            ? null
+            : new HashSet<string>(selectedKeys, StringComparer.Ordinal);
+
         foreach (var row in rows)
         {
-            row.IsSelected = selected.Contains(row.Key);
+            row.IsSelected = selected is null ? row.CanSelect : selected.Contains(row.Key);
             row.PropertyChanged += OnRowPropertyChanged;
             _allRows.Add(row);
+
+            if (row.Type == "todo")
+            {
+                _todoRows.Add(row);
+            }
+            else
+            {
+                _noteRows.Add(row);
+            }
         }
 
         _suppressSelectionEvents = false;
-        ApplyFilter();
+        UpdateSelectAllState("note");
+        UpdateSelectAllState("todo");
     }
 
-    public IReadOnlyList<string> GetSelectedKeys() =>
+    public IReadOnlyList<string> GetSelectedKeys(string type) =>
         _allRows
-            .Where(r => r.IsSelected && r.CanSelect)
+            .Where(r => r.Type == type && r.IsSelected && r.CanSelect)
             .Select(r => r.Key)
             .ToList();
-
-    public void SetSelection(IEnumerable<string> keys)
-    {
-        _suppressSelectionEvents = true;
-        var set = new HashSet<string>(keys, StringComparer.Ordinal);
-        foreach (var row in _allRows)
-        {
-            row.IsSelected = set.Contains(row.Key);
-        }
-
-        _suppressSelectionEvents = false;
-        UpdateSelectAllState();
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void SelectAllRows()
-    {
-        _suppressSelectionEvents = true;
-        foreach (var row in _allRows.Where(r => r.CanSelect))
-        {
-            row.IsSelected = true;
-        }
-
-        _suppressSelectionEvents = false;
-        UpdateSelectAllState();
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    public void SetSearch(string? search)
-    {
-        SearchBox.Text = search ?? "";
-    }
 
     private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -251,73 +252,71 @@ public partial class DataIoView : UserControl
             return;
         }
 
-        UpdateSelectAllState();
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    // ---------- 筛选 ----------
-
-    private void ApplyFilter()
-    {
-        var search = CurrentSearch;
-
-        _rows.Clear();
-        foreach (var row in _allRows)
+        if (sender is not PaperRowItem row)
         {
-            if (row.Type != _detailType)
-            {
-                continue;
-            }
-
-            if (search.Length > 0 &&
-                !row.Title.Contains(search, StringComparison.CurrentCultureIgnoreCase))
-            {
-                continue;
-            }
-
-            _rows.Add(row);
+            return;
         }
 
-        UpdateSelectAllState();
+        UpdateSelectAllState(row.Type);
+        RaiseSelectionChanged(row.Type);
     }
 
-    private void UpdateSelectAllState()
+    private void UpdateSelectAllState(string type)
     {
-        var selectable = _rows.Where(r => r.CanSelect).ToList();
-        SelectAllCheckBox.IsChecked = selectable.Count > 0 && selectable.All(r => r.IsSelected);
+        var rows = type == "todo" ? _todoRows : _noteRows;
+        var checkBox = type == "todo" ? TodosSelectAll : NotesSelectAll;
+        var selectable = rows.Where(r => r.CanSelect).ToList();
+        checkBox.IsChecked = selectable.Count > 0 && selectable.All(r => r.IsSelected);
     }
 
-    private void OnSearchChanged(object sender, TextChangedEventArgs e)
+    private void RaiseSelectionChanged(string type)
     {
-        ApplyFilter();
-        SearchChanged?.Invoke(this, EventArgs.Empty);
+        if (type == "todo")
+        {
+            TodoSelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
+        else
+        {
+            NoteSelectionChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
-    private void OnSelectAllClick(object sender, RoutedEventArgs e)
+    private void OnNotesSelectAllClick(object sender, RoutedEventArgs e) =>
+        SetAllOfType("note", NotesSelectAll.IsChecked == true);
+
+    private void OnTodosSelectAllClick(object sender, RoutedEventArgs e) =>
+        SetAllOfType("todo", TodosSelectAll.IsChecked == true);
+
+    private void OnNotesInvertClick(object sender, RoutedEventArgs e) => InvertType("note");
+
+    private void OnTodosInvertClick(object sender, RoutedEventArgs e) => InvertType("todo");
+
+    private void SetAllOfType(string type, bool value)
     {
-        var value = SelectAllCheckBox.IsChecked == true;
+        var rows = type == "todo" ? _todoRows : _noteRows;
         _suppressSelectionEvents = true;
-        foreach (var row in _rows.Where(r => r.CanSelect))
+        foreach (var row in rows.Where(r => r.CanSelect))
         {
             row.IsSelected = value;
         }
 
         _suppressSelectionEvents = false;
-        SelectAllCheckBox.IsChecked = value;
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
+        UpdateSelectAllState(type);
+        RaiseSelectionChanged(type);
     }
 
-    private void OnInvertClick(object sender, RoutedEventArgs e)
+    private void InvertType(string type)
     {
+        var rows = type == "todo" ? _todoRows : _noteRows;
         _suppressSelectionEvents = true;
-        foreach (var row in _rows.Where(r => r.CanSelect))
+        foreach (var row in rows.Where(r => r.CanSelect))
         {
             row.IsSelected = !row.IsSelected;
         }
 
         _suppressSelectionEvents = false;
-        UpdateSelectAllState();
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
+        UpdateSelectAllState(type);
+        RaiseSelectionChanged(type);
     }
 
     private void WireEvents()
@@ -325,15 +324,15 @@ public partial class DataIoView : UserControl
         ExportModeButton.Checked += OnModeChecked;
         ImportModeButton.Checked += OnModeChecked;
 
-        NotesRow.MouseLeftButtonUp += (_, _) => NotesDetailRequested?.Invoke(this, EventArgs.Empty);
-        TodosRow.MouseLeftButtonUp += (_, _) => TodosDetailRequested?.Invoke(this, EventArgs.Empty);
-        BackButton.Click += (_, _) => BackRequested?.Invoke(this, EventArgs.Empty);
+        NotesRow.MouseLeftButtonUp += OnNotesRowClick;
+        TodosRow.MouseLeftButtonUp += OnTodosRowClick;
+        NotesSelectAll.Click += OnNotesSelectAllClick;
+        TodosSelectAll.Click += OnTodosSelectAllClick;
+        NotesInvertButton.Click += OnNotesInvertClick;
+        TodosInvertButton.Click += OnTodosInvertClick;
+
         PrimaryButton.Click += (_, _) => PrimaryActionRequested?.Invoke(this, EventArgs.Empty);
         ChooseFileButton.Click += (_, _) => ChooseImportFileRequested?.Invoke(this, EventArgs.Empty);
-
-        SelectAllCheckBox.Click += OnSelectAllClick;
-        InvertButton.Click += OnInvertClick;
-        SearchBox.TextChanged += OnSearchChanged;
     }
 
     // ---------- 主题 ----------
