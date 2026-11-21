@@ -23,6 +23,7 @@ public partial class DataIoView : UserControl
     private readonly DispatcherTimer _hoverTimer;
     private PaperRowItem? _hoverRow;
     private int _hoverToken;
+    private int _hoverCardToken;
     private bool _previewOpen;
     private bool _suppressModeEvents;
     private bool _suppressSelectionEvents;
@@ -555,10 +556,10 @@ public partial class DataIoView : UserControl
 
         // 快速从一行移到另一行时，旧行的 MouseLeave 可能晚于新行的 MouseEnter 到达，
         // 用 _hoverRow 判断归属，避免误清空新行。
+        _hoverTimer.Stop();
+        HideHoverCard();
         _hoverRow = row;
         _hoverToken++;
-        _hoverTimer.Stop();
-        HoverPreviewPopup.IsOpen = false;
         _hoverTimer.Start();
     }
 
@@ -588,7 +589,53 @@ public partial class DataIoView : UserControl
         _hoverTimer.Stop();
         _hoverRow = null;
         _hoverToken++;
-        HoverPreviewPopup.IsOpen = false;
+        HideHoverCard();
+    }
+
+    /// <summary>淡出并延迟关闭悬停卡片；后续如果打开了新的卡片，旧动画不会误关新卡。</summary>
+    private void HideHoverCard()
+    {
+        var token = ++_hoverCardToken;
+        if (!HoverPreviewPopup.IsOpen)
+        {
+            return;
+        }
+
+        if (!AnimationsEnabled)
+        {
+            HoverPreviewPopup.IsOpen = false;
+            HoverCard.Opacity = 1;
+            HoverCardTranslate.Y = 0;
+            return;
+        }
+
+        // 基础值设为终态，动画结束后回落到 0；下次打开前会重置为 1。
+        HoverCard.Opacity = 0;
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(100))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+            FillBehavior = FillBehavior.Stop
+        };
+        fade.Completed += (_, _) =>
+        {
+            if (token != _hoverCardToken)
+            {
+                return;
+            }
+
+            HoverPreviewPopup.IsOpen = false;
+            HoverCard.Opacity = 1;
+            HoverCardTranslate.Y = 0;
+        };
+
+        HoverCard.BeginAnimation(OpacityProperty, fade);
+        HoverCardTranslate.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(0, 4, TimeSpan.FromMilliseconds(100))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.Stop
+            });
     }
 
     private async void OnHoverTimerTick(object? sender, EventArgs e)
@@ -652,8 +699,34 @@ public partial class DataIoView : UserControl
         HoverPreviewPopup.Placement = PlacementMode.MousePoint;
         HoverPreviewPopup.HorizontalOffset = 16;
         HoverPreviewPopup.VerticalOffset = 18;
+
+        ++_hoverCardToken;
+        HoverCard.Opacity = 1;
+        HoverCardTranslate.Y = 0;
         HoverPreviewPopup.IsOpen = true;
+
+        if (!AnimationsEnabled)
+        {
+            return;
+        }
+
+        HoverCard.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(140))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+        HoverCardTranslate.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(6, 0, TimeSpan.FromMilliseconds(160))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
     }
+
+    private static bool AnimationsEnabled => SystemParameters.ClientAreaAnimation;
 
     private static string BuildExcerpt(PreviewContent content)
     {

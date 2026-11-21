@@ -84,7 +84,11 @@
           BorderThickness="1"
           Padding="20"
           Background="{DynamicResource DialogPaperBrush}"
-          BorderBrush="{DynamicResource DialogBorderBrush}">
+          BorderBrush="{DynamicResource DialogBorderBrush}"
+          RenderTransformOrigin="0.5,0.5">
+    <Border.RenderTransform>
+      <ScaleTransform x:Name="ShellScale" ScaleX="1" ScaleY="1" />
+    </Border.RenderTransform>
     <Border.Effect>
       <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.22" Color="Black" />
     </Border.Effect>
@@ -154,7 +158,13 @@
                       HorizontalScrollBarVisibility="Disabled"
                       Focusable="False">
           <!-- ScrollViewer 的默认模板会忽略 Padding，内边距必须放在内容上。 -->
-          <StackPanel x:Name="BodyPanel" Margin="16,14,16,14" />
+          <StackPanel x:Name="BodyPanel"
+                      Margin="16,14,16,14"
+                      RenderTransformOrigin="0.5,0">
+            <StackPanel.RenderTransform>
+              <TranslateTransform x:Name="BodyTranslate" />
+            </StackPanel.RenderTransform>
+          </StackPanel>
         </ScrollViewer>
       </Border>
 

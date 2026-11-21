@@ -1,7 +1,9 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using PaperTodo.Plugin;
 
@@ -26,6 +28,7 @@ internal partial class PaperPreviewWindow : Window
     private int _index;
     private bool _loading;
     private int _loadToken;
+    private bool _closeAnimated;
     private PreviewContent? _current;
 
     public PaperPreviewWindow(
@@ -62,8 +65,88 @@ internal partial class PaperPreviewWindow : Window
         CloseIconButton.Click += (_, _) => Close();
         PreviewKeyDown += OnPreviewKeyDown;
 
+        // 首帧先隐藏，等 Loaded 后再做淡入缩放，避免窗口出现时闪一下。
+        if (AnimationsEnabled)
+        {
+            Shell.Opacity = 0;
+            ShellScale.ScaleX = 0.98;
+            ShellScale.ScaleY = 0.98;
+        }
+
+        Loaded += OnLoaded;
         UpdateNav();
         _ = LoadCurrentAsync();
+    }
+
+    private static bool AnimationsEnabled => SystemParameters.ClientAreaAnimation;
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        Shell.Opacity = 1;
+        ShellScale.ScaleX = 1;
+        ShellScale.ScaleY = 1;
+
+        if (!AnimationsEnabled)
+        {
+            return;
+        }
+
+        Shell.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+        ShellScale.BeginAnimation(
+            ScaleTransform.ScaleXProperty,
+            new DoubleAnimation(0.98, 1, TimeSpan.FromMilliseconds(190))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+        ShellScale.BeginAnimation(
+            ScaleTransform.ScaleYProperty,
+            new DoubleAnimation(0.98, 1, TimeSpan.FromMilliseconds(190))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+    }
+
+    /// <summary>关闭前先做淡出收缩；动画完成后再次 Close，第二次直接放行。</summary>
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        if (!_closeAnimated && AnimationsEnabled && IsLoaded)
+        {
+            _closeAnimated = true;
+            e.Cancel = true;
+
+            var fade = new DoubleAnimation(Shell.Opacity, 0, TimeSpan.FromMilliseconds(110))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            fade.Completed += (_, _) => Close();
+
+            var scaleX = new DoubleAnimation(ShellScale.ScaleX, 0.98, TimeSpan.FromMilliseconds(110))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            var scaleY = new DoubleAnimation(ShellScale.ScaleY, 0.98, TimeSpan.FromMilliseconds(110))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseIn },
+                FillBehavior = FillBehavior.HoldEnd
+            };
+
+            Shell.BeginAnimation(OpacityProperty, fade);
+            ShellScale.BeginAnimation(ScaleTransform.ScaleXProperty, scaleX);
+            ShellScale.BeginAnimation(ScaleTransform.ScaleYProperty, scaleY);
+            return;
+        }
+
+        base.OnClosing(e);
     }
 
     private string? CurrentKey => _keys.Count == 0 ? null : _keys[_index];
@@ -272,6 +355,7 @@ internal partial class PaperPreviewWindow : Window
             FontSize = 12.5 * _scale,
             Foreground = (Brush)Resources["DialogWeakBrush"]
         });
+        BodyScroll.ScrollToTop();
     }
 
     private void RenderEmpty(string message)
@@ -290,6 +374,7 @@ internal partial class PaperPreviewWindow : Window
             FontSize = 12.5 * _scale,
             Foreground = (Brush)Resources["DialogWeakBrush"]
         });
+        AnimateBodyIn();
         UpdateNav();
         UpdateSelectButton();
     }
@@ -334,7 +419,35 @@ internal partial class PaperPreviewWindow : Window
             MarkdownPreview.Render(content.Body, BodyPanel, CreatePalette());
         }
 
+        AnimateBodyIn();
+    }
+
+    /// <summary>切换条目时让正文淡入并轻微上移，避免内容生硬跳变。</summary>
+    private void AnimateBodyIn()
+    {
         BodyScroll.ScrollToTop();
+        BodyScroll.Opacity = 1;
+        BodyTranslate.Y = 0;
+
+        if (!AnimationsEnabled)
+        {
+            return;
+        }
+
+        BodyScroll.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation(0.35, 1, TimeSpan.FromMilliseconds(150))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
+        BodyTranslate.BeginAnimation(
+            TranslateTransform.YProperty,
+            new DoubleAnimation(6, 0, TimeSpan.FromMilliseconds(170))
+            {
+                EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+                FillBehavior = FillBehavior.Stop
+            });
     }
 
     private Grid BuildTodoRow(PreviewTodoItem todo)
