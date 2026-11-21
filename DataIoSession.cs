@@ -987,22 +987,16 @@ internal sealed class DataIoSession : IPaperBodySession
             lines.Add("· …更多详情已省略。");
         }
 
-        var warning = result.StoppedEarly ||
-                      result.FailedPapers > 0 ||
-                      result.Warnings.Count > 0 ||
-                      result.DroppedPathLinkNotes.Count > 0;
-        var headline = result.StoppedEarly
+        var title = result.StoppedEarly
             ? "部分导入完成"
             : result.FailedPapers > 0
                 ? "导入完成，有失败项"
                 : "导入完成";
 
         _view.ShowResultDialog(
-            "导入结果",
-            headline,
+            title,
             stats,
-            lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null,
-            warning);
+            lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null);
     }
 
     private static string? ResolveDirectory(string? path)

@@ -1,60 +1,35 @@
 <Window x:Class="PaperTodo.Plugin.DataIo.DataIoDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Width="380"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
-        SizeToContent="WidthAndHeight"
+        SizeToContent="Height"
         WindowStartupLocation="CenterOwner">
   <Window.Resources>
     <Style x:Key="DialogButton" TargetType="Button">
-      <Setter Property="Height" Value="38" />
-      <Setter Property="MinWidth" Value="92" />
-      <Setter Property="Padding" Value="16,0" />
-      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="MinWidth" Value="72" />
+      <Setter Property="Padding" Value="16,7" />
+      <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="BorderThickness" Value="1" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="Bd"
                     CornerRadius="8"
                     Padding="{TemplateBinding Padding}"
-                    Background="{TemplateBinding Background}"
-                    BorderBrush="{TemplateBinding BorderBrush}"
-                    BorderThickness="{TemplateBinding BorderThickness}">
+                    Background="{TemplateBinding Background}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Bd" Property="Opacity" Value="0.88" />
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DialogButtonHoverBrush}" />
               </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter TargetName="Bd" Property="Opacity" Value="0.4" />
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
-
-    <Style x:Key="CloseButton" TargetType="Button">
-      <Setter Property="Width" Value="28" />
-      <Setter Property="Height" Value="28" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="FontSize" Value="13" />
-      <Setter Property="Foreground" Value="{DynamicResource DialogWeakBrush}" />
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="Button">
-            <Border x:Name="Bd" CornerRadius="6" Background="Transparent">
-              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DialogHoverBrush}" />
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bd" Property="Opacity" Value="0.82" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -64,57 +39,36 @@
   </Window.Resources>
 
   <Border x:Name="Shell"
-          MinWidth="320"
-          MaxWidth="540"
-          CornerRadius="12"
+          CornerRadius="10"
           BorderThickness="1"
-          Padding="22"
+          Padding="18"
           Background="{DynamicResource DialogPaperBrush}"
           BorderBrush="{DynamicResource DialogBorderBrush}">
     <Border.Effect>
-      <DropShadowEffect BlurRadius="26" ShadowDepth="5" Opacity="0.32" Color="Black" />
+      <DropShadowEffect BlurRadius="18" ShadowDepth="2" Opacity="0.22" Color="Black" />
     </Border.Effect>
 
-    <StackPanel>
-      <Grid Margin="0,0,0,14">
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="Auto" />
-          <ColumnDefinition Width="*" />
-          <ColumnDefinition Width="Auto" />
-        </Grid.ColumnDefinitions>
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="Auto" />
+      </Grid.RowDefinitions>
 
-        <Border x:Name="IconBadge"
-                Width="34"
-                Height="34"
-                CornerRadius="17"
-                Background="{DynamicResource DialogAccentSurfaceBrush}">
-          <TextBlock x:Name="IconText"
-                     HorizontalAlignment="Center"
-                     VerticalAlignment="Center"
-                     FontWeight="SemiBold"
-                     Foreground="{DynamicResource DialogAccentBrush}" />
-        </Border>
+      <TextBlock x:Name="TitleText"
+                 Grid.Row="0"
+                 Margin="0,0,0,8"
+                 FontWeight="SemiBold"
+                 TextTrimming="CharacterEllipsis"
+                 Foreground="{DynamicResource DialogTextBrush}" />
 
-        <TextBlock x:Name="TitleText"
-                   Grid.Column="1"
-                   Margin="10,0,10,0"
-                   VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis"
-                   FontWeight="SemiBold"
-                   Foreground="{DynamicResource DialogTextBrush}" />
+      <StackPanel x:Name="BodyPanel" Grid.Row="1" />
 
-        <Button x:Name="CloseButton"
-                Grid.Column="2"
-                Style="{StaticResource CloseButton}"
-                Content="✕" />
-      </Grid>
-
-      <StackPanel x:Name="BodyPanel" />
-
-      <StackPanel x:Name="ButtonPanel"
-                  Orientation="Horizontal"
-                  HorizontalAlignment="Right"
-                  Margin="0,18,0,0" />
-    </StackPanel>
+      <WrapPanel x:Name="ButtonPanel"
+                 Grid.Row="2"
+                 Orientation="Horizontal"
+                 HorizontalAlignment="Right"
+                 Margin="0,16,0,0" />
+    </Grid>
   </Border>
 </Window>

@@ -548,13 +548,42 @@ public partial class DataIoView : UserControl
 
     private PaperBodyTheme CurrentTheme => _theme ?? new PaperBodyTheme(
         true,
-        "#242424",
-        "#E8E8E8",
-        "#9A9A9A",
-        "#2F6BFF",
-        "#3A3A3A",
+        "#211F1C",
+        "#E7E0D4",
+        "#92897B",
+        "#A88E6A",
+        "#4C453D",
         "Microsoft YaHei UI",
         1.0);
+
+    /// <summary>宿主 PaperNoticeDialog 使用的 Tint 颜色（从窗口资源 HoverBrushKey 提取）。</summary>
+    private Color ResolveTintColor()
+    {
+        if (TryFindResource("HoverBrushKey") is SolidColorBrush hover)
+        {
+            return Color.FromRgb(hover.Color.R, hover.Color.G, hover.Color.B);
+        }
+
+        try
+        {
+            if (ColorConverter.ConvertFromString(CurrentTheme.AccentColor) is Color accent)
+            {
+                return accent;
+            }
+        }
+        catch (FormatException)
+        {
+            // 回退到默认 Tint。
+        }
+        catch (NotSupportedException)
+        {
+            // 回退到默认 Tint。
+        }
+
+        return CurrentTheme.IsDark
+            ? Color.FromRgb(120, 92, 48)
+            : Color.FromRgb(230, 223, 211);
+    }
 
     public bool ShowConfirmDialog(
         string title,
@@ -564,8 +593,8 @@ public partial class DataIoView : UserControl
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
+            ResolveTintColor(),
             title,
-            DataIoDialogIcon.Question,
             confirmText,
             cancelText);
         dialog.SetMessage(message);
@@ -574,17 +603,15 @@ public partial class DataIoView : UserControl
 
     public void ShowResultDialog(
         string title,
-        string headline,
         IReadOnlyList<(string Label, string Value)> stats,
-        string? details,
-        bool warning)
+        string? details)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
+            ResolveTintColor(),
             title,
-            warning ? DataIoDialogIcon.Warning : DataIoDialogIcon.Success,
             "完成");
-        dialog.SetStats(headline, stats, details);
+        dialog.SetStats(stats, details);
         dialog.ShowModal(Window.GetWindow(this));
     }
 
@@ -592,8 +619,8 @@ public partial class DataIoView : UserControl
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
+            ResolveTintColor(),
             title,
-            DataIoDialogIcon.Warning,
             "知道了");
         dialog.SetMessage(message);
         dialog.ShowModal(Window.GetWindow(this));

@@ -6,39 +6,32 @@ using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
-public enum DataIoDialogIcon
-{
-    Question,
-    Success,
-    Warning,
-    Error
-}
-
-/// <summary>与插件主题一致的自定义模态对话框，替代系统 MessageBox。</summary>
+/// <summary>
+/// 与宿主 PaperNoticeDialog 同款的原生风格模态对话框：
+/// 圆角卡片、纸面色、Tint 半透明按钮，无图标与标题栏关闭按钮。
+/// </summary>
 public partial class DataIoDialog : Window
 {
-    private const double ContentMaxWidth = 470;
     private readonly double _scale;
+    private readonly Color _tint;
 
     public DataIoDialog(
         PaperBodyTheme theme,
+        Color tint,
         string title,
-        DataIoDialogIcon icon,
         string primaryText,
         string? secondaryText = null)
     {
         InitializeComponent();
 
         _scale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.8, 2.4);
+        _tint = tint;
         ApplyTheme(theme);
 
         TitleText.Text = title;
-        TitleText.FontSize = 17.0 * _scale;
-        IconText.Text = Glyph(icon);
-        IconText.FontSize = 18.0 * _scale;
+        TitleText.FontSize = 16.0 * _scale;
 
         BuildButtons(primaryText, secondaryText);
-        CloseButton.Click += (_, _) => CloseWith(false);
         PreviewKeyDown += OnPreviewKeyDown;
     }
 
@@ -49,32 +42,23 @@ public partial class DataIoDialog : Window
         {
             Text = message,
             TextWrapping = TextWrapping.Wrap,
-            MaxWidth = ContentMaxWidth,
-            LineHeight = 21.0 * _scale,
-            FontSize = 13.5 * _scale,
-            Foreground = (Brush)Resources["DialogTextBrush"]
+            MaxWidth = Width - 38,
+            LineHeight = 20.0 * _scale,
+            Margin = new Thickness(0, 2, 0, 0),
+            FontSize = 13.0 * _scale,
+            Foreground = (Brush)Resources["DialogWeakBrush"]
         });
     }
 
-    /// <summary>结果型内容：标题 + 统计行 + 可选详情。</summary>
+    /// <summary>结果型内容：统计行 + 可选详情。</summary>
     public void SetStats(
-        string headline,
         IReadOnlyList<(string Label, string Value)> stats,
         string? details)
     {
-        BodyPanel.Children.Add(new TextBlock
-        {
-            Text = headline,
-            Margin = new Thickness(0, 0, 0, 10),
-            FontSize = 15.0 * _scale,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Resources["DialogTextBrush"]
-        });
-
         var rows = new StackPanel();
         foreach (var (label, value) in stats)
         {
-            var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+            var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -103,9 +87,9 @@ public partial class DataIoDialog : Window
 
         BodyPanel.Children.Add(new Border
         {
-            Background = (Brush)Resources["DialogSurfaceBrush"],
+            Background = TintBrush(14),
             CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(12, 8, 12, 8),
+            Padding = new Thickness(10, 6, 10, 6),
             Child = rows
         });
 
@@ -114,9 +98,9 @@ public partial class DataIoDialog : Window
             BodyPanel.Children.Add(new TextBlock
             {
                 Text = details,
-                Margin = new Thickness(0, 10, 0, 0),
+                Margin = new Thickness(0, 8, 0, 0),
                 TextWrapping = TextWrapping.Wrap,
-                MaxWidth = ContentMaxWidth,
+                MaxWidth = Width - 38,
                 LineHeight = 18.0 * _scale,
                 FontSize = 12.0 * _scale,
                 Foreground = (Brush)Resources["DialogWeakBrush"]
@@ -144,63 +128,57 @@ public partial class DataIoDialog : Window
     {
         Resources["DialogTextBrush"] = MakeBrush(theme.TextColor, Color.FromRgb(0xE8, 0xE8, 0xE8));
         Resources["DialogWeakBrush"] = MakeBrush(theme.WeakTextColor, Color.FromRgb(0x9A, 0x9A, 0x9A));
-        Resources["DialogAccentBrush"] = MakeBrush(theme.AccentColor, Color.FromRgb(0x2F, 0x6B, 0xFF));
-        Resources["DialogBorderBrush"] = MakeBrush(theme.BorderColor, Color.FromRgb(0x3A, 0x3A, 0x3A));
         Resources["DialogPaperBrush"] = MakeBrush(
             theme.PaperColor,
-            theme.IsDark ? Color.FromRgb(0x24, 0x24, 0x24) : Colors.White);
-        Resources["DialogSurfaceBrush"] = MakeBrush(
-            theme.IsDark ? "#1AFFFFFF" : "#0A000000",
-            Color.FromArgb(0x0A, 0x00, 0x00, 0x00));
-        Resources["DialogHoverBrush"] = MakeBrush(
-            theme.IsDark ? "#1FFFFFFF" : "#0F000000",
-            Color.FromArgb(0x0F, 0x00, 0x00, 0x00));
-
-        var accent = (SolidColorBrush)Resources["DialogAccentBrush"];
-        var accentSurface = new SolidColorBrush(Color.FromArgb(
-            theme.IsDark ? (byte)46 : (byte)26,
-            accent.Color.R,
-            accent.Color.G,
-            accent.Color.B));
-        accentSurface.Freeze();
-        Resources["DialogAccentSurfaceBrush"] = accentSurface;
+            theme.IsDark ? Color.FromRgb(0x21, 0x1F, 0x1C) : Color.FromRgb(0xFF, 0xF9, 0xEA));
+        Resources["DialogBorderBrush"] = MakeBrush(theme.BorderColor, Color.FromRgb(0x4C, 0x45, 0x3D));
+        Resources["DialogButtonHoverBrush"] = TintBrush(46);
 
         FontFamily = new FontFamily(string.IsNullOrWhiteSpace(theme.FontFamily)
             ? "Microsoft YaHei UI"
             : theme.FontFamily);
-        FontSize = 13.5 * _scale;
+        FontSize = 12.0 * _scale;
     }
 
     private void BuildButtons(string primaryText, string? secondaryText)
     {
-        var text = (Brush)Resources["DialogTextBrush"];
-        var accent = (Brush)Resources["DialogAccentBrush"];
-        var border = (Brush)Resources["DialogBorderBrush"];
+        var hasSecondary = !string.IsNullOrWhiteSpace(secondaryText);
 
-        if (!string.IsNullOrWhiteSpace(secondaryText))
+        if (hasSecondary)
         {
-            var secondary = CreateButton(secondaryText!, text, Brushes.Transparent, border);
-            secondary.Margin = new Thickness(0, 0, 8, 0);
+            var secondary = CreateButton(secondaryText!, TintBrush(28));
             secondary.Click += (_, _) => CloseWith(false);
             ButtonPanel.Children.Add(secondary);
         }
 
-        var primary = CreateButton(primaryText, Brushes.White, accent, accent);
+        var primary = CreateButton(primaryText, TintBrush(hasSecondary ? 44 : 28));
+        primary.IsDefault = true;
+        if (hasSecondary)
+        {
+            primary.Margin = new Thickness(8, 0, 0, 0);
+        }
+
         primary.Click += (_, _) => CloseWith(true);
         ButtonPanel.Children.Add(primary);
     }
 
-    private Button CreateButton(string text, Brush foreground, Brush background, Brush border)
+    private Button CreateButton(string text, Brush background)
     {
         return new Button
         {
             Content = text,
             Style = (Style)FindResource("DialogButton"),
             FontSize = 13.0 * _scale,
-            Foreground = foreground,
-            Background = background,
-            BorderBrush = border
+            Foreground = (Brush)Resources["DialogTextBrush"],
+            Background = background
         };
+    }
+
+    private SolidColorBrush TintBrush(int alpha)
+    {
+        var brush = new SolidColorBrush(Color.FromArgb((byte)alpha, _tint.R, _tint.G, _tint.B));
+        brush.Freeze();
+        return brush;
     }
 
     private void CloseWith(bool result)
@@ -216,20 +194,7 @@ public partial class DataIoDialog : Window
             CloseWith(false);
             e.Handled = true;
         }
-        else if (e.Key == Key.Enter)
-        {
-            CloseWith(true);
-            e.Handled = true;
-        }
     }
-
-    private static string Glyph(DataIoDialogIcon icon) => icon switch
-    {
-        DataIoDialogIcon.Success => "✓",
-        DataIoDialogIcon.Warning => "!",
-        DataIoDialogIcon.Error => "!",
-        _ => "?"
-    };
 
     private static SolidColorBrush MakeBrush(string? hex, Color fallback)
     {
