@@ -75,6 +75,14 @@
 Z:\tool\PaperTodo-dev\plugins\papertodo.dataio.native\
 ```
 
+如果宿主是从发布目录运行的（例如 `输出\PaperTodo-v4.0.0-beta2\PaperTodo.exe`），
+需要把插件同步到该目录的 `plugins` 根，用 `-AdditionalPluginsRoot` 自动完成：
+
+```powershell
+.\scripts\Build-And-Install.ps1 `
+  -AdditionalPluginsRoot "Z:\tool\PaperTodo-dev\输出\PaperTodo-v4.0.0-beta2\plugins"
+```
+
 安装后重启 PaperTodo。原生插件不支持热重载。
 
 ## 设置项

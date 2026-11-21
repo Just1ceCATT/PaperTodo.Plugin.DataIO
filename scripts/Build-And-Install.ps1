@@ -1,6 +1,10 @@
-param(
+﻿param(
     # 宿主仓库根目录，构建脚本会安装到 <PaperTodoRoot>\plugins\<插件 id>\
-    [string]$PaperTodoRoot = "Z:\tool\PaperTodo-dev"
+    [string]$PaperTodoRoot = "Z:\tool\PaperTodo-dev",
+
+    # 可选：宿主若从发布目录运行，把产物同步到该目录的 plugins 根。
+    # 例如 "Z:\tool\PaperTodo-dev\输出\PaperTodo-v4.0.0-beta2\plugins"
+    [string]$AdditionalPluginsRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,3 +18,26 @@ if (-not (Test-Path -LiteralPath $sharedScript -PathType Leaf)) {
 $projectPath = Join-Path $PSScriptRoot "..\PaperTodo.Plugin.DATAIO.csproj"
 
 & $sharedScript -ProjectPath $projectPath -PaperTodoRoot $PaperTodoRoot
+
+# 宿主运行时从自身目录的 plugins/ 加载插件；发布目录不会自动同步仓库 plugins/。
+if (-not [string]::IsNullOrWhiteSpace($AdditionalPluginsRoot)) {
+    $manifestPath = Join-Path $PSScriptRoot "..\plugin.json"
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $pluginId = [string]$manifest.id
+
+    $source = Join-Path $PaperTodoRoot (Join-Path "plugins" $pluginId)
+    $target = Join-Path $AdditionalPluginsRoot $pluginId
+    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+        throw "共享脚本未生成插件目录：$source"
+    }
+
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    # 保留插件自己的 .runtime/（例如 WebView2 用户数据）。
+    Get-ChildItem -LiteralPath $target -Force |
+        Where-Object { $_.Name -ne ".runtime" } |
+        Remove-Item -Recurse -Force
+    Get-ChildItem -LiteralPath $source -Force |
+        Copy-Item -Destination $target -Recurse -Force
+
+    Write-Host "已同步 $pluginId 到 $target"
+}
