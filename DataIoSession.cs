@@ -81,7 +81,12 @@ internal sealed class DataIoSession : IPaperBodySession
 
     public void RefreshFromModel() => ScheduleRefresh();
 
-    public void CancelInteractions() => _operation?.Cancel();
+    public void CancelInteractions()
+    {
+        // 宿主在纸片失焦、隐藏或形态切换时会调用 CancelInteractions，用于中止拖拽/输入等
+        // 瞬态交互。导入过程中创建并显示新纸片会让工具纸片失焦，因此这里绝不能取消导入任务；
+        // 导入只在会话 Dispose 时中止。
+    }
 
     public void OnActivated() => ScheduleRefresh();
 

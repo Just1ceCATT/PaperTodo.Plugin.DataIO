@@ -486,7 +486,16 @@
                 ClipToBounds="True">
           <StackPanel x:Name="NotesContent" Margin="0,4,0,2">
             <WrapPanel Margin="0,0,0,6">
-              <CheckBox x:Name="NotesSelectAll" Content="全选" Margin="0,0,10,0" />
+              <Button x:Name="NotesSelectAllButton"
+                      Content="全选"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2"
+                      Margin="0,0,8,0" />
+              <Button x:Name="NotesClearButton"
+                      Content="清空"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2"
+                      Margin="0,0,8,0" />
               <Button x:Name="NotesInvertButton"
                       Content="反选"
                       Style="{StaticResource GhostButton}"
@@ -532,7 +541,16 @@
                 ClipToBounds="True">
           <StackPanel x:Name="TodosContent" Margin="0,4,0,2">
             <WrapPanel Margin="0,0,0,6">
-              <CheckBox x:Name="TodosSelectAll" Content="全选" Margin="0,0,10,0" />
+              <Button x:Name="TodosSelectAllButton"
+                      Content="全选"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2"
+                      Margin="0,0,8,0" />
+              <Button x:Name="TodosClearButton"
+                      Content="清空"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2"
+                      Margin="0,0,8,0" />
               <Button x:Name="TodosInvertButton"
                       Content="反选"
                       Style="{StaticResource GhostButton}"

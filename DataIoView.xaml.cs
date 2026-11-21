@@ -276,8 +276,10 @@ public partial class DataIoView : UserControl
         BusyBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         PrimaryButton.IsEnabled = !busy && _primaryEnabled;
         ChooseFileButton.IsEnabled = !busy;
-        NotesSelectAll.IsEnabled = !busy;
-        TodosSelectAll.IsEnabled = !busy;
+        NotesSelectAllButton.IsEnabled = !busy;
+        NotesClearButton.IsEnabled = !busy;
+        TodosSelectAllButton.IsEnabled = !busy;
+        TodosClearButton.IsEnabled = !busy;
         NotesInvertButton.IsEnabled = !busy;
         TodosInvertButton.IsEnabled = !busy;
         ExportModeButton.IsEnabled = !busy && _canExport;
@@ -329,8 +331,6 @@ public partial class DataIoView : UserControl
         }
 
         _suppressSelectionEvents = false;
-        UpdateSelectAllState("note");
-        UpdateSelectAllState("todo");
     }
 
     public IReadOnlyList<string> GetSelectedKeys(string type) =>
@@ -351,16 +351,7 @@ public partial class DataIoView : UserControl
             return;
         }
 
-        UpdateSelectAllState(row.Type);
         RaiseSelectionChanged(row.Type);
-    }
-
-    private void UpdateSelectAllState(string type)
-    {
-        var rows = type == "todo" ? _todoRows : _noteRows;
-        var checkBox = type == "todo" ? TodosSelectAll : NotesSelectAll;
-        var selectable = rows.Where(r => r.CanSelect).ToList();
-        checkBox.IsChecked = selectable.Count > 0 && selectable.All(r => r.IsSelected);
     }
 
     private void RaiseSelectionChanged(string type)
@@ -375,11 +366,14 @@ public partial class DataIoView : UserControl
         }
     }
 
-    private void OnNotesSelectAllClick(object sender, RoutedEventArgs e) =>
-        SetAllOfType("note", NotesSelectAll.IsChecked == true);
+    // 全选/清空是幂等动作，不依赖控件自身勾选状态。
+    private void OnNotesSelectAllClick(object sender, RoutedEventArgs e) => SetAllOfType("note", true);
 
-    private void OnTodosSelectAllClick(object sender, RoutedEventArgs e) =>
-        SetAllOfType("todo", TodosSelectAll.IsChecked == true);
+    private void OnNotesClearClick(object sender, RoutedEventArgs e) => SetAllOfType("note", false);
+
+    private void OnTodosSelectAllClick(object sender, RoutedEventArgs e) => SetAllOfType("todo", true);
+
+    private void OnTodosClearClick(object sender, RoutedEventArgs e) => SetAllOfType("todo", false);
 
     private void OnNotesInvertClick(object sender, RoutedEventArgs e) => InvertType("note");
 
@@ -395,7 +389,6 @@ public partial class DataIoView : UserControl
         }
 
         _suppressSelectionEvents = false;
-        UpdateSelectAllState(type);
         RaiseSelectionChanged(type);
     }
 
@@ -409,7 +402,6 @@ public partial class DataIoView : UserControl
         }
 
         _suppressSelectionEvents = false;
-        UpdateSelectAllState(type);
         RaiseSelectionChanged(type);
     }
 
@@ -420,8 +412,10 @@ public partial class DataIoView : UserControl
 
         NotesRow.MouseLeftButtonUp += OnNotesRowClick;
         TodosRow.MouseLeftButtonUp += OnTodosRowClick;
-        NotesSelectAll.Click += OnNotesSelectAllClick;
-        TodosSelectAll.Click += OnTodosSelectAllClick;
+        NotesSelectAllButton.Click += OnNotesSelectAllClick;
+        NotesClearButton.Click += OnNotesClearClick;
+        TodosSelectAllButton.Click += OnTodosSelectAllClick;
+        TodosClearButton.Click += OnTodosClearClick;
         NotesInvertButton.Click += OnNotesInvertClick;
         TodosInvertButton.Click += OnTodosInvertClick;
 
