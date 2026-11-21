@@ -2,51 +2,42 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 工具纸片主体界面：导出/导入双模式、类型选择、范围切换与详情勾选。
+/// 工具纸片主体界面：导出/导入双模式、内容类型入口与详情多选。
 /// 只负责展示和收集用户输入，不直接调用宿主写 API。
 /// </summary>
 public partial class DataIoView : UserControl
 {
     private readonly ObservableCollection<PaperRowItem> _rows = [];
     private readonly List<PaperRowItem> _allRows = [];
-    private bool _suppressFilterEvents;
     private bool _suppressModeEvents;
-    private bool _suppressToggleEvents;
     private bool _suppressSelectionEvents;
+    private string _detailType = "note";
     private bool _busy;
     private bool _primaryEnabled;
     private bool _canExport = true;
     private bool _canImport = true;
     private PaperBodyTheme? _theme;
-    private IPaperBodyControls? _controls;
-    private double _lastSelectFontSize = -1;
     private bool _sizeHooked;
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
-    public DataIoScope Scope { get; private set; } = DataIoScope.All;
-    public bool IncludeNotes => NotesToggle.IsChecked == true;
-    public bool IncludeTodos => TodosToggle.IsChecked == true;
     public bool IsDetailVisible => DetailPanel.Visibility == Visibility.Visible;
-    public string CurrentFilter =>
-        (FilterBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "all";
     public string CurrentSearch => SearchBox.Text?.Trim() ?? "";
 
     public event EventHandler? ModeChanged;
-    public event EventHandler? TypeSelectionChanged;
-    public event EventHandler? ScopeAllRequested;
-    public event EventHandler? ScopeCustomRequested;
+    public event EventHandler? NotesDetailRequested;
+    public event EventHandler? TodosDetailRequested;
     public event EventHandler? BackRequested;
     public event EventHandler? PrimaryActionRequested;
     public event EventHandler? ChooseImportFileRequested;
     public event EventHandler? DetailSelectionChanged;
-    public event EventHandler? FilterChanged;
+    public event EventHandler? SearchChanged;
 
     public DataIoView()
     {
@@ -68,10 +59,8 @@ public partial class DataIoView : UserControl
         SummaryPanel.Children.Insert(0, ModeCardsGrid);
 
         PaperList.ItemsSource = _rows;
-        BuildFilterItems();
         WireEvents();
         ApplyModeVisuals(DataIoMode.Export);
-        SetScope(DataIoScope.All, 0);
         ApplyFilter();
     }
 
@@ -108,7 +97,9 @@ public partial class DataIoView : UserControl
         var isExport = mode == DataIoMode.Export;
         ImportFileSection.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         ContentSectionTitle.Text = isExport ? "导出内容" : "导入内容";
-        ContentSectionHint.Text = isExport ? "选择需要导出的数据类型" : "选择需要导入的数据类型";
+        ContentSectionHint.Text = isExport
+            ? "点击条目选择要导出的具体内容"
+            : "点击条目选择要导入的具体内容";
         FormatRow.Visibility = isExport ? Visibility.Visible : Visibility.Collapsed;
         StrategyRow.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         EstimateTitle.Text = isExport ? "导出预估" : "导入预估";
@@ -117,50 +108,20 @@ public partial class DataIoView : UserControl
         ShowDetail(false);
     }
 
-    // ---------- 内容类型 ----------
+    // ---------- 内容统计 ----------
 
-    public void SetTypeToggles(bool notes, bool todos)
+    public void SetCounts(string notesText, string todosText)
     {
-        _suppressToggleEvents = true;
-        NotesToggle.IsChecked = notes;
-        TodosToggle.IsChecked = todos;
-        _suppressToggleEvents = false;
+        NotesCountText.Text = notesText;
+        TodosCountText.Text = todosText;
     }
 
     public void SetTypeAvailability(bool notesEnabled, bool todosEnabled)
     {
-        NotesToggle.IsEnabled = notesEnabled;
-        NotesRow.Opacity = notesEnabled ? 1.0 : 0.5;
-        TodosToggle.IsEnabled = todosEnabled;
-        TodosRow.Opacity = todosEnabled ? 1.0 : 0.5;
-    }
-
-    public void SetCounts(int notes, int todos)
-    {
-        NotesCountText.Text = $"{Math.Max(0, notes)} 条";
-        TodosCountText.Text = $"{Math.Max(0, todos)} 条";
-    }
-
-    private void OnTypeToggled(object? sender, RoutedEventArgs e)
-    {
-        if (!_suppressToggleEvents)
-        {
-            TypeSelectionChanged?.Invoke(this, EventArgs.Empty);
-        }
-    }
-
-    // ---------- 范围 ----------
-
-    public void SetScope(DataIoScope scope, int selectedCount)
-    {
-        Scope = scope;
-        ScopeAllBadge.Visibility = scope == DataIoScope.All ? Visibility.Visible : Visibility.Collapsed;
-        ScopeCustomHint.Text = scope == DataIoScope.Custom ? $"已选 {Math.Max(0, selectedCount)} 项" : "";
-
-        // 主题资源在构造函数之后才注入，这里用 TryFindResource 避免早期 KeyNotFound。
-        var accentBorder = TryFindResource("DataIoAccentBorderBrush") as Brush ?? Brushes.Transparent;
-        ScopeAllRow.BorderBrush = scope == DataIoScope.All ? accentBorder : Brushes.Transparent;
-        ScopeCustomRow.BorderBrush = scope == DataIoScope.Custom ? accentBorder : Brushes.Transparent;
+        NotesRow.IsEnabled = notesEnabled;
+        NotesRow.Opacity = notesEnabled ? 1.0 : 0.45;
+        TodosRow.IsEnabled = todosEnabled;
+        TodosRow.Opacity = todosEnabled ? 1.0 : 0.45;
     }
 
     // ---------- 预估与主操作 ----------
@@ -212,7 +173,12 @@ public partial class DataIoView : UserControl
         DetailPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    public void SetDetailTitle(string title) => DetailTitle.Text = title;
+    public void SetDetailType(string type, string title)
+    {
+        _detailType = type;
+        DetailTitle.Text = title;
+        ApplyFilter();
+    }
 
     /// <summary>刷新详情列表；按 Key 保留已有勾选状态。</summary>
     public void SetRows(IReadOnlyList<PaperRowItem> rows)
@@ -260,20 +226,6 @@ public partial class DataIoView : UserControl
         DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void SelectAllVisible()
-    {
-        _suppressSelectionEvents = true;
-        foreach (var row in _rows.Where(r => r.CanSelect))
-        {
-            row.IsSelected = true;
-        }
-
-        _suppressSelectionEvents = false;
-        UpdateSelectAllState();
-        DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
-    }
-
-    /// <summary>忽略当前筛选，选中全部可选项；用于首次进入"指定"范围。</summary>
     public void SelectAllRows()
     {
         _suppressSelectionEvents = true;
@@ -285,6 +237,11 @@ public partial class DataIoView : UserControl
         _suppressSelectionEvents = false;
         UpdateSelectAllState();
         DetailSelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetSearch(string? search)
+    {
+        SearchBox.Text = search ?? "";
     }
 
     private void OnRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -300,45 +257,14 @@ public partial class DataIoView : UserControl
 
     // ---------- 筛选 ----------
 
-    public void SetFilter(string filter, string search)
-    {
-        _suppressFilterEvents = true;
-        FilterBox.SelectedIndex = filter switch
-        {
-            "todo" => 1,
-            "note" => 2,
-            _ => 0
-        };
-        SearchBox.Text = search ?? "";
-        _suppressFilterEvents = false;
-        ApplyFilter();
-    }
-
-    private void BuildFilterItems()
-    {
-        _suppressFilterEvents = true;
-        FilterBox.Items.Clear();
-        FilterBox.Items.Add(new ComboBoxItem { Content = "全部", Tag = "all" });
-        FilterBox.Items.Add(new ComboBoxItem { Content = "待办", Tag = "todo" });
-        FilterBox.Items.Add(new ComboBoxItem { Content = "笔记", Tag = "note" });
-        FilterBox.SelectedIndex = 0;
-        _suppressFilterEvents = false;
-    }
-
     private void ApplyFilter()
     {
-        var filter = CurrentFilter;
         var search = CurrentSearch;
 
         _rows.Clear();
         foreach (var row in _allRows)
         {
-            if (filter == "todo" && row.Type != "todo")
-            {
-                continue;
-            }
-
-            if (filter == "note" && row.Type != "note")
+            if (row.Type != _detailType)
             {
                 continue;
             }
@@ -361,15 +287,10 @@ public partial class DataIoView : UserControl
         SelectAllCheckBox.IsChecked = selectable.Count > 0 && selectable.All(r => r.IsSelected);
     }
 
-    private void OnFilterOrSearchChanged(object? sender, EventArgs e)
+    private void OnSearchChanged(object sender, TextChangedEventArgs e)
     {
-        if (_suppressFilterEvents)
-        {
-            return;
-        }
-
         ApplyFilter();
-        FilterChanged?.Invoke(this, EventArgs.Empty);
+        SearchChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnSelectAllClick(object sender, RoutedEventArgs e)
@@ -404,21 +325,15 @@ public partial class DataIoView : UserControl
         ExportModeButton.Checked += OnModeChecked;
         ImportModeButton.Checked += OnModeChecked;
 
-        NotesToggle.Checked += OnTypeToggled;
-        NotesToggle.Unchecked += OnTypeToggled;
-        TodosToggle.Checked += OnTypeToggled;
-        TodosToggle.Unchecked += OnTypeToggled;
-
-        ScopeAllRow.MouseLeftButtonUp += (_, _) => ScopeAllRequested?.Invoke(this, EventArgs.Empty);
-        ScopeCustomRow.MouseLeftButtonUp += (_, _) => ScopeCustomRequested?.Invoke(this, EventArgs.Empty);
+        NotesRow.MouseLeftButtonUp += (_, _) => NotesDetailRequested?.Invoke(this, EventArgs.Empty);
+        TodosRow.MouseLeftButtonUp += (_, _) => TodosDetailRequested?.Invoke(this, EventArgs.Empty);
         BackButton.Click += (_, _) => BackRequested?.Invoke(this, EventArgs.Empty);
         PrimaryButton.Click += (_, _) => PrimaryActionRequested?.Invoke(this, EventArgs.Empty);
         ChooseFileButton.Click += (_, _) => ChooseImportFileRequested?.Invoke(this, EventArgs.Empty);
 
         SelectAllCheckBox.Click += OnSelectAllClick;
         InvertButton.Click += OnInvertClick;
-        FilterBox.SelectionChanged += OnFilterOrSearchChanged;
-        SearchBox.TextChanged += OnFilterOrSearchChanged;
+        SearchBox.TextChanged += OnSearchChanged;
     }
 
     // ---------- 主题 ----------
@@ -426,10 +341,6 @@ public partial class DataIoView : UserControl
     public void ApplyTheme(PaperBodyTheme theme, IPaperBodyControls? controls = null)
     {
         _theme = theme;
-        if (controls != null)
-        {
-            _controls = controls;
-        }
 
         Resources["DataIoTextBrush"] = MakeBrush(theme.TextColor, Color.FromRgb(0x20, 0x20, 0x20));
         Resources["DataIoWeakBrush"] = MakeBrush(theme.WeakTextColor, Color.FromRgb(0x70, 0x70, 0x70));
@@ -500,7 +411,6 @@ public partial class DataIoView : UserControl
         var tiny = width < 320;
 
         var themeScale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.7, 2.5);
-        // 纸片越窄字号越小，但保留可读下限。
         var widthFactor = Math.Clamp((width - 240) / 480.0, 0.84, 1.0);
         var scale = themeScale * widthFactor;
 
@@ -537,20 +447,6 @@ public partial class DataIoView : UserControl
         ExportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 5, 0);
         ImportModeButton.Margin = stacked ? new Thickness(0) : new Thickness(5, 0, 0, 0);
         ImportFileSection.Margin = new Thickness(0, compact ? 12 : 16, 0, 0);
-
-        var selectFontSize = 11.5 * scale;
-        if (_controls is { } controls && Math.Abs(selectFontSize - _lastSelectFontSize) > 0.4)
-        {
-            _lastSelectFontSize = selectFontSize;
-            try
-            {
-                controls.ApplySelectStyle(FilterBox, selectFontSize);
-            }
-            catch (Exception)
-            {
-                // 宿主控件样式不可用时保持默认外观。
-            }
-        }
     }
 
     public void SetStatus(string text) => StatusText.Text = text;
