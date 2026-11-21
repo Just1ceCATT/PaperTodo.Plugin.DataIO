@@ -17,8 +17,8 @@
       <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
     </Style>
     <Style x:Key="RowBorder" TargetType="Border">
-      <Setter Property="Padding" Value="12,10" />
-      <Setter Property="Margin" Value="0,6,0,0" />
+      <Setter Property="Padding" Value="{DynamicResource DataIoRowPadding}" />
+      <Setter Property="Margin" Value="{DynamicResource DataIoRowMargin}" />
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="BorderBrush" Value="Transparent" />
@@ -26,7 +26,7 @@
     </Style>
     <Style x:Key="Divider" TargetType="Border">
       <Setter Property="Height" Value="1" />
-      <Setter Property="Margin" Value="0,18,0,4" />
+      <Setter Property="Margin" Value="{DynamicResource DataIoDividerMargin}" />
       <Setter Property="Background" Value="{DynamicResource DataIoDividerBrush}" />
     </Style>
     <Style x:Key="Icon" TargetType="TextBlock">
@@ -52,11 +52,12 @@
     <Style x:Key="ModeCard" TargetType="RadioButton">
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+      <Setter Property="Padding" Value="10,14" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
             <Border x:Name="Card"
-                    Padding="10,14"
+                    Padding="{TemplateBinding Padding}"
                     CornerRadius="8"
                     BorderThickness="1"
                     Background="Transparent"
@@ -78,7 +79,7 @@
     </Style>
 
     <Style x:Key="PrimaryButton" TargetType="Button">
-      <Setter Property="Height" Value="46" />
+      <Setter Property="Height" Value="{DynamicResource DataIoPrimaryHeight}" />
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="FontSize" Value="{DynamicResource DataIoFontSize}" />
       <Setter Property="FontWeight" Value="SemiBold" />
@@ -150,7 +151,7 @@
     </Style>
   </UserControl.Resources>
 
-  <Grid Margin="18,16,18,14">
+  <Grid x:Name="RootGrid" Margin="18,16,18,14">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
@@ -167,10 +168,12 @@
       </Grid.ColumnDefinitions>
       <TextBlock Text="数据传输"
                  VerticalAlignment="Center"
+                 TextTrimming="CharacterEllipsis"
                  FontSize="{DynamicResource DataIoTitleFontSize}"
                  FontWeight="Bold"
                  Foreground="{DynamicResource DataIoTextBrush}" />
-      <Border Grid.Column="1"
+      <Border x:Name="HeaderBadge"
+              Grid.Column="1"
               CornerRadius="6"
               Padding="8,3"
               BorderThickness="1"
@@ -182,16 +185,13 @@
       </Border>
     </Grid>
 
-    <!-- 导出 / 导入模式 -->
-    <Grid Grid.Row="1" Margin="0,14,0,0">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*" />
-        <ColumnDefinition Width="10" />
-        <ColumnDefinition Width="*" />
-      </Grid.ColumnDefinitions>
-
+    <!-- 导出 / 导入模式：窄纸片自动改为上下排列 -->
+    <UniformGrid x:Name="ModeCardsGrid"
+                 Grid.Row="1"
+                 Columns="2"
+                 Margin="0,14,0,0">
       <RadioButton x:Name="ExportModeButton"
-                   Grid.Column="0"
+                   Margin="0,0,5,0"
                    GroupName="DataIoMode"
                    Style="{StaticResource ModeCard}"
                    IsChecked="True">
@@ -225,16 +225,19 @@
               </Style>
             </TextBlock.Style>
           </TextBlock>
-          <TextBlock Text="选择内容并生成文件"
+          <TextBlock x:Name="ExportModeSubtitle"
+                     Text="选择内容并生成文件"
                      Margin="0,3,0,0"
                      HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
                      FontSize="{DynamicResource DataIoWeakFontSize}"
                      Foreground="{DynamicResource DataIoWeakBrush}" />
         </StackPanel>
       </RadioButton>
 
       <RadioButton x:Name="ImportModeButton"
-                   Grid.Column="2"
+                   Margin="5,0,0,0"
                    GroupName="DataIoMode"
                    Style="{StaticResource ModeCard}">
         <StackPanel>
@@ -267,14 +270,17 @@
               </Style>
             </TextBlock.Style>
           </TextBlock>
-          <TextBlock Text="从文件恢复内容"
+          <TextBlock x:Name="ImportModeSubtitle"
+                     Text="从文件恢复内容"
                      Margin="0,3,0,0"
                      HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
                      FontSize="{DynamicResource DataIoWeakFontSize}"
                      Foreground="{DynamicResource DataIoWeakBrush}" />
         </StackPanel>
       </RadioButton>
-    </Grid>
+    </UniformGrid>
 
     <!-- 概要 / 详情 -->
     <Grid Grid.Row="2" Margin="0,14,0,0">
@@ -313,8 +319,7 @@
           <!-- 内容类型 -->
           <TextBlock x:Name="ContentSectionTitle"
                      Text="导出内容"
-                     Style="{StaticResource SectionTitle}"
-                     Margin="0,16,0,0" />
+                     Style="{StaticResource SectionTitle}" />
           <TextBlock x:Name="ContentSectionHint"
                      Text="选择需要导出的数据类型"
                      Style="{StaticResource SectionHint}" />
@@ -437,11 +442,11 @@
           <!-- 预估 -->
           <TextBlock x:Name="EstimateTitle"
                      Text="导出预估"
-                     Style="{StaticResource SectionHint}"
-                     Margin="0,18,0,0" />
+                     Style="{StaticResource SectionHint}" />
           <TextBlock x:Name="EstimateMain"
                      Text="0 条笔记 · 0 条待办"
                      Margin="0,4,0,0"
+                     TextWrapping="Wrap"
                      FontSize="{DynamicResource DataIoEstimateFontSize}"
                      FontWeight="Bold"
                      Foreground="{DynamicResource DataIoTextBrush}" />

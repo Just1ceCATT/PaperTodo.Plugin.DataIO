@@ -24,6 +24,10 @@ public partial class DataIoView : UserControl
     private bool _primaryEnabled;
     private bool _canExport = true;
     private bool _canImport = true;
+    private PaperBodyTheme? _theme;
+    private IPaperBodyControls? _controls;
+    private double _lastSelectFontSize = -1;
+    private bool _sizeHooked;
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
     public DataIoScope Scope { get; private set; } = DataIoScope.All;
@@ -47,6 +51,13 @@ public partial class DataIoView : UserControl
     public DataIoView()
     {
         InitializeComponent();
+
+        // 主题尚未注入时先提供常规密度，避免首帧出现零边距。
+        Resources["DataIoRowPadding"] = new Thickness(12, 10, 12, 10);
+        Resources["DataIoRowMargin"] = new Thickness(0, 6, 0, 0);
+        Resources["DataIoDividerMargin"] = new Thickness(0, 18, 0, 4);
+        Resources["DataIoPrimaryHeight"] = 46.0;
+
         PaperList.ItemsSource = _rows;
         BuildFilterItems();
         WireEvents();
@@ -405,7 +416,11 @@ public partial class DataIoView : UserControl
 
     public void ApplyTheme(PaperBodyTheme theme, IPaperBodyControls? controls = null)
     {
-        var scale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.7, 2.5);
+        _theme = theme;
+        if (controls != null)
+        {
+            _controls = controls;
+        }
 
         Resources["DataIoTextBrush"] = MakeBrush(theme.TextColor, Color.FromRgb(0x20, 0x20, 0x20));
         Resources["DataIoWeakBrush"] = MakeBrush(theme.WeakTextColor, Color.FromRgb(0x70, 0x70, 0x70));
@@ -433,19 +448,93 @@ public partial class DataIoView : UserControl
             : theme.FontFamily);
         Resources["DataIoFontFamily"] = fontFamily;
         Resources["DataIoIconFontFamily"] = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets");
-        Resources["DataIoFontSize"] = 12.5 * scale;
-        Resources["DataIoTitleFontSize"] = 19.0 * scale;
-        Resources["DataIoSectionFontSize"] = 13.5 * scale;
-        Resources["DataIoEstimateFontSize"] = 16.0 * scale;
-        Resources["DataIoWeakFontSize"] = 10.5 * scale;
-
         FontFamily = fontFamily;
 
-        if (controls != null)
+        if (!_sizeHooked)
         {
+            SizeChanged += OnViewSizeChanged;
+            _sizeHooked = true;
+        }
+
+        ApplyMetrics();
+    }
+
+    private void OnViewSizeChanged(object sender, SizeChangedEventArgs e) => ApplyMetrics();
+
+    /// <summary>
+    /// 根据纸片实际宽高切换紧凑布局：窄纸片上下排列模式卡片、隐藏副标题，
+    /// 小纸片收紧边距与字号；大纸片保持常规密度。
+    /// </summary>
+    private void ApplyMetrics()
+    {
+        if (_theme is not { } theme)
+        {
+            return;
+        }
+
+        var width = ActualWidth;
+        var height = ActualHeight;
+        if (double.IsNaN(width) || width <= 0)
+        {
+            width = 320;
+        }
+
+        if (double.IsNaN(height) || height <= 0)
+        {
+            height = 360;
+        }
+
+        var narrow = width < 380;
+        var stacked = width < 300;
+        var compact = height < 560 || narrow;
+        var hideSubtitle = narrow || height < 460;
+        var tiny = width < 320;
+
+        var themeScale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.7, 2.5);
+        // 纸片越窄字号越小，但保留可读下限。
+        var widthFactor = Math.Clamp((width - 240) / 480.0, 0.84, 1.0);
+        var scale = themeScale * widthFactor;
+
+        Resources["DataIoFontSize"] = 12.5 * scale;
+        Resources["DataIoTitleFontSize"] = (narrow ? 16.0 : 19.0) * scale;
+        Resources["DataIoSectionFontSize"] = (narrow ? 12.5 : 13.5) * scale;
+        Resources["DataIoEstimateFontSize"] = (narrow ? 14.0 : 16.0) * scale;
+        Resources["DataIoWeakFontSize"] = (narrow ? 9.5 : 10.5) * scale;
+
+        Resources["DataIoRowPadding"] = compact
+            ? new Thickness(10, 8, 10, 8)
+            : new Thickness(12, 10, 12, 10);
+        Resources["DataIoRowMargin"] = new Thickness(0, compact ? 4 : 6, 0, 0);
+        Resources["DataIoDividerMargin"] = new Thickness(0, compact ? 12 : 18, 0, 4);
+        Resources["DataIoPrimaryHeight"] = compact ? 40.0 : 46.0;
+
+        RootGrid.Margin = compact
+            ? new Thickness(12, 10, 12, 10)
+            : new Thickness(18, 16, 18, 14);
+        ContentSectionTitle.Margin = new Thickness(0, compact ? 12 : 16, 0, 0);
+        EstimateTitle.Margin = new Thickness(0, compact ? 12 : 18, 0, 0);
+
+        HeaderBadge.Visibility = tiny ? Visibility.Collapsed : Visibility.Visible;
+        ExportModeSubtitle.Visibility = hideSubtitle ? Visibility.Collapsed : Visibility.Visible;
+        ImportModeSubtitle.Visibility = hideSubtitle ? Visibility.Collapsed : Visibility.Visible;
+        SummaryPanel.Margin = compact ? new Thickness(0, 0, 10, 0) : new Thickness(0, 0, 4, 0);
+
+        ModeCardsGrid.Columns = stacked ? 1 : 2;
+        ModeCardsGrid.Margin = new Thickness(0, compact ? 10 : 14, 0, 0);
+        ExportModeButton.Padding = compact
+            ? new Thickness(8, 10, 8, 10)
+            : new Thickness(10, 14, 10, 14);
+        ImportModeButton.Padding = ExportModeButton.Padding;
+        ExportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 5, 0);
+        ImportModeButton.Margin = stacked ? new Thickness(0) : new Thickness(5, 0, 0, 0);
+
+        var selectFontSize = 11.5 * scale;
+        if (_controls is { } controls && Math.Abs(selectFontSize - _lastSelectFontSize) > 0.4)
+        {
+            _lastSelectFontSize = selectFontSize;
             try
             {
-                controls.ApplySelectStyle(FilterBox, 11.5 * scale);
+                controls.ApplySelectStyle(FilterBox, selectFontSize);
             }
             catch (Exception)
             {
