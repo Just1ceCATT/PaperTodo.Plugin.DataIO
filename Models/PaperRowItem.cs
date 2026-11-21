@@ -1,0 +1,39 @@
+using System.ComponentModel;
+using System.Windows;
+
+namespace PaperTodo.Plugin.DataIo;
+
+/// <summary>UI 列表中的一行纸片，承载勾选状态与展示摘要。</summary>
+public sealed class PaperRowItem : INotifyPropertyChanged
+{
+    private bool _isSelected;
+
+    public required string PaperId { get; init; }
+    public required string Title { get; init; }
+    /// <summary>宿主类型：todo 或 note。</summary>
+    public required string Type { get; init; }
+    public required string TypeLabel { get; init; }
+    public string Summary { get; init; } = "";
+    public string Warning { get; init; } = "";
+    public bool CanSelect { get; init; } = true;
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
+    public Visibility WarningVisibility =>
+        string.IsNullOrEmpty(Warning) ? Visibility.Collapsed : Visibility.Visible;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}

@@ -1,0 +1,120 @@
+{
+  "kind": "native",
+  "id": "papertodo.dataio.native",
+  "name": "纸片数据导入导出",
+  "description": "按整张纸片导出标题、类型、待办和笔记正文为 JSON，并把导出的纸片作为新纸片追加导入。",
+  "version": "1.0.0",
+  "apiVersion": "2.3",
+  "stateVersion": 1,
+  "maxPaperInstances": 1,
+  "entry": "PaperTodo.Plugin.DATAIO.dll",
+  "capabilities": [
+    "textZoom"
+  ],
+  "permissions": [
+    "papers.read",
+    "papers.create",
+    "todos.read",
+    "todos.append",
+    "todos.update",
+    "notes.read",
+    "notes.append"
+  ],
+  "advancedSettings": true,
+  "primarySettings": 2,
+  "settingCategories": [
+    {
+      "name": "导出",
+      "column": "left"
+    },
+    {
+      "name": "导入",
+      "column": "left"
+    },
+    {
+      "name": "界面",
+      "column": "right"
+    }
+  ],
+  "settings": [
+    {
+      "id": "autoStart",
+      "type": "boolean",
+      "name": "启动后自动打开",
+      "description": "自动创建或恢复一张“数据导入导出”工具纸片。",
+      "default": true,
+      "quick": true,
+      "category": "界面"
+    },
+    {
+      "id": "includeTodoPapers",
+      "type": "boolean",
+      "name": "显示待办纸片",
+      "description": "在数据列表中显示待办纸片。",
+      "default": true,
+      "category": "导出"
+    },
+    {
+      "id": "includeNotePapers",
+      "type": "boolean",
+      "name": "显示笔记纸片",
+      "description": "在数据列表中显示内置 Markdown 笔记纸片。",
+      "default": true,
+      "category": "导出"
+    },
+    {
+      "id": "includePluginPapers",
+      "type": "boolean",
+      "name": "显示其他插件纸片",
+      "description": "其他插件的正文无法通过逻辑 API 读取；勾选后只导出元数据，导入后会得到空笔记。",
+      "default": false,
+      "category": "导出"
+    },
+    {
+      "id": "importShowCreated",
+      "type": "boolean",
+      "name": "导入后显示新纸片",
+      "description": "忽略导出文件中的可见性，导入后统一显示新纸片。",
+      "default": true,
+      "category": "导入"
+    },
+    {
+      "id": "confirmBeforeImport",
+      "type": "boolean",
+      "name": "导入前确认",
+      "description": "显示将导入的纸片数量、类型和无法还原的内容。",
+      "default": true,
+      "category": "导入"
+    },
+    {
+      "id": "restoreOrder",
+      "type": "boolean",
+      "name": "还原待办顺序",
+      "description": "导入后按导出顺序修正待办 Order；宿主开启“完成项自动置底”时仍以宿主排序为准。",
+      "default": true,
+      "category": "导入"
+    },
+    {
+      "id": "restoreLinks",
+      "type": "boolean",
+      "name": "还原纸片链接",
+      "description": "只还原同一导入文件内存在的链接目标；文件外目标会被丢弃。",
+      "default": true,
+      "category": "导入"
+    },
+    {
+      "id": "restoreReminders",
+      "type": "boolean",
+      "name": "还原提醒",
+      "description": "只还原未来且未完成待办的提醒；宿主关闭提醒实验特性时会跳过。",
+      "default": true,
+      "category": "导入"
+    }
+  ],
+  "startupPaper": {
+    "enabledSetting": "autoStart",
+    "instanceKey": "main",
+    "presentation": "expanded",
+    "title": "数据导入导出"
+  }
+}

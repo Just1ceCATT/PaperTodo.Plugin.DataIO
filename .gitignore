@@ -1,0 +1,13 @@
+# 构建产物
+bin/
+obj/
+artifacts/
+
+# IDE 本地文件
+.vs/
+*.user
+*.suo
+*.userosscache
+
+# 本地打包产物
+dist/

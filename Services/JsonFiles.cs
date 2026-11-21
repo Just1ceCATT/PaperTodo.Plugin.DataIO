@@ -1,0 +1,65 @@
+using System.IO;
+using System.Text;
+
+namespace PaperTodo.Plugin.DataIo;
+
+/// <summary>导入导出文件的读写工具，包含大小限制与原子替换。</summary>
+internal static class JsonFiles
+{
+    /// <summary>导入文件大小上限，避免一次读入超大文件拖垮宿主。</summary>
+    public const long MaxImportBytes = 64L * 1024 * 1024;
+
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    public static string ReadAllText(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists)
+        {
+            throw new FileNotFoundException("导入文件不存在。", path);
+        }
+
+        if (info.Length > MaxImportBytes)
+        {
+            throw new InvalidDataException("导入文件超过 64 MiB 上限。");
+        }
+
+        // File.ReadAllText 会自动识别并跳过 UTF-8 BOM。
+        return File.ReadAllText(path, Encoding.UTF8);
+    }
+
+    /// <summary>先写临时文件再原子替换，避免中途失败留下半截文件。</summary>
+    public static void WriteAllTextAtomic(string path, string text)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temp, text, Utf8NoBom);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+            {
+                try
+                {
+                    File.Delete(temp);
+                }
+                catch (IOException)
+                {
+                    // 清理失败不影响主流程。
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // 清理失败不影响主流程。
+                }
+            }
+        }
+    }
+}
