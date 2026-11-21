@@ -291,6 +291,14 @@ public partial class DataIoView : UserControl
         ChooseFileButton.Content = hasFile ? "重新选择" : "选择文件";
     }
 
+    /// <summary>导入文件含图片引用时的醒目提示；null 表示隐藏。</summary>
+    public void SetImageWarning(string? text)
+    {
+        var hasText = !string.IsNullOrWhiteSpace(text);
+        ImageWarningText.Text = hasText ? text! : "";
+        ImageWarningText.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     public void SetBusy(bool busy)
     {
         if (busy)

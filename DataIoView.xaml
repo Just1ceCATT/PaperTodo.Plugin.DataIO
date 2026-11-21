@@ -487,6 +487,12 @@
                       Style="{StaticResource GhostButton}" />
             </Grid>
           </Border>
+          <TextBlock x:Name="ImageWarningText"
+                     Margin="2,8,2,0"
+                     TextWrapping="Wrap"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWarningBrush}"
+                     Visibility="Collapsed" />
         </StackPanel>
 
         <!-- 内容类型：点击行就地展开 -->

@@ -739,8 +739,14 @@ internal sealed class DataIoSession : IPaperBodySession
             _view.SetTypeAvailability(false, false);
             _view.SetEstimate("尚未选择导入文件", "选择归档或 JSON 文件后显示预估");
             _view.SetPrimaryEnabled(false);
+            _view.SetImageWarning(null);
             return;
         }
+
+        _view.SetImageWarning(_importPlan.ImageReferenceCount > 0
+            ? $"文件中有 {_importPlan.NotesWithImages} 张笔记包含 {_importPlan.ImageReferenceCount} 处图片引用。" +
+              "归档只保存正文文本，图片本体不在文件中；导入到其他设备或原图已清理后将无法显示。"
+            : null);
 
         var notes = GetImportCandidates("note").ToList();
         var todos = GetImportCandidates("todo").ToList();
@@ -842,8 +848,11 @@ internal sealed class DataIoSession : IPaperBodySession
     private void OnPrimaryActionRequested(object? sender, EventArgs e) =>
         _ = RunGuardedAsync(_mode == DataIoMode.Export ? ExportAsync : ImportAsync);
 
-    private void OnChooseImportFileRequested(object? sender, EventArgs e) =>
+    private void OnChooseImportFileRequested(object? sender, EventArgs e)
+    {
+        SetStatus("正在打开文件选择器…");
         _ = RunGuardedAsync(ChooseImportFileAsync);
+    }
 
     private async Task ExportAsync()
     {
@@ -892,6 +901,11 @@ internal sealed class DataIoSession : IPaperBodySession
         SetStatus("正在写入文件…");
         await Task.Run(() => ArchiveService.Write(dialog.FileName, document));
 
+        var imageSummary = ImageReferenceSummary.FromNotes(
+            document.Papers
+                .Where(p => string.Equals(p.Type, "note", StringComparison.Ordinal))
+                .Select(p => p.Content));
+
         var unavailableNotes = document.Papers.Count(
             p => string.Equals(p.Type, "note", StringComparison.Ordinal) && p.ContentAvailable == false);
         var status = $"已导出 {document.Papers.Count} 张纸片：{dialog.FileName}";
@@ -900,7 +914,27 @@ internal sealed class DataIoSession : IPaperBodySession
             status += $"（{unavailableNotes} 张笔记正文不可读取，已按空正文导出）";
         }
 
+        if (imageSummary.HasAny)
+        {
+            status += $"（{imageSummary.NoteCount} 张笔记含 {imageSummary.ReferenceCount} 处图片引用，图片未包含在归档中）";
+        }
+
         SetStatus(status);
+
+        if (imageSummary.HasAny)
+        {
+            _view.ShowResultDialog(
+                "导出完成",
+                new List<(string Label, string Value)>
+                {
+                    ("导出纸片", $"{document.Papers.Count} 张"),
+                    ("含图片笔记", $"{imageSummary.NoteCount} 张"),
+                    ("图片引用", $"{imageSummary.ReferenceCount} 处")
+                },
+                $"文件：{dialog.FileName}{Environment.NewLine}{Environment.NewLine}" +
+                "图片本体未包含在归档中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
+                "如果图片 ID 被复用，还可能显示成其他图片。");
+        }
     }
 
     // ---------- 导入 ----------
@@ -927,8 +961,10 @@ internal sealed class DataIoSession : IPaperBodySession
             dialog.InitialDirectory = initial;
         }
 
+        SetStatus("正在打开文件选择器…");
         if (dialog.ShowDialog(Window.GetWindow(_view)) != true)
         {
+            SetStatus("已取消选择文件。");
             return;
         }
 
@@ -1003,6 +1039,11 @@ internal sealed class DataIoSession : IPaperBodySession
 
         filtered.TodoCount = selected.Sum(p => p.Source.Todos?.Count ?? 0);
 
+        var imageSummary = ImageReferenceSummary.FromNotes(
+            selected
+                .Where(p => string.Equals(p.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Source.Content));
+
         using var cts = new CancellationTokenSource();
         _operation = cts;
         string summary;
@@ -1011,6 +1052,13 @@ internal sealed class DataIoSession : IPaperBodySession
             var progress = new Progress<string>(SetStatus);
             var result = await new ImportService(_gateway, progress)
                 .ImportAsync(filtered, _settings, cts.Token);
+
+            if (imageSummary.HasAny)
+            {
+                result.Warnings.Insert(0,
+                    $"文件中有 {imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用；" +
+                    "图片本体未随归档导入，跨设备或原图已清理时可能无法显示。");
+            }
 
             ShowImportResult(result);
             summary = result.FatalError ??
@@ -1140,6 +1188,16 @@ internal sealed class DataIoSession : IPaperBodySession
         };
 
         var problems = new List<string>();
+        var imageSummary = ImageReferenceSummary.FromNotes(
+            selected
+                .Where(p => string.Equals(p.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Source.Content));
+        if (imageSummary.HasAny)
+        {
+            problems.Add(
+                $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用（图片本体不在文件中）");
+        }
+
         if (sourcePlan.UnresolvedLinks > 0)
         {
             problems.Add($"{sourcePlan.UnresolvedLinks} 个纸片链接的目标不在本文件中");

@@ -11,6 +11,10 @@ internal sealed class ImportPlan
     public int DroppedReminders { get; set; }
     public int PathLinkCount { get; set; }
 
+    /// <summary>含图片引用的笔记张数与图片引用总数；图片本体不在归档中。</summary>
+    public int NotesWithImages { get; set; }
+    public int ImageReferenceCount { get; set; }
+
     /// <summary>非空表示文件整体不可导入。</summary>
     public string? FatalError { get; set; }
 

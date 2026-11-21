@@ -162,6 +162,16 @@ internal static class ImportPlanParser
                 plan.Warnings.Add($"纸片标题“{normalizedTitle}”过长，将截断为“{safeTitle}”。");
             }
 
+            if (type == "note")
+            {
+                var imageReferences = ImageReferenceScanner.Count(source.Content);
+                if (imageReferences > 0)
+                {
+                    plan.NotesWithImages++;
+                    plan.ImageReferenceCount += imageReferences;
+                }
+            }
+
             plan.Papers.Add(new ImportPaper
             {
                 Source = source,
