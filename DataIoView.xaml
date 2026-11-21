@@ -189,9 +189,64 @@
       </Setter>
     </Style>
 
+    <!-- 圆角方框 + 对勾的自定义勾选框 -->
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
       <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="CheckBox">
+            <Grid Background="Transparent">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Border x:Name="Box"
+                      Width="18"
+                      Height="18"
+                      CornerRadius="4"
+                      BorderThickness="1.5"
+                      BorderBrush="{DynamicResource DataIoBorderBrush}"
+                      Background="Transparent"
+                      VerticalAlignment="Center"
+                      SnapsToDevicePixels="True">
+                <Path x:Name="Check"
+                      Data="M 3.5,9.5 L 7,13 L 14.5,5"
+                      Stroke="{DynamicResource DataIoOnAccentBrush}"
+                      StrokeThickness="2"
+                      StrokeStartLineCap="Round"
+                      StrokeEndLineCap="Round"
+                      StrokeLineJoin="Round"
+                      Stretch="None"
+                      Visibility="Collapsed" />
+              </Border>
+              <ContentPresenter x:Name="Label"
+                                Grid.Column="1"
+                                Margin="7,0,0,0"
+                                VerticalAlignment="Center"
+                                RecognizesAccessKey="True" />
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="Content" Value="{x:Null}">
+                <Setter TargetName="Label" Property="Margin" Value="0" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Box" Property="Background" Value="{DynamicResource DataIoAccentBrush}" />
+                <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+                <Setter TargetName="Check" Property="Visibility" Value="Visible" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Box" Property="Opacity" Value="0.35" />
+                <Setter Property="Opacity" Value="0.6" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
   </UserControl.Resources>
 
@@ -391,19 +446,29 @@
                        Margin="12,0,0,0"
                        Text="&#xE76C;"
                        Style="{StaticResource Icon}"
-                       FontSize="12" />
+                       FontSize="12"
+                       RenderTransformOrigin="0.5,0.5">
+              <TextBlock.RenderTransform>
+                <RotateTransform x:Name="NotesChevronRotate" Angle="0" />
+              </TextBlock.RenderTransform>
+            </TextBlock>
           </Grid>
         </Border>
-        <StackPanel x:Name="NotesPanel" Visibility="Collapsed" Margin="0,4,0,2">
-          <WrapPanel Margin="0,0,0,6">
-            <CheckBox x:Name="NotesSelectAll" Content="全选" Margin="0,0,10,0" />
-            <Button x:Name="NotesInvertButton"
-                    Content="反选"
-                    Style="{StaticResource GhostButton}"
-                    Padding="8,2" />
-          </WrapPanel>
-          <ItemsControl x:Name="NotesList" ItemTemplate="{StaticResource PaperRowTemplate}" />
-        </StackPanel>
+        <Border x:Name="NotesPanel"
+                Height="0"
+                Visibility="Collapsed"
+                ClipToBounds="True">
+          <StackPanel x:Name="NotesContent" Margin="0,4,0,2">
+            <WrapPanel Margin="0,0,0,6">
+              <CheckBox x:Name="NotesSelectAll" Content="全选" Margin="0,0,10,0" />
+              <Button x:Name="NotesInvertButton"
+                      Content="反选"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2" />
+            </WrapPanel>
+            <ItemsControl x:Name="NotesList" ItemTemplate="{StaticResource PaperRowTemplate}" />
+          </StackPanel>
+        </Border>
 
         <Border x:Name="TodosRow" Style="{StaticResource RowBorder}" Cursor="Hand">
           <Grid>
@@ -427,19 +492,29 @@
                        Margin="12,0,0,0"
                        Text="&#xE76C;"
                        Style="{StaticResource Icon}"
-                       FontSize="12" />
+                       FontSize="12"
+                       RenderTransformOrigin="0.5,0.5">
+              <TextBlock.RenderTransform>
+                <RotateTransform x:Name="TodosChevronRotate" Angle="0" />
+              </TextBlock.RenderTransform>
+            </TextBlock>
           </Grid>
         </Border>
-        <StackPanel x:Name="TodosPanel" Visibility="Collapsed" Margin="0,4,0,2">
-          <WrapPanel Margin="0,0,0,6">
-            <CheckBox x:Name="TodosSelectAll" Content="全选" Margin="0,0,10,0" />
-            <Button x:Name="TodosInvertButton"
-                    Content="反选"
-                    Style="{StaticResource GhostButton}"
-                    Padding="8,2" />
-          </WrapPanel>
-          <ItemsControl x:Name="TodosList" ItemTemplate="{StaticResource PaperRowTemplate}" />
-        </StackPanel>
+        <Border x:Name="TodosPanel"
+                Height="0"
+                Visibility="Collapsed"
+                ClipToBounds="True">
+          <StackPanel x:Name="TodosContent" Margin="0,4,0,2">
+            <WrapPanel Margin="0,0,0,6">
+              <CheckBox x:Name="TodosSelectAll" Content="全选" Margin="0,0,10,0" />
+              <Button x:Name="TodosInvertButton"
+                      Content="反选"
+                      Style="{StaticResource GhostButton}"
+                      Padding="8,2" />
+            </WrapPanel>
+            <ItemsControl x:Name="TodosList" ItemTemplate="{StaticResource PaperRowTemplate}" />
+          </StackPanel>
+        </Border>
 
         <Border Style="{StaticResource Divider}" />
 

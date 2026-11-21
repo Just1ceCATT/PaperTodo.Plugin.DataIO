@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -21,6 +22,8 @@ public partial class DataIoView : UserControl
     private bool _suppressSelectionEvents;
     private bool _notesExpanded;
     private bool _todosExpanded;
+    private int _notesAnimToken;
+    private int _todosAnimToken;
     private bool _busy;
     private bool _primaryEnabled;
     private bool _canExport = true;
@@ -125,11 +128,98 @@ public partial class DataIoView : UserControl
 
     private void ApplyExpansion()
     {
-        NotesPanel.Visibility = _notesExpanded ? Visibility.Visible : Visibility.Collapsed;
-        TodosPanel.Visibility = _todosExpanded ? Visibility.Visible : Visibility.Collapsed;
-        // E70D = ChevronDown，E76C = ChevronRight（Segoe Fluent Icons）
-        NotesChevron.Text = _notesExpanded ? "" : "";
-        TodosChevron.Text = _todosExpanded ? "" : "";
+        AnimatePanel(
+            NotesPanel,
+            NotesContent,
+            NotesChevronRotate,
+            _notesExpanded,
+            ++_notesAnimToken);
+        AnimatePanel(
+            TodosPanel,
+            TodosContent,
+            TodosChevronRotate,
+            _todosExpanded,
+            ++_todosAnimToken);
+    }
+
+    /// <summary>高度 + 透明度 + 箭头旋转的组合动画，展开和收起都平滑过渡。</summary>
+    private void AnimatePanel(
+        Border panel,
+        FrameworkElement content,
+        RotateTransform rotate,
+        bool expand,
+        int token)
+    {
+        // 用 Tag 记录本次动画序号，避免快速连点时旧动画的回调覆盖新状态。
+        panel.Tag = token;
+
+        double from;
+        if (expand)
+        {
+            from = 0;
+            panel.Height = 0;
+        }
+        else
+        {
+            from = panel.ActualHeight > 0 ? panel.ActualHeight : 0;
+            panel.Height = from;
+        }
+
+        // 先显示以便测量内容的自然高度。
+        panel.Visibility = Visibility.Visible;
+
+        var width = panel.ActualWidth > 0
+            ? panel.ActualWidth
+            : Math.Max(0, ActualWidth - 40);
+        content.Measure(new Size(width, double.PositiveInfinity));
+        var target = expand ? content.DesiredSize.Height : 0;
+
+        var heightAnimation = new DoubleAnimation(from, target, TimeSpan.FromMilliseconds(200))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        heightAnimation.Completed += (_, _) =>
+        {
+            if (panel.Tag is int activeToken && activeToken != token)
+            {
+                return;
+            }
+
+            panel.BeginAnimation(HeightProperty, null);
+            if (expand)
+            {
+                // 恢复自适应高度，列表刷新时能随内容增减。
+                panel.Height = double.NaN;
+            }
+            else
+            {
+                panel.Height = 0;
+                panel.Visibility = Visibility.Collapsed;
+            }
+
+            panel.Opacity = 1;
+        };
+        panel.BeginAnimation(HeightProperty, heightAnimation);
+
+        var opacityAnimation = new DoubleAnimation(
+            expand ? 0 : 1,
+            expand ? 1 : 0,
+            TimeSpan.FromMilliseconds(160))
+        {
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        panel.BeginAnimation(OpacityProperty, opacityAnimation);
+
+        var rotateAnimation = new DoubleAnimation(
+            expand ? 0 : 90,
+            expand ? 90 : 0,
+            TimeSpan.FromMilliseconds(200))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.HoldEnd
+        };
+        rotate.BeginAnimation(RotateTransform.AngleProperty, rotateAnimation);
     }
 
     // ---------- 内容统计 ----------
