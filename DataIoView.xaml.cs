@@ -2,9 +2,11 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -18,6 +20,10 @@ public partial class DataIoView : UserControl
     private readonly ObservableCollection<PaperRowItem> _noteRows = [];
     private readonly ObservableCollection<PaperRowItem> _todoRows = [];
     private readonly List<PaperRowItem> _allRows = [];
+    private readonly DispatcherTimer _hoverTimer;
+    private PaperRowItem? _hoverRow;
+    private int _hoverToken;
+    private bool _previewOpen;
     private bool _suppressModeEvents;
     private bool _suppressSelectionEvents;
     private bool _notesExpanded;
@@ -32,6 +38,12 @@ public partial class DataIoView : UserControl
     private bool _sizeHooked;
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
+
+    /// <summary>
+    /// 由会话注入的按需读取器：导出模式经宿主 API 读取，导入模式读取文件内容。
+    /// 视图不直接访问宿主数据，预览与悬停卡片都只消费这个委托。
+    /// </summary>
+    internal Func<string, Task<PreviewContent?>>? PreviewLoader { get; set; }
 
     public event EventHandler? ModeChanged;
     public event EventHandler? NoteSelectionChanged;
@@ -64,6 +76,15 @@ public partial class DataIoView : UserControl
 
         NotesList.ItemsSource = _noteRows;
         TodosList.ItemsSource = _todoRows;
+
+        _hoverTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(450)
+        };
+        _hoverTimer.Tick += OnHoverTimerTick;
+
+        SummaryScroll.ScrollChanged += (_, _) => CancelHover();
+        Unloaded += (_, _) => CancelHover();
 
         WireEvents();
         ApplyModeVisuals(DataIoMode.Export);
@@ -103,9 +124,7 @@ public partial class DataIoView : UserControl
         var isExport = mode == DataIoMode.Export;
         ImportFileSection.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         ContentSectionTitle.Text = isExport ? "导出内容" : "导入内容";
-        ContentSectionHint.Text = isExport
-            ? "点击条目展开并选择要导出的具体内容"
-            : "点击条目展开并选择要导入的具体内容";
+        ContentSectionHint.Text = "点击条目展开并选择；行内预览按钮可查看正文";
         FormatRow.Visibility = isExport ? Visibility.Visible : Visibility.Collapsed;
         StrategyRow.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         EstimateTitle.Text = isExport ? "导出预估" : "导入预估";
@@ -113,6 +132,7 @@ public partial class DataIoView : UserControl
 
         _notesExpanded = false;
         _todosExpanded = false;
+        CancelHover();
         ApplyExpansion();
     }
 
@@ -272,6 +292,11 @@ public partial class DataIoView : UserControl
 
     public void SetBusy(bool busy)
     {
+        if (busy)
+        {
+            CancelHover();
+        }
+
         _busy = busy;
         BusyBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         PrimaryButton.IsEnabled = !busy && _primaryEnabled;
@@ -299,6 +324,7 @@ public partial class DataIoView : UserControl
     /// <summary>刷新两个类型的具体条目；selectedKeys 为 null 时默认全选可选项。</summary>
     public void SetRows(IReadOnlyList<PaperRowItem> rows, IReadOnlyCollection<string>? selectedKeys)
     {
+        CancelHover();
         _suppressSelectionEvents = true;
 
         foreach (var oldRow in _allRows)
@@ -423,6 +449,237 @@ public partial class DataIoView : UserControl
         ChooseFileButton.Click += (_, _) => ChooseImportFileRequested?.Invoke(this, EventArgs.Empty);
     }
 
+    // ---------- 预览 ----------
+
+    /// <summary>行内预览按钮：打开完整预览窗口。</summary>
+    private void OnPreviewRowClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PaperRowItem row })
+        {
+            OpenPreview(row);
+        }
+
+        e.Handled = true;
+    }
+
+    /// <summary>双击行：与预览按钮等价；点在复选框/按钮上时不触发。</summary>
+    private void OnRowMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2 ||
+            e.OriginalSource is not DependencyObject source ||
+            IsInteractiveSource(source) ||
+            sender is not FrameworkElement { DataContext: PaperRowItem row })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        OpenPreview(row);
+    }
+
+    private static bool IsInteractiveSource(DependencyObject source)
+    {
+        for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is ButtonBase or TextBoxBase)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void OpenPreview(PaperRowItem row)
+    {
+        if (_busy || _previewOpen || PreviewLoader is null)
+        {
+            return;
+        }
+
+        CancelHover();
+
+        // 预览按界面顺序浏览：笔记组在前、待办组在后，与列表展开后的视觉顺序一致。
+        var keys = _noteRows.Concat(_todoRows).Select(r => r.Key).ToList();
+        var index = keys.IndexOf(row.Key);
+        if (index < 0)
+        {
+            keys.Insert(0, row.Key);
+            index = 0;
+        }
+
+        var window = new PaperPreviewWindow(
+            CurrentTheme,
+            ResolveTintColor(),
+            Mode,
+            keys,
+            index,
+            PreviewLoader,
+            key => _allRows.FirstOrDefault(r => r.Key == key) is { CanSelect: true },
+            key => _allRows.FirstOrDefault(r => r.Key == key)?.IsSelected ?? false,
+            SetRowSelected);
+
+        _previewOpen = true;
+        try
+        {
+            window.ShowModal(Window.GetWindow(this));
+        }
+        finally
+        {
+            _previewOpen = false;
+        }
+    }
+
+    private void SetRowSelected(string key, bool value)
+    {
+        var row = _allRows.FirstOrDefault(r => r.Key == key);
+        if (row is { CanSelect: true })
+        {
+            row.IsSelected = value;
+        }
+    }
+
+    // ---------- 悬停快速预览 ----------
+
+    private void OnRowMouseEnter(object sender, MouseEventArgs e)
+    {
+        if (_busy || _previewOpen || PreviewLoader is null || e.StylusDevice != null)
+        {
+            return;
+        }
+
+        if (sender is not FrameworkElement { DataContext: PaperRowItem row })
+        {
+            return;
+        }
+
+        // 快速从一行移到另一行时，旧行的 MouseLeave 可能晚于新行的 MouseEnter 到达，
+        // 用 _hoverRow 判断归属，避免误清空新行。
+        _hoverRow = row;
+        _hoverToken++;
+        _hoverTimer.Stop();
+        HoverPreviewPopup.IsOpen = false;
+        _hoverTimer.Start();
+    }
+
+    private void OnRowMouseLeave(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PaperRowItem row } &&
+            ReferenceEquals(_hoverRow, row))
+        {
+            CancelHover();
+        }
+    }
+
+    /// <summary>鼠标移到复选框或按钮上时立即收起卡片，避免挡住点击目标。</summary>
+    private void OnRowMouseMove(object sender, MouseEventArgs e)
+    {
+        if (HoverPreviewPopup.IsOpen &&
+            ReferenceEquals(_hoverRow, (sender as FrameworkElement)?.DataContext) &&
+            e.OriginalSource is DependencyObject source &&
+            IsInteractiveSource(source))
+        {
+            CancelHover();
+        }
+    }
+
+    private void CancelHover()
+    {
+        _hoverTimer.Stop();
+        _hoverRow = null;
+        _hoverToken++;
+        HoverPreviewPopup.IsOpen = false;
+    }
+
+    private async void OnHoverTimerTick(object? sender, EventArgs e)
+    {
+        _hoverTimer.Stop();
+
+        var row = _hoverRow;
+        if (row is null || _busy || _previewOpen || PreviewLoader is null)
+        {
+            return;
+        }
+
+        // 鼠标停在复选框或预览按钮上时不弹卡片，避免干扰点击。
+        if (Mouse.DirectlyOver is DependencyObject over && IsInteractiveSource(over))
+        {
+            return;
+        }
+
+        var token = ++_hoverToken;
+        PreviewContent? content;
+        try
+        {
+            content = await PreviewLoader(row.Key);
+        }
+        catch (Exception)
+        {
+            // 悬停预览失败时静默放弃，不打扰正在进行的勾选操作。
+            return;
+        }
+
+        if (content is null ||
+            token != _hoverToken ||
+            !ReferenceEquals(_hoverRow, row) ||
+            _busy ||
+            _previewOpen)
+        {
+            return;
+        }
+
+        ShowHoverCard(content);
+    }
+
+    private void ShowHoverCard(PreviewContent content)
+    {
+        HoverTitle.Text = content.Title;
+        HoverType.Text = content.TypeLabel;
+        HoverMeta.Text = content.Meta;
+
+        if (string.IsNullOrWhiteSpace(content.Warning))
+        {
+            HoverWarning.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            HoverWarning.Text = content.Warning;
+            HoverWarning.Visibility = Visibility.Visible;
+        }
+
+        HoverExcerpt.Text = BuildExcerpt(content);
+
+        HoverPreviewPopup.Placement = PlacementMode.MousePoint;
+        HoverPreviewPopup.HorizontalOffset = 16;
+        HoverPreviewPopup.VerticalOffset = 18;
+        HoverPreviewPopup.IsOpen = true;
+    }
+
+    private static string BuildExcerpt(PreviewContent content)
+    {
+        if (content.Todos.Count > 0)
+        {
+            var lines = content.Todos
+                .Take(4)
+                .Select(t => $"{(t.Done ? "☑" : "☐")} {t.Text}");
+            var text = string.Join("\n", lines);
+            if (content.Todos.Count > 4)
+            {
+                text += $"\n…还有 {content.Todos.Count - 4} 项";
+            }
+
+            return text;
+        }
+
+        if (!content.ContentAvailable)
+        {
+            return "正文不可读取。";
+        }
+
+        var plain = MarkdownPreview.ToPlainText(content.Body);
+        return plain.Length == 0 ? "（空白笔记）" : plain;
+    }
+
     // ---------- 主题 ----------
 
     public void ApplyTheme(PaperBodyTheme theme, IPaperBodyControls? controls = null)
@@ -439,6 +696,10 @@ public partial class DataIoView : UserControl
         Resources["DataIoSurfaceBrush"] = MakeBrush(
             theme.IsDark ? "#18FFFFFF" : "#0C000000",
             Color.FromArgb(0x0C, 0x00, 0x00, 0x00));
+        // 悬停卡片位于透明浮层上，需要不透明底色，否则会和纸片背景叠成一片。
+        Resources["DataIoCardBrush"] = MakeBrush(
+            theme.PaperColor,
+            theme.IsDark ? Color.FromRgb(0x21, 0x1F, 0x1C) : Color.FromRgb(0xFF, 0xF9, 0xEA));
         Resources["DataIoAccentSurfaceBrush"] = MakeBrushWithAlpha(
             theme.AccentColor,
             theme.IsDark ? (byte)46 : (byte)26,

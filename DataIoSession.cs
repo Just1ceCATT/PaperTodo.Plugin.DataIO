@@ -40,6 +40,12 @@ internal sealed class DataIoSession : IPaperBodySession
     private ImportPlan? _importPlan;
     private string? _importFilePath;
 
+    /// <summary>预览正文缓存；列表或导入文件变化时整体清空，避免显示陈旧内容。</summary>
+    private readonly Dictionary<string, PreviewContent> _previewCache = new(StringComparer.Ordinal);
+
+    /// <summary>缓存代次：清理后递增，阻止刷新前发出的异步读取把旧内容写回缓存。</summary>
+    private int _previewGeneration;
+
     private CancellationTokenSource? _operation;
     private bool _busy;
     private bool _disposed;
@@ -53,6 +59,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view = new DataIoView();
         _gateway = new HostGateway(context, _view.Dispatcher);
         _exportService = new ExportService(_gateway);
+        _view.PreviewLoader = LoadPreviewAsync;
 
         _view.ModeChanged += OnModeChanged;
         _view.NoteSelectionChanged += OnNoteSelectionChanged;
@@ -136,6 +143,8 @@ internal sealed class DataIoSession : IPaperBodySession
         _debounce.Stop();
         _debounce.Tick -= OnDebounceTick;
         _subscription?.Dispose();
+        _previewCache.Clear();
+        _view.PreviewLoader = null;
 
         _view.ModeChanged -= OnModeChanged;
         _view.NoteSelectionChanged -= OnNoteSelectionChanged;
@@ -414,6 +423,9 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private void RefreshRows()
     {
+        _previewCache.Clear();
+        _previewGeneration++;
+
         var rows = _mode == DataIoMode.Export ? BuildExportRows() : BuildImportRows();
         var selection = _mode == DataIoMode.Export ? _exportSelection : _importSelection;
 
@@ -477,6 +489,211 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         return rows;
+    }
+
+    // ---------- 预览 ----------
+
+    /// <summary>按需读取一张纸片的预览内容；结果按 key 缓存，列表变化时整体失效。</summary>
+    private async Task<PreviewContent?> LoadPreviewAsync(string key)
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        if (_previewCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var generation = _previewGeneration;
+        var mode = _mode;
+        var content = mode == DataIoMode.Export
+            ? await BuildExportPreviewAsync(key)
+            : BuildImportPreview(key);
+
+        if (content is not null && !_disposed && generation == _previewGeneration)
+        {
+            _previewCache[key] = content;
+        }
+
+        return content;
+    }
+
+    private async Task<PreviewContent?> BuildExportPreviewAsync(string paperId)
+    {
+        var paper = _papers.FirstOrDefault(p => string.Equals(p.Id, paperId, StringComparison.Ordinal));
+        if (paper is null)
+        {
+            return null;
+        }
+
+        var isNote = string.Equals(paper.Type, "note", StringComparison.Ordinal);
+        var title = string.IsNullOrWhiteSpace(paper.Title) ? "（无标题）" : paper.Title;
+
+        if (!isNote)
+        {
+            TodoSnapshot[] todos = _todosByPaper.TryGetValue(paperId, out var stored)
+                ? stored
+                : [];
+            var items = todos
+                .Select(t => new PreviewTodoItem(t.Text, t.Done, DescribeHostTodo(t)))
+                .ToList();
+            var done = items.Count(t => t.Done);
+
+            return new PreviewContent
+            {
+                Key = paperId,
+                Title = title,
+                TypeLabel = "待办",
+                Meta = items.Count == 0
+                    ? "暂无待办"
+                    : $"{items.Count} 项待办 · {done} 项已完成",
+                Todos = items
+            };
+        }
+
+        NoteSnapshot? note = null;
+        if (_gateway.Can(PaperTodoPermissionNames.NotesRead))
+        {
+            try
+            {
+                note = await _gateway.OnUiAsync(() => _context.Workspace.GetNote(paperId));
+            }
+            catch (Exception)
+            {
+                note = null;
+            }
+        }
+
+        var body = note?.Content ?? "";
+        var providerSupported = string.Equals(
+            paper.BodyProviderId,
+            MarkdownProviderId,
+            StringComparison.Ordinal);
+        var available = providerSupported && (note?.ContentAvailable ?? false);
+
+        string? warning = null;
+        if (!providerSupported)
+        {
+            warning = "正文由其他插件提供，无法通过逻辑 API 读取。";
+        }
+        else if (!available)
+        {
+            warning = "宿主未能读取这张笔记的正文。";
+        }
+
+        return new PreviewContent
+        {
+            Key = paperId,
+            Title = title,
+            TypeLabel = "笔记",
+            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
+            Warning = warning,
+            ContentAvailable = available,
+            Body = available ? body : ""
+        };
+    }
+
+    private PreviewContent? BuildImportPreview(string key)
+    {
+        if (_importPlan is null ||
+            !int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ||
+            index < 0 ||
+            index >= _importPlan.Papers.Count)
+        {
+            return null;
+        }
+
+        var source = _importPlan.Papers[index].Source;
+        var isNote = string.Equals(source.Type, "note", StringComparison.OrdinalIgnoreCase);
+        var title = string.IsNullOrWhiteSpace(source.Title) ? "（无标题）" : source.Title;
+
+        if (!isNote)
+        {
+            var items = (source.Todos ?? [])
+                .OrderBy(t => t.Order)
+                .Select(t => new PreviewTodoItem(t.Text, t.Done, DescribeImportTodo(t)))
+                .ToList();
+            var done = items.Count(t => t.Done);
+
+            return new PreviewContent
+            {
+                Key = key,
+                Title = title,
+                TypeLabel = "待办",
+                Meta = items.Count == 0
+                    ? "暂无待办"
+                    : $"{items.Count} 项待办 · {done} 项已完成",
+                Todos = items
+            };
+        }
+
+        var body = source.Content ?? "";
+        var available = source.ContentAvailable != false;
+
+        string? warning = null;
+        if (!available)
+        {
+            warning = "文件未包含笔记正文，导入后将是空白笔记。";
+        }
+        else if (body.Length == 0)
+        {
+            warning = "这张笔记在文件中是空白的。";
+        }
+
+        return new PreviewContent
+        {
+            Key = key,
+            Title = title,
+            TypeLabel = "笔记",
+            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
+            Warning = warning,
+            ContentAvailable = available,
+            Body = available ? body : ""
+        };
+    }
+
+    private static string DescribeHostTodo(TodoSnapshot todo)
+    {
+        var parts = new List<string>(3);
+        if (todo.ReminderAt is { } reminder)
+        {
+            parts.Add($"提醒 {reminder.ToLocalTime():M-d HH:mm}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(todo.LinkedPaperId))
+        {
+            parts.Add("关联纸片");
+        }
+
+        if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
+        {
+            parts.Add(todo.LinkedPathIsDirectory == true ? "文件夹链接" : "文件链接");
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    private static string DescribeImportTodo(ExportTodo todo)
+    {
+        var parts = new List<string>(3);
+        if (todo.ReminderAt is { } reminder)
+        {
+            parts.Add($"提醒 {reminder.ToLocalTime():M-d HH:mm}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(todo.LinkedSourcePaperId))
+        {
+            parts.Add("文件内关联纸片");
+        }
+
+        if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
+        {
+            parts.Add(todo.LinkedPathIsDirectory == true ? "文件夹链接" : "文件链接");
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private void UpdateExportSummary()

@@ -48,6 +48,38 @@
       <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
     </Style>
 
+    <!-- 行内预览入口：低干扰图标按钮，悬停时才浮现底色 -->
+    <Style x:Key="RowIconButton" TargetType="Button">
+      <Setter Property="Width" Value="26" />
+      <Setter Property="Height" Value="26" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg"
+                    CornerRadius="5"
+                    Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+              </Trigger>
+              <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.7" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- 展开后的具体纸片行 -->
     <DataTemplate x:Key="PaperRowTemplate">
       <Border Padding="10,8"
@@ -55,11 +87,16 @@
               BorderThickness="1"
               CornerRadius="6"
               BorderBrush="{DynamicResource DataIoBorderBrush}"
-              Background="{DynamicResource DataIoSurfaceBrush}">
+              Background="{DynamicResource DataIoSurfaceBrush}"
+              MouseLeftButtonDown="OnRowMouseLeftButtonDown"
+              MouseEnter="OnRowMouseEnter"
+              MouseLeave="OnRowMouseLeave"
+              MouseMove="OnRowMouseMove">
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <CheckBox Grid.Column="0"
@@ -94,6 +131,16 @@
                        FontSize="{DynamicResource DataIoWeakFontSize}"
                        Foreground="{DynamicResource DataIoAccentBrush}" />
           </Border>
+          <Button Grid.Column="3"
+                  Margin="6,0,0,0"
+                  VerticalAlignment="Top"
+                  Style="{StaticResource RowIconButton}"
+                  Click="OnPreviewRowClick"
+                  ToolTip="预览正文">
+            <TextBlock Text="&#xE7B3;"
+                       FontFamily="{DynamicResource DataIoIconFontFamily}"
+                       FontSize="13" />
+          </Button>
         </Grid>
       </Border>
     </DataTemplate>
@@ -631,5 +678,73 @@
                    Visibility="Collapsed"
                    Foreground="{DynamicResource DataIoAccentBrush}" />
     </Grid>
+
+    <!-- 悬停快速预览：只读浮层，跟随鼠标出现，不抢焦点 -->
+    <Popup x:Name="HoverPreviewPopup"
+           AllowsTransparency="True"
+           Focusable="False"
+           IsHitTestVisible="False"
+           Placement="MousePoint"
+           StaysOpen="True">
+      <Border Margin="6"
+              MaxWidth="360"
+              Padding="14,12"
+              CornerRadius="9"
+              BorderThickness="1"
+              Background="{DynamicResource DataIoCardBrush}"
+              BorderBrush="{DynamicResource DataIoBorderBrush}">
+        <Border.Effect>
+          <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.22" Color="Black" />
+        </Border.Effect>
+        <StackPanel>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="HoverTitle"
+                       TextWrapping="Wrap"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+            <Border Grid.Column="1"
+                    Margin="10,0,0,0"
+                    Padding="6,1"
+                    CornerRadius="4"
+                    VerticalAlignment="Top"
+                    Background="{DynamicResource DataIoAccentSurfaceBrush}">
+              <TextBlock x:Name="HoverType"
+                         FontSize="{DynamicResource DataIoWeakFontSize}"
+                         Foreground="{DynamicResource DataIoAccentBrush}" />
+            </Border>
+          </Grid>
+          <TextBlock x:Name="HoverMeta"
+                     Margin="0,4,0,0"
+                     TextWrapping="Wrap"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+          <TextBlock x:Name="HoverWarning"
+                     Margin="0,4,0,0"
+                     TextWrapping="Wrap"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWarningBrush}"
+                     Visibility="Collapsed" />
+          <Border Margin="0,8,0,0"
+                  Padding="9,7"
+                  CornerRadius="6"
+                  Background="{DynamicResource DataIoSurfaceBrush}">
+            <TextBlock x:Name="HoverExcerpt"
+                       MaxWidth="320"
+                       TextWrapping="Wrap"
+                       LineHeight="19"
+                       FontSize="{DynamicResource DataIoFontSize}"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+          </Border>
+          <TextBlock Text="点击行内预览按钮查看全文"
+                     Margin="0,7,0,0"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+        </StackPanel>
+      </Border>
+    </Popup>
   </Grid>
 </UserControl>
