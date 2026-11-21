@@ -732,7 +732,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (plan.FatalError != null)
         {
-            ShowMessage(plan.FatalError, "无法导入", MessageBoxButton.OK, MessageBoxImage.Warning);
+            _view.ShowAlertDialog("无法导入", plan.FatalError);
             SetStatus(plan.FatalError);
             return;
         }
@@ -771,8 +771,7 @@ internal sealed class DataIoSession : IPaperBodySession
         if (_settings.ConfirmBeforeImport)
         {
             var confirmation = BuildConfirmation(selected, _importPlan);
-            if (ShowMessage(confirmation, "确认导入", MessageBoxButton.OKCancel, MessageBoxImage.Question) !=
-                MessageBoxResult.OK)
+            if (!_view.ShowConfirmDialog("确认导入", confirmation, "继续导入", "取消"))
             {
                 SetStatus("已取消导入。");
                 return;
@@ -957,55 +956,53 @@ internal sealed class DataIoSession : IPaperBodySession
             lines.Add($"另有 {sourcePlan.Warnings.Count} 条预检提示，详见导入结果。");
         }
 
-        lines.Add("");
-        lines.Add("继续导入吗？");
         return string.Join(Environment.NewLine, lines);
     }
 
     private void ShowImportResult(ImportResult result)
     {
-        var lines = new List<string>
+        var stats = new List<(string Label, string Value)>
         {
-            $"新增纸片：{result.CreatedPapers} 张",
-            $"失败纸片：{result.FailedPapers} 张",
-            $"新增待办：{result.CreatedTodos} 条",
-            $"还原链接：{result.RestoredLinks} 条",
-            $"还原提醒：{result.RestoredReminders} 条"
+            ("新增纸片", $"{result.CreatedPapers} 张"),
+            ("失败纸片", $"{result.FailedPapers} 张"),
+            ("新增待办", $"{result.CreatedTodos} 条"),
+            ("还原链接", $"{result.RestoredLinks} 条"),
+            ("还原提醒", $"{result.RestoredReminders} 条")
         };
 
+        var lines = new List<string>();
         if (result.StoppedEarly && result.FatalError != null)
         {
-            lines.Add("");
             lines.Add(result.FatalError);
         }
 
-        lines.AddRange(result.DroppedPathLinkNotes.Take(5).Select(note => "· " + note));
-        lines.AddRange(result.Warnings.Take(8).Select(warning => "· " + warning));
+        lines.AddRange(result.DroppedPathLinkNotes.Select(note => "· " + note));
+        lines.AddRange(result.Warnings.Select(warning => "· " + warning));
         lines.AddRange(result.Failures
-            .Take(8)
             .Select(failure => $"· 失败：{failure.Title}（{failure.Code}）：{failure.Message}"));
 
-        if (result.Warnings.Count > 8 || result.Failures.Count > 8)
+        if (lines.Count > 12)
         {
+            lines = lines.Take(12).ToList();
             lines.Add("· …更多详情已省略。");
         }
 
-        var image = result.StoppedEarly || result.FailedPapers > 0
-            ? MessageBoxImage.Warning
-            : MessageBoxImage.Information;
-        ShowMessage(string.Join(Environment.NewLine, lines), "导入结果", MessageBoxButton.OK, image);
-    }
+        var warning = result.StoppedEarly ||
+                      result.FailedPapers > 0 ||
+                      result.Warnings.Count > 0 ||
+                      result.DroppedPathLinkNotes.Count > 0;
+        var headline = result.StoppedEarly
+            ? "部分导入完成"
+            : result.FailedPapers > 0
+                ? "导入完成，有失败项"
+                : "导入完成";
 
-    private MessageBoxResult ShowMessage(
-        string text,
-        string caption,
-        MessageBoxButton button,
-        MessageBoxImage image)
-    {
-        var owner = Window.GetWindow(_view) ?? Application.Current?.MainWindow;
-        return owner != null
-            ? MessageBox.Show(owner, text, caption, button, image)
-            : MessageBox.Show(text, caption, button, image);
+        _view.ShowResultDialog(
+            "导入结果",
+            headline,
+            stats,
+            lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null,
+            warning);
     }
 
     private static string? ResolveDirectory(string? path)

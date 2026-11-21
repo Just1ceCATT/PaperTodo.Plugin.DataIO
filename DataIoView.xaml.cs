@@ -544,6 +544,61 @@ public partial class DataIoView : UserControl
 
     public void SetStatus(string text) => StatusText.Text = text;
 
+    // ---------- 自定义弹窗 ----------
+
+    private PaperBodyTheme CurrentTheme => _theme ?? new PaperBodyTheme(
+        true,
+        "#242424",
+        "#E8E8E8",
+        "#9A9A9A",
+        "#2F6BFF",
+        "#3A3A3A",
+        "Microsoft YaHei UI",
+        1.0);
+
+    public bool ShowConfirmDialog(
+        string title,
+        string message,
+        string confirmText = "继续",
+        string cancelText = "取消")
+    {
+        var dialog = new DataIoDialog(
+            CurrentTheme,
+            title,
+            DataIoDialogIcon.Question,
+            confirmText,
+            cancelText);
+        dialog.SetMessage(message);
+        return dialog.ShowModal(Window.GetWindow(this)) == true;
+    }
+
+    public void ShowResultDialog(
+        string title,
+        string headline,
+        IReadOnlyList<(string Label, string Value)> stats,
+        string? details,
+        bool warning)
+    {
+        var dialog = new DataIoDialog(
+            CurrentTheme,
+            title,
+            warning ? DataIoDialogIcon.Warning : DataIoDialogIcon.Success,
+            "完成");
+        dialog.SetStats(headline, stats, details);
+        dialog.ShowModal(Window.GetWindow(this));
+    }
+
+    public void ShowAlertDialog(string title, string message)
+    {
+        var dialog = new DataIoDialog(
+            CurrentTheme,
+            title,
+            DataIoDialogIcon.Warning,
+            "知道了");
+        dialog.SetMessage(message);
+        dialog.ShowModal(Window.GetWindow(this));
+    }
+
     private static SolidColorBrush MakeBrush(string? hex, Color fallback)
     {
         var brush = new SolidColorBrush(ParseColor(hex, fallback));
