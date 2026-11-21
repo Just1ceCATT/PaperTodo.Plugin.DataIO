@@ -58,6 +58,15 @@ public partial class DataIoView : UserControl
         Resources["DataIoDividerMargin"] = new Thickness(0, 18, 0, 4);
         Resources["DataIoPrimaryHeight"] = 46.0;
 
+        // 模式卡片移入滚动区域，使其随内容一起上下滚动，而不是固定在顶部。
+        if (ModeCardsGrid.Parent is Panel parent)
+        {
+            parent.Children.Remove(ModeCardsGrid);
+        }
+
+        ModeCardsGrid.Margin = new Thickness(0);
+        SummaryPanel.Children.Insert(0, ModeCardsGrid);
+
         PaperList.ItemsSource = _rows;
         BuildFilterItems();
         WireEvents();
@@ -520,13 +529,14 @@ public partial class DataIoView : UserControl
         SummaryPanel.Margin = compact ? new Thickness(0, 0, 10, 0) : new Thickness(0, 0, 4, 0);
 
         ModeCardsGrid.Columns = stacked ? 1 : 2;
-        ModeCardsGrid.Margin = new Thickness(0, compact ? 10 : 14, 0, 0);
+        ModeCardsGrid.Margin = new Thickness(0);
         ExportModeButton.Padding = compact
-            ? new Thickness(8, 10, 8, 10)
-            : new Thickness(10, 14, 10, 14);
+            ? new Thickness(6, 8, 6, 8)
+            : new Thickness(8, 10, 8, 10);
         ImportModeButton.Padding = ExportModeButton.Padding;
         ExportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 5, 0);
         ImportModeButton.Margin = stacked ? new Thickness(0) : new Thickness(5, 0, 0, 0);
+        ImportFileSection.Margin = new Thickness(0, compact ? 12 : 16, 0, 0);
 
         var selectFontSize = 11.5 * scale;
         if (_controls is { } controls && Math.Abs(selectFontSize - _lastSelectFontSize) > 0.4)

@@ -52,7 +52,7 @@
     <Style x:Key="ModeCard" TargetType="RadioButton">
       <Setter Property="Cursor" Value="Hand" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
-      <Setter Property="Padding" Value="10,14" />
+      <Setter Property="Padding" Value="8,10" />
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="RadioButton">
@@ -198,7 +198,7 @@
         <StackPanel>
           <TextBlock Text="&#xE898;"
                      HorizontalAlignment="Center"
-                     FontSize="22">
+                     FontSize="18">
             <TextBlock.Style>
               <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
                 <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
@@ -211,7 +211,7 @@
             </TextBlock.Style>
           </TextBlock>
           <TextBlock Text="导出数据"
-                     Margin="0,8,0,0"
+                     Margin="0,5,0,0"
                      HorizontalAlignment="Center"
                      FontWeight="SemiBold">
             <TextBlock.Style>
@@ -243,7 +243,7 @@
         <StackPanel>
           <TextBlock Text="&#xE896;"
                      HorizontalAlignment="Center"
-                     FontSize="22">
+                     FontSize="18">
             <TextBlock.Style>
               <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
                 <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
@@ -256,7 +256,7 @@
             </TextBlock.Style>
           </TextBlock>
           <TextBlock Text="导入数据"
-                     Margin="0,8,0,0"
+                     Margin="0,5,0,0"
                      HorizontalAlignment="Center"
                      FontWeight="SemiBold">
             <TextBlock.Style>
