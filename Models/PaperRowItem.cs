@@ -3,12 +3,13 @@ using System.Windows;
 
 namespace PaperTodo.Plugin.DataIo;
 
-/// <summary>UI 列表中的一行纸片，承载勾选状态与展示摘要。</summary>
+/// <summary>详情列表中的一行，承载勾选状态与展示摘要。</summary>
 public sealed class PaperRowItem : INotifyPropertyChanged
 {
     private bool _isSelected;
 
-    public required string PaperId { get; init; }
+    /// <summary>稳定标识：导出时为宿主纸片 ID，导入时为计划内序号。</summary>
+    public required string Key { get; init; }
     public required string Title { get; init; }
     /// <summary>宿主类型：todo 或 note。</summary>
     public required string Type { get; init; }

@@ -12,7 +12,7 @@ internal static class ImportPlanParser
     public const int MaxTodoTextChars = 5_000;
     public const int MaxTodosPerPaper = 200;
 
-    public static ImportPlan ParseFile(string path) => Parse(JsonFiles.ReadAllText(path));
+    public static ImportPlan ParseFile(string path) => Parse(ArchiveService.ReadPayload(path));
 
     public static ImportPlan Parse(string json)
     {

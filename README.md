@@ -12,6 +12,9 @@
 
 ## 导出格式
 
+默认生成 **PaperTodo 归档（.zip）**，压缩包内固定包含 `manifest.json`，内容如下。
+保存时选择 `.json` 扩展名可直接生成纯 JSON；导入同时支持 `.zip` 和 `.json`。
+
 ```json
 {
   "format": "papertodo.paper-export",

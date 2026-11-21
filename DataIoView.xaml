@@ -5,14 +5,139 @@
              FontFamily="{DynamicResource DataIoFontFamily}"
              FontSize="{DynamicResource DataIoFontSize}">
   <UserControl.Resources>
-    <Style TargetType="Button">
-      <Setter Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+      <Setter Property="FontSize" Value="{DynamicResource DataIoSectionFontSize}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource DataIoBorderBrush}" />
-      <Setter Property="Padding" Value="12,5" />
-      <Setter Property="Margin" Value="6,0,0,0" />
-      <Setter Property="Cursor" Value="Hand" />
     </Style>
+    <Style x:Key="SectionHint" TargetType="TextBlock">
+      <Setter Property="Margin" Value="0,3,0,0" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="FontSize" Value="{DynamicResource DataIoWeakFontSize}" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+    </Style>
+    <Style x:Key="RowBorder" TargetType="Border">
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Margin" Value="0,6,0,0" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+    </Style>
+    <Style x:Key="Divider" TargetType="Border">
+      <Setter Property="Height" Value="1" />
+      <Setter Property="Margin" Value="0,18,0,4" />
+      <Setter Property="Background" Value="{DynamicResource DataIoDividerBrush}" />
+    </Style>
+    <Style x:Key="Icon" TargetType="TextBlock">
+      <Setter Property="FontFamily" Value="{DynamicResource DataIoIconFontFamily}" />
+      <Setter Property="FontSize" Value="18" />
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+    </Style>
+    <Style x:Key="RowTitle" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+    </Style>
+    <Style x:Key="RowValue" TargetType="TextBlock">
+      <Setter Property="VerticalAlignment" Value="Center" />
+      <Setter Property="HorizontalAlignment" Value="Right" />
+      <Setter Property="Margin" Value="10,0,0,0" />
+      <Setter Property="FontSize" Value="{DynamicResource DataIoWeakFontSize}" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+    </Style>
+
+    <!-- 模式卡片：同一 GroupName 的 RadioButton 天然互斥 -->
+    <Style x:Key="ModeCard" TargetType="RadioButton">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="Card"
+                    Padding="10,14"
+                    CornerRadius="8"
+                    BorderThickness="1"
+                    Background="Transparent"
+                    BorderBrush="Transparent">
+              <ContentPresenter HorizontalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Card" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Card" Property="Background" Value="{DynamicResource DataIoAccentSurfaceBrush}" />
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBorderBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="PrimaryButton" TargetType="Button">
+      <Setter Property="Height" Value="46" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FontSize" Value="{DynamicResource DataIoFontSize}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoOnAccentBrush}" />
+      <Setter Property="Background" Value="{DynamicResource DataIoAccentBrush}" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg"
+                    CornerRadius="8"
+                    Background="{TemplateBinding Background}"
+                    SnapsToDevicePixels="True">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.9" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.4" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <Style x:Key="GhostButton" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Padding" Value="10,4" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderBrush" Value="{DynamicResource DataIoBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg"
+                    CornerRadius="6"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}"
+                    BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.4" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -25,7 +150,7 @@
     </Style>
   </UserControl.Resources>
 
-  <Grid Margin="16,13,16,14">
+  <Grid Margin="18,16,18,14">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
       <RowDefinition Height="Auto" />
@@ -34,109 +159,411 @@
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <!-- 标题与说明 -->
-    <StackPanel Grid.Row="0">
-      <TextBlock Text="纸片数据导入导出"
-                 FontWeight="SemiBold"
+    <!-- 顶部标题 -->
+    <Grid Grid.Row="0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="Auto" />
+      </Grid.ColumnDefinitions>
+      <TextBlock Text="数据传输"
+                 VerticalAlignment="Center"
                  FontSize="{DynamicResource DataIoTitleFontSize}"
+                 FontWeight="Bold"
                  Foreground="{DynamicResource DataIoTextBrush}" />
-      <TextBlock x:Name="HintText"
-                 Margin="0,4,0,0"
-                 TextWrapping="Wrap"
-                 FontSize="{DynamicResource DataIoWeakFontSize}"
-                 Foreground="{DynamicResource DataIoWeakBrush}"
-                 Text="勾选纸片后导出为 JSON；导入时一律追加为新纸片，不会覆盖现有数据。" />
-    </StackPanel>
+      <Border Grid.Column="1"
+              CornerRadius="6"
+              Padding="8,3"
+              BorderThickness="1"
+              BorderBrush="{DynamicResource DataIoAccentBorderBrush}"
+              Background="{DynamicResource DataIoAccentSurfaceBrush}">
+        <TextBlock Text="PaperTodo"
+                   FontSize="{DynamicResource DataIoWeakFontSize}"
+                   Foreground="{DynamicResource DataIoAccentBrush}" />
+      </Border>
+    </Grid>
 
-    <!-- 筛选与批量选择 -->
-    <WrapPanel Grid.Row="1" Margin="0,12,0,10">
-      <CheckBox x:Name="SelectAllCheckBox" Content="全选" Margin="0,0,12,0" />
-      <Button x:Name="InvertButton" Content="反选" Margin="0,0,10,0" />
-      <ComboBox x:Name="FilterBox" Width="100" Margin="0,0,8,0" />
-      <TextBox x:Name="SearchBox" Width="200" ToolTip="按标题搜索" />
-    </WrapPanel>
+    <!-- 导出 / 导入模式 -->
+    <Grid Grid.Row="1" Margin="0,14,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="10" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
 
-    <!-- 纸片列表 -->
-    <ListBox x:Name="PaperList"
-             Grid.Row="2"
-             Background="Transparent"
-             BorderThickness="0"
-             HorizontalContentAlignment="Stretch"
-             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-             ScrollViewer.VerticalScrollBarVisibility="Auto"
-             VirtualizingPanel.IsVirtualizing="True"
-             VirtualizingPanel.VirtualizationMode="Recycling">
-      <ListBox.ItemContainerStyle>
-        <Style TargetType="ListBoxItem">
-          <Setter Property="Focusable" Value="False" />
-          <Setter Property="Padding" Value="0" />
-          <Setter Property="Margin" Value="0" />
-          <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-          <Setter Property="Background" Value="Transparent" />
-        </Style>
-      </ListBox.ItemContainerStyle>
-      <ListBox.ItemTemplate>
-        <DataTemplate>
-          <Border Padding="10,8"
-                  Margin="0,0,0,6"
-                  BorderThickness="1"
-                  CornerRadius="7"
-                  BorderBrush="{DynamicResource DataIoBorderBrush}"
-                  Background="{DynamicResource DataIoSurfaceBrush}">
+      <RadioButton x:Name="ExportModeButton"
+                   Grid.Column="0"
+                   GroupName="DataIoMode"
+                   Style="{StaticResource ModeCard}"
+                   IsChecked="True">
+        <StackPanel>
+          <TextBlock Text="&#xE898;"
+                     HorizontalAlignment="Center"
+                     FontSize="22">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ExportModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="导出数据"
+                     Margin="0,8,0,0"
+                     HorizontalAlignment="Center"
+                     FontWeight="SemiBold">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ExportModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="选择内容并生成文件"
+                     Margin="0,3,0,0"
+                     HorizontalAlignment="Center"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+        </StackPanel>
+      </RadioButton>
+
+      <RadioButton x:Name="ImportModeButton"
+                   Grid.Column="2"
+                   GroupName="DataIoMode"
+                   Style="{StaticResource ModeCard}">
+        <StackPanel>
+          <TextBlock Text="&#xE896;"
+                     HorizontalAlignment="Center"
+                     FontSize="22">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ImportModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="导入数据"
+                     Margin="0,8,0,0"
+                     HorizontalAlignment="Center"
+                     FontWeight="SemiBold">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=ImportModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="从文件恢复内容"
+                     Margin="0,3,0,0"
+                     HorizontalAlignment="Center"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+        </StackPanel>
+      </RadioButton>
+    </Grid>
+
+    <!-- 概要 / 详情 -->
+    <Grid Grid.Row="2" Margin="0,14,0,0">
+      <ScrollViewer x:Name="SummaryScroll"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="SummaryPanel" Margin="0,0,4,0">
+
+          <!-- 导入文件（仅导入模式） -->
+          <StackPanel x:Name="ImportFileSection" Visibility="Collapsed">
+            <TextBlock Text="导入文件" Style="{StaticResource SectionTitle}" />
+            <Border Style="{StaticResource RowBorder}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" />
+                <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                  <TextBlock x:Name="ImportFileNameText"
+                             Text="尚未选择文件"
+                             Style="{StaticResource RowTitle}"
+                             FontWeight="SemiBold" />
+                  <TextBlock Text="支持 PaperTodo 归档 (.zip) 或 .json"
+                             Style="{StaticResource SectionHint}" />
+                </StackPanel>
+                <Button x:Name="ChooseFileButton"
+                        Grid.Column="2"
+                        Content="选择文件"
+                        Style="{StaticResource GhostButton}" />
+              </Grid>
+            </Border>
+          </StackPanel>
+
+          <!-- 内容类型 -->
+          <TextBlock x:Name="ContentSectionTitle"
+                     Text="导出内容"
+                     Style="{StaticResource SectionTitle}"
+                     Margin="0,16,0,0" />
+          <TextBlock x:Name="ContentSectionHint"
+                     Text="选择需要导出的数据类型"
+                     Style="{StaticResource SectionHint}" />
+
+          <Border x:Name="NotesRow" Style="{StaticResource RowBorder}" Margin="0,10,0,0">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
+              <TextBlock Text="&#xE8A5;" Style="{StaticResource Icon}" />
+              <TextBlock Grid.Column="1"
+                         Margin="10,0,0,0"
+                         Text="笔记"
+                         Style="{StaticResource RowTitle}" />
+              <TextBlock x:Name="NotesCountText"
+                         Grid.Column="2"
+                         Text="0 条"
+                         Style="{StaticResource RowValue}" />
+              <CheckBox x:Name="NotesToggle"
+                        Grid.Column="3"
+                        Margin="14,0,0,0"
+                        IsChecked="True" />
+            </Grid>
+          </Border>
 
-              <CheckBox Grid.Column="0"
-                        Margin="0,0,10,0"
-                        VerticalAlignment="Top"
-                        IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                        IsEnabled="{Binding CanSelect}" />
+          <Border x:Name="TodosRow" Style="{StaticResource RowBorder}">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="&#xE8FD;" Style="{StaticResource Icon}" />
+              <TextBlock Grid.Column="1"
+                         Margin="10,0,0,0"
+                         Text="待办事项"
+                         Style="{StaticResource RowTitle}" />
+              <TextBlock x:Name="TodosCountText"
+                         Grid.Column="2"
+                         Text="0 条"
+                         Style="{StaticResource RowValue}" />
+              <CheckBox x:Name="TodosToggle"
+                        Grid.Column="3"
+                        Margin="14,0,0,0"
+                        IsChecked="True" />
+            </Grid>
+          </Border>
 
-              <StackPanel Grid.Column="1">
-                <TextBlock Text="{Binding Title}"
-                           TextWrapping="Wrap"
-                           FontWeight="SemiBold"
-                           Foreground="{DynamicResource DataIoTextBrush}" />
-                <TextBlock Text="{Binding Summary}"
-                           Margin="0,3,0,0"
-                           TextWrapping="Wrap"
-                           FontSize="{DynamicResource DataIoWeakFontSize}"
-                           Foreground="{DynamicResource DataIoWeakBrush}" />
-                <TextBlock Text="{Binding Warning}"
-                           Margin="0,2,0,0"
-                           TextWrapping="Wrap"
-                           FontSize="{DynamicResource DataIoWeakFontSize}"
-                           Foreground="{DynamicResource DataIoWarningBrush}"
-                           Visibility="{Binding WarningVisibility}" />
-              </StackPanel>
+          <Border Style="{StaticResource Divider}" />
 
-              <Border Grid.Column="2"
-                      Margin="8,0,0,0"
-                      Padding="6,2"
-                      CornerRadius="4"
-                      VerticalAlignment="Top"
+          <!-- 选择范围 -->
+          <TextBlock Text="选择范围" Style="{StaticResource SectionTitle}" />
+
+          <Border x:Name="ScopeAllRow" Style="{StaticResource RowBorder}" Cursor="Hand">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="全部数据" Style="{StaticResource RowTitle}" />
+              <Border x:Name="ScopeAllBadge"
+                      Grid.Column="1"
+                      CornerRadius="6"
+                      Padding="7,2"
                       Background="{DynamicResource DataIoAccentSurfaceBrush}">
-                <TextBlock Text="{Binding TypeLabel}"
+                <TextBlock Text="当前"
                            FontSize="{DynamicResource DataIoWeakFontSize}"
                            Foreground="{DynamicResource DataIoAccentBrush}" />
               </Border>
             </Grid>
           </Border>
-        </DataTemplate>
-      </ListBox.ItemTemplate>
-    </ListBox>
 
-    <!-- 操作按钮 -->
-    <WrapPanel Grid.Row="3" Margin="0,10,0,0" HorizontalAlignment="Right">
-      <Button x:Name="ExportButton" Content="导出所选" />
-      <Button x:Name="ImportButton" Content="导入文件" />
-    </WrapPanel>
+          <Border x:Name="ScopeCustomRow" Style="{StaticResource RowBorder}" Cursor="Hand">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="指定笔记 / 待办" Style="{StaticResource RowTitle}" />
+              <TextBlock x:Name="ScopeCustomHint"
+                         Grid.Column="1"
+                         Style="{StaticResource RowValue}"
+                         Margin="0,0,8,0" />
+              <TextBlock Grid.Column="2" Text="&#xE76C;" Style="{StaticResource Icon}" FontSize="14" />
+            </Grid>
+          </Border>
 
-    <!-- 状态栏与进度 -->
+          <Border Style="{StaticResource Divider}" />
+
+          <!-- 格式 / 策略 -->
+          <Grid x:Name="FormatRow">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" />
+            <TextBlock Grid.Column="1"
+                       Text="PaperTodo Archive (.zip)"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+          </Grid>
+
+          <Grid x:Name="StrategyRow" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="导入策略" Style="{StaticResource SectionTitle}" />
+            <TextBlock Grid.Column="1"
+                       Text="追加为新纸片"
+                       FontWeight="SemiBold"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+          </Grid>
+
+          <!-- 预估 -->
+          <TextBlock x:Name="EstimateTitle"
+                     Text="导出预估"
+                     Style="{StaticResource SectionHint}"
+                     Margin="0,18,0,0" />
+          <TextBlock x:Name="EstimateMain"
+                     Text="0 条笔记 · 0 条待办"
+                     Margin="0,4,0,0"
+                     FontSize="{DynamicResource DataIoEstimateFontSize}"
+                     FontWeight="Bold"
+                     Foreground="{DynamicResource DataIoTextBrush}" />
+          <TextBlock x:Name="EstimateSub"
+                     Text="包含标题、待办与笔记正文等必要元数据"
+                     Style="{StaticResource SectionHint}" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <!-- 详情选择 -->
+      <Grid x:Name="DetailPanel" Visibility="Collapsed">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="BackButton"
+                  Content="&#xE72B;"
+                  ToolTip="返回"
+                  Style="{StaticResource GhostButton}"
+                  Padding="8,4" />
+          <TextBlock x:Name="DetailTitle"
+                     Text="选择纸片"
+                     Margin="10,0,0,0"
+                     VerticalAlignment="Center"
+                     FontSize="{DynamicResource DataIoTitleFontSize}"
+                     FontWeight="SemiBold"
+                     Foreground="{DynamicResource DataIoTextBrush}" />
+        </StackPanel>
+
+        <WrapPanel Grid.Row="1" Margin="0,12,0,10">
+          <CheckBox x:Name="SelectAllCheckBox" Content="全选" Margin="0,0,12,0" />
+          <Button x:Name="InvertButton"
+                  Content="反选"
+                  Style="{StaticResource GhostButton}"
+                  Margin="0,0,10,0" />
+          <ComboBox x:Name="FilterBox" Width="100" Margin="0,0,8,0" />
+          <TextBox x:Name="SearchBox" Width="180" ToolTip="按标题搜索" />
+        </WrapPanel>
+
+        <ListBox x:Name="PaperList"
+                 Grid.Row="2"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 HorizontalContentAlignment="Stretch"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 VirtualizingPanel.IsVirtualizing="True"
+                 VirtualizingPanel.VirtualizationMode="Recycling">
+          <ListBox.ItemContainerStyle>
+            <Style TargetType="ListBoxItem">
+              <Setter Property="Focusable" Value="False" />
+              <Setter Property="Padding" Value="0" />
+              <Setter Property="Margin" Value="0" />
+              <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+              <Setter Property="Background" Value="Transparent" />
+            </Style>
+          </ListBox.ItemContainerStyle>
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Border Padding="10,8"
+                      Margin="0,0,0,6"
+                      BorderThickness="1"
+                      CornerRadius="7"
+                      BorderBrush="{DynamicResource DataIoBorderBrush}"
+                      Background="{DynamicResource DataIoSurfaceBrush}">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <CheckBox Grid.Column="0"
+                            Margin="0,0,10,0"
+                            VerticalAlignment="Top"
+                            IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                            IsEnabled="{Binding CanSelect}" />
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="{Binding Title}"
+                               TextWrapping="Wrap"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource DataIoTextBrush}" />
+                    <TextBlock Text="{Binding Summary}"
+                               Margin="0,3,0,0"
+                               TextWrapping="Wrap"
+                               FontSize="{DynamicResource DataIoWeakFontSize}"
+                               Foreground="{DynamicResource DataIoWeakBrush}" />
+                    <TextBlock Text="{Binding Warning}"
+                               Margin="0,2,0,0"
+                               TextWrapping="Wrap"
+                               FontSize="{DynamicResource DataIoWeakFontSize}"
+                               Foreground="{DynamicResource DataIoWarningBrush}"
+                               Visibility="{Binding WarningVisibility}" />
+                  </StackPanel>
+                  <Border Grid.Column="2"
+                          Margin="8,0,0,0"
+                          Padding="6,2"
+                          CornerRadius="4"
+                          VerticalAlignment="Top"
+                          Background="{DynamicResource DataIoAccentSurfaceBrush}">
+                    <TextBlock Text="{Binding TypeLabel}"
+                               FontSize="{DynamicResource DataIoWeakFontSize}"
+                               Foreground="{DynamicResource DataIoAccentBrush}" />
+                  </Border>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Grid>
+
+    <!-- 主操作按钮 -->
+    <Button x:Name="PrimaryButton"
+            Grid.Row="3"
+            Content="导出所选内容"
+            Style="{StaticResource PrimaryButton}"
+            Margin="0,14,0,0" />
+
+    <!-- 状态栏 -->
     <Grid Grid.Row="4" Margin="0,8,0,0">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*" />
