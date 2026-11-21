@@ -207,17 +207,16 @@
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
               <Border x:Name="CheckBorder"
-                      Width="16"
-                      Height="16"
-                      BorderThickness="1.5"
-                      CornerRadius="4"
+                      Width="{DynamicResource DataIoCheckSize}"
+                      Height="{DynamicResource DataIoCheckSize}"
+                      BorderThickness="{DynamicResource DataIoCheckBorderThickness}"
+                      CornerRadius="{DynamicResource DataIoCheckCornerRadius}"
                       BorderBrush="{DynamicResource CheckBoxBorderBrushKey}"
                       Background="Transparent"
                       VerticalAlignment="Center"
                       SnapsToDevicePixels="True">
+                <!-- 与宿主原生一致：不固定宽高，按几何自然尺寸居中，再整体缩放 -->
                 <Path x:Name="CheckMark"
-                      Width="13"
-                      Height="12"
                       Data="M 3,7.5 L 6.5,11 L 13,4"
                       Stroke="{DynamicResource PaperBrushKey}"
                       StrokeThickness="2"
@@ -227,7 +226,12 @@
                       HorizontalAlignment="Center"
                       VerticalAlignment="Center"
                       Visibility="Collapsed"
-                      SnapsToDevicePixels="True" />
+                      SnapsToDevicePixels="True">
+                  <Path.LayoutTransform>
+                    <ScaleTransform ScaleX="{DynamicResource DataIoCheckScale}"
+                                    ScaleY="{DynamicResource DataIoCheckScale}" />
+                  </Path.LayoutTransform>
+                </Path>
               </Border>
               <ContentPresenter x:Name="Label"
                                 Grid.Column="1"

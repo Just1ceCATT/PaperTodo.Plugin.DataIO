@@ -48,6 +48,10 @@ public partial class DataIoView : UserControl
         Resources["DataIoRowMargin"] = new Thickness(0, 6, 0, 0);
         Resources["DataIoDividerMargin"] = new Thickness(0, 18, 0, 4);
         Resources["DataIoPrimaryHeight"] = 46.0;
+        Resources["DataIoCheckSize"] = 16.0;
+        Resources["DataIoCheckBorderThickness"] = new Thickness(1.5);
+        Resources["DataIoCheckCornerRadius"] = new CornerRadius(4);
+        Resources["DataIoCheckScale"] = 1.0;
 
         // 模式卡片移入滚动区域，使其随内容一起上下滚动，而不是固定在顶部。
         if (ModeCardsGrid.Parent is Panel parent)
@@ -515,6 +519,12 @@ public partial class DataIoView : UserControl
         Resources["DataIoRowMargin"] = new Thickness(0, compact ? 4 : 6, 0, 0);
         Resources["DataIoDividerMargin"] = new Thickness(0, compact ? 12 : 18, 0, 4);
         Resources["DataIoPrimaryHeight"] = compact ? 40.0 : 46.0;
+
+        // 勾选框尺寸跟随宿主整体 UI 缩放（AppTypography.Scale），与原生待办勾选框一致。
+        Resources["DataIoCheckSize"] = 16.0 * themeScale;
+        Resources["DataIoCheckBorderThickness"] = new Thickness(1.5 * themeScale);
+        Resources["DataIoCheckCornerRadius"] = new CornerRadius(4 * themeScale);
+        Resources["DataIoCheckScale"] = themeScale;
 
         RootGrid.Margin = compact
             ? new Thickness(12, 10, 12, 10)
