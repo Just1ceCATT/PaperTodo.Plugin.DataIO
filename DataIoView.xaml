@@ -501,6 +501,29 @@
                      Visibility="Collapsed" />
         </StackPanel>
 
+        <!-- 导出格式放在导出内容之前 -->
+        <Grid x:Name="FormatRow" Margin="0,14,0,14">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      VerticalAlignment="Center">
+            <RadioButton x:Name="JsonFormatButton"
+                         Content="JSON"
+                         GroupName="DataIoExportFormat"
+                         Style="{StaticResource FormatChoice}"
+                         IsChecked="True" />
+            <RadioButton x:Name="MarkdownFormatButton"
+                         Content="Markdown"
+                         GroupName="DataIoExportFormat"
+                         Style="{StaticResource FormatChoice}"
+                         Margin="6,0,0,0" />
+          </StackPanel>
+        </Grid>
+
         <!-- 内容类型：点击行就地展开 -->
         <TextBlock x:Name="ContentSectionTitle"
                    Text="导出内容"
@@ -621,29 +644,7 @@
 
         <Border Style="{StaticResource Divider}" />
 
-        <!-- 格式 / 策略 -->
-        <Grid x:Name="FormatRow">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
-          </Grid.ColumnDefinitions>
-          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
-          <StackPanel Grid.Column="1"
-                      Orientation="Horizontal"
-                      VerticalAlignment="Center">
-            <RadioButton x:Name="JsonFormatButton"
-                         Content="JSON"
-                         GroupName="DataIoExportFormat"
-                         Style="{StaticResource FormatChoice}"
-                         IsChecked="True" />
-            <RadioButton x:Name="MarkdownFormatButton"
-                         Content="Markdown"
-                         GroupName="DataIoExportFormat"
-                         Style="{StaticResource FormatChoice}"
-                         Margin="6,0,0,0" />
-          </StackPanel>
-        </Grid>
-
+        <!-- 导入策略 -->
         <Grid x:Name="StrategyRow" Visibility="Collapsed">
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
@@ -651,7 +652,7 @@
           </Grid.ColumnDefinitions>
           <TextBlock Text="导入策略" Style="{StaticResource SectionTitle}" />
           <TextBlock Grid.Column="1"
-                     Text="追加为新纸片"
+                     Text="新建 / 更新已导入纸片"
                      FontWeight="SemiBold"
                      Foreground="{DynamicResource DataIoTextBrush}" />
         </Grid>
