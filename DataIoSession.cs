@@ -577,6 +577,18 @@ internal sealed class DataIoSession : IPaperBodySession
         !string.IsNullOrWhiteSpace(paper.UpdateTargetId) ||
         _gateway.Can(PaperTodoPermissionNames.PapersCreate);
 
+    /// <summary>
+    /// 命中更新目标、但内容与本地完全一致的笔记：更新是空操作，
+    /// 不应出现在更新预览里，否则会被误认为存在差异。
+    /// </summary>
+    internal static bool IsNoOpUpdate(ImportPaper paper) =>
+        !string.IsNullOrWhiteSpace(paper.UpdateTargetId) &&
+        !paper.UpdateHasChanges &&
+        string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase);
+
+    private static string DisplayImportTitle(ImportPaper paper) =>
+        string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title;
+
     private List<PaperSnapshot> GetExportSelectedPapers()
     {
         var candidates = GetExportCandidates(null).ToList();
@@ -1180,6 +1192,26 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
+        // 命中更新目标但内容已一致的笔记没有可更新内容，不进入更新预览，也不计入导入。
+        var unchangedPapers = selected.Where(IsNoOpUpdate).ToList();
+        if (unchangedPapers.Count > 0)
+        {
+            selected = selected.Where(paper => !IsNoOpUpdate(paper)).ToList();
+            if (selected.Count == 0)
+            {
+                var unchangedTitles = unchangedPapers.Select(DisplayImportTitle).ToList();
+                _view.ShowResultDialog(
+                    "内容无变化",
+                    new List<(string Label, string Value)>
+                    {
+                        ("无变化纸片", $"{unchangedTitles.Count} 张")
+                    },
+                    unchangedTitles.Select(title => "· " + title).ToList());
+                SetStatus($"选中的 {unchangedTitles.Count} 张笔记内容与本地一致，未做任何修改。");
+                return;
+            }
+        }
+
         // 纯更新不依赖 papers.create；只有确实要新建时才检查该权限。
         if (selected.Any(paper => string.IsNullOrWhiteSpace(paper.UpdateTargetId)) &&
             !_gateway.Can(PaperTodoPermissionNames.PapersCreate))
@@ -1189,7 +1221,7 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         // 有更新目标时先展示差异，并让用户逐张选择跳过/更新/新增。
-        var skippedTitles = new List<string>();
+        var skippedTitles = unchangedPapers.Select(DisplayImportTitle).ToList();
         var updateCandidates = selected
             .Where(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId))
             .ToList();
@@ -1284,6 +1316,12 @@ internal sealed class DataIoSession : IPaperBodySession
             var progress = new Progress<string>(SetStatus);
             var result = await new ImportService(_gateway, progress)
                 .ImportAsync(filtered, _settings, cts.Token);
+
+            if (unchangedPapers.Count > 0)
+            {
+                result.Warnings.Insert(0,
+                    $"{unchangedPapers.Count} 张笔记内容与本地一致，已自动跳过。");
+            }
 
             result.SkippedPapers = skippedTitles.Count;
             result.SkippedTitles.AddRange(skippedTitles);

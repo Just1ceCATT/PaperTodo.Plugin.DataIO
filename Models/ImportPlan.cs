@@ -46,4 +46,10 @@ internal sealed class ImportPaper
 
     /// <summary>本地现有内容与导入内容的差异，供更新预览展示。</summary>
     public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
+
+    /// <summary>
+    /// 命中更新目标时，内容是否与本地真正不同。笔记按“正文等价”判断（忽略尾部空行与分隔线）；
+    /// 为 false 时无需出现在更新预览里，也不应计入更新。
+    /// </summary>
+    public bool UpdateHasChanges { get; set; }
 }

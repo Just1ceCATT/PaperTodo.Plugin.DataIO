@@ -329,8 +329,9 @@ public partial class DataIoDialog : Window
         var panel = new StackPanel();
         var mono = new FontFamily("Consolas, Microsoft YaHei UI");
 
+        // 只有出现真正的增/删行才算有变化；省略行与相同行不应被当成差异。
         if (diff is not { Count: > 0 } ||
-            diff.All(line => line.Kind == ' '))
+            diff.All(line => line.Kind is not ('-' or '+')))
         {
             panel.Children.Add(new TextBlock
             {

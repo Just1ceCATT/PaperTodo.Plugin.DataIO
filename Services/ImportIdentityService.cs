@@ -109,6 +109,7 @@ internal sealed class ImportIdentityService
                         .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
                         .OrderBy(todo => todo.Order)
                         .Select(todo => (todo.Text, todo.Done))));
+                paper.UpdateHasChanges = paper.UpdateDiff.Any(line => line.Kind is '-' or '+');
             }
             else
             {
@@ -127,6 +128,11 @@ internal sealed class ImportIdentityService
 
                 fingerprint = ComputeNoteFingerprint(note.Content);
                 paper.UpdateDiff = TextDiff.Compute(note.Content, paper.Source.Content ?? "");
+
+                // 等价判断忽略尾部空行与分隔线，与真正写回时的判断保持一致。
+                paper.UpdateHasChanges = !MarkdownNormalize.ContentEquivalent(
+                    note.Content,
+                    paper.Source.Content);
 
                 // 本地仍有图片引用、而导入正文已是旧版“图片缺失”标记时，更新会破坏图片引用。
                 paper.TargetImagesAtRisk =
