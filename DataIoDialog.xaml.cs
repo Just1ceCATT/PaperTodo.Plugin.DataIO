@@ -244,6 +244,8 @@ public partial class DataIoDialog : Window
         }
         else
         {
+            panel.Children.Add(BuildDiffHeader(mono));
+
             foreach (var line in diff)
             {
                 var row = new Grid
@@ -296,6 +298,33 @@ public partial class DataIoDialog : Window
             Padding = new Thickness(9, 7, 9, 7),
             Child = panel
         };
+    }
+
+    private FrameworkElement BuildDiffHeader(FontFamily font)
+    {
+        var header = new Grid { Margin = new Thickness(0, 0, 0, 3) };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+        header.ColumnDefinitions.Add(new ColumnDefinition
+        {
+            Width = new GridLength(1, GridUnitType.Star)
+        });
+
+        var weak = (Brush)Resources["DialogWeakBrush"];
+        AddCell(header, 0, "旧", font, weak);
+        AddCell(header, 1, "新", font, weak);
+        var label = new TextBlock
+        {
+            Text = "差异内容",
+            FontSize = 10.5 * _scale,
+            Foreground = weak,
+            Opacity = 0.72,
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        Grid.SetColumn(label, 3);
+        header.Children.Add(label);
+        return header;
     }
 
     private void AddCell(Grid row, int column, int lineNumber, FontFamily font, Brush foreground) =>

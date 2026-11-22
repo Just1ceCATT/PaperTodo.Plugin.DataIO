@@ -38,6 +38,11 @@ internal static class TextDiff
 
         var result = new List<DiffLine>();
         var prefixStart = Math.Max(0, prefix - ContextLines);
+        if (prefixStart > 0)
+        {
+            result.Add(new DiffLine('…', $"上方省略 {prefixStart} 行", 0, 0));
+        }
+
         for (var i = prefixStart; i < prefix; i++)
         {
             result.Add(new DiffLine(' ', oldLines[i], i + 1, i + 1));
@@ -54,6 +59,11 @@ internal static class TextDiff
         }
 
         var suffixShown = Math.Min(suffix, ContextLines);
+        if (suffix > suffixShown)
+        {
+            result.Add(new DiffLine('…', $"下方省略 {suffix - suffixShown} 行", 0, 0));
+        }
+
         for (var i = oldLines.Length - suffixShown; i < oldLines.Length; i++)
         {
             var offset = i - (oldLines.Length - suffixShown);
@@ -67,7 +77,7 @@ internal static class TextDiff
         if (result.Count > MaxLines)
         {
             result = result.Take(MaxLines).ToList();
-            result.Add(new DiffLine(' ', "…（差异已截断）", 0, 0));
+            result.Add(new DiffLine('…', "差异已截断", 0, 0));
         }
 
         return result;
