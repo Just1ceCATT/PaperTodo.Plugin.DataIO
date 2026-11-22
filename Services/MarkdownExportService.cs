@@ -29,7 +29,8 @@ internal static class MarkdownExportService
             var isTodo = string.Equals(paper.Type, "todo", StringComparison.OrdinalIgnoreCase);
 
             // 不可见的 HTML 注释标记纸片类型与来源 ID，供本插件重新导入时区分类型并更新原纸片。
-            builder.Append("<!-- papertodo:type=")
+            // v2 标记带独立前缀，避免与笔记正文里普通的 papertodo 注释混淆；导入端仍兼容旧格式。
+            builder.Append("<!-- papertodo-dataio:v2 type=")
                 .Append(isTodo ? "todo" : "note");
             if (!string.IsNullOrWhiteSpace(paper.SourceId) &&
                 paper.SourceId.All(character => !char.IsWhiteSpace(character)))
@@ -100,15 +101,41 @@ internal static class MarkdownExportService
 
     private static void AppendNote(StringBuilder builder, ExportPaper paper)
     {
-        if (paper.ContentAvailable == false || string.IsNullOrEmpty(paper.Content))
+        if (paper.ContentAvailable == false)
         {
+            // 用独立标记表达“正文不可读取”，导入端据此保留 ContentAvailable=false，
+            // 不会把下面的占位文案当作真正的笔记正文写回宿主。
+            builder.Append("<!-- ").Append(MarkdownImportParser.ContentUnavailableMarker).AppendLine(" -->");
             builder.AppendLine("（正文不可读取，未导出）");
             return;
         }
 
         // 图片引用原样保留：图片本体虽然不在文件中，但引用文本必须完整写入，
         // 否则把导出的 Markdown 再导入（更新同一纸片）时会用“图片缺失”标记覆盖原正文。
-        builder.AppendLine(paper.Content);
+        AppendNoteContent(builder, paper.Content ?? "");
+    }
+
+    /// <summary>
+    /// 原样写入笔记正文；若某行恰好是本插件的标记行，在行内插一个反斜杠转义，
+    /// 避免回导时被误认为分节或“正文不可读取”标记。导入端会还原该反斜杠。
+    /// </summary>
+    private static void AppendNoteContent(StringBuilder builder, string content)
+    {
+        foreach (var rawLine in MarkdownNormalize.NormalizeLineEndings(content).Split('\n'))
+        {
+            var line = rawLine;
+            if (MarkdownImportParser.IsSectionMarkerLine(line) ||
+                MarkdownImportParser.IsContentUnavailableMarker(line))
+            {
+                var markerStart = line.IndexOf("<!--", StringComparison.Ordinal);
+                if (markerStart >= 0)
+                {
+                    line = line[..markerStart] + "\\" + line[markerStart..];
+                }
+            }
+
+            builder.AppendLine(line);
+        }
     }
 
     /// <summary>按宿主原生导出规则转义会改变 Markdown 结构的字符。</summary>

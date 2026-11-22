@@ -5,13 +5,21 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 解析本插件导出的 Markdown（也兼容常见的手写 Markdown）：
-/// 以 &lt;!-- papertodo:type=... --&gt; 标记分节；没有标记时整份文件视为一张纸片。
+/// 以 &lt;!-- papertodo-dataio:v2 type=... --&gt; 标记分节，同时兼容旧版
+/// &lt;!-- papertodo:type=... --&gt;；没有标记时整份文件视为一张纸片。
 /// 待办识别 - [ ] / - [x] 列表，其余内容识别为笔记正文。
+/// 代码块内出现的标记会被忽略，笔记正文中的同名标记在导出时会被转义。
 /// </summary>
 internal static partial class MarkdownImportParser
 {
+    /// <summary>正文不可读取的笔记使用的标记，避免把占位文案当作真正文导入。</summary>
+    internal const string ContentUnavailableMarker = "papertodo-dataio:content-unavailable";
+
+    /// <summary>旧版导出使用的占位文案；仅当正文整体等于该文案时才按“正文缺失”处理。</summary>
+    private const string LegacyUnavailablePlaceholder = "（正文不可读取，未导出）";
+
     [GeneratedRegex(
-        @"^<!--\s*papertodo:type=(todo|note)(?:\s+sourceId=(\S+))?\s*-->\s*$",
+        @"^<!--\s*papertodo(?:-dataio:v2)?[: ]\s*type=(todo|note)(?:\s+sourceId=(\S+))?\s*-->\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TypeMarkerPattern();
 
@@ -22,15 +30,21 @@ internal static partial class MarkdownImportParser
 
     public static ExportDocument Parse(string markdown, string filePath)
     {
-        var lines = markdown
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n')
-            .Split('\n');
+        var lines = MarkdownNormalize.NormalizeLineEndings(markdown).Split('\n');
 
         var markers = new List<(int Line, string Type, string SourceId)>();
+        var fenceCharacter = '\0';
         for (var index = 0; index < lines.Length; index++)
         {
-            var match = TypeMarkerPattern().Match(lines[index]);
+            var trimmed = lines[index].Trim();
+
+            // 代码块内的注释标记只是笔记内容，不能用来分节。
+            if (TryToggleFence(trimmed, ref fenceCharacter) || fenceCharacter != '\0')
+            {
+                continue;
+            }
+
+            var match = TypeMarkerPattern().Match(trimmed);
             if (match.Success)
             {
                 markers.Add((
@@ -118,13 +132,45 @@ internal static partial class MarkdownImportParser
         }
         else
         {
-            var content = string.Join("\n", lines[bodyStart..end]);
-            content = StripTrailingSeparator(content.Trim('\n').TrimEnd());
-            paper.Content = content;
-            paper.ContentAvailable = true;
+            ParseNoteBody(paper, lines, bodyStart, end);
         }
 
         return paper;
+    }
+
+    /// <summary>
+    /// 解析笔记正文：识别“正文不可读取”标记，并还原导出时为躲避分节扫描而加的转义。
+    /// </summary>
+    private static void ParseNoteBody(ExportPaper paper, string[] lines, int start, int end)
+    {
+        var bodyLines = new List<string>(Math.Max(0, end - start));
+        var unavailable = false;
+        for (var index = start; index < end; index++)
+        {
+            var line = lines[index];
+            if (IsContentUnavailableMarker(line))
+            {
+                unavailable = true;
+                continue;
+            }
+
+            bodyLines.Add(UnescapeNoteMarkerLine(line));
+        }
+
+        // 不可读的笔记不保留占位文案，导入后按“正文缺失”处理，避免把提示写进真正的笔记。
+        var content = unavailable
+            ? ""
+            : MarkdownNormalize.TrimTrailingBlankAndSeparator(string.Join("\n", bodyLines).Trim('\n').TrimEnd());
+
+        // 兼容旧版导出：当时没有独立标记，正文只有一条占位文案。
+        if (!unavailable && string.Equals(content, LegacyUnavailablePlaceholder, StringComparison.Ordinal))
+        {
+            unavailable = true;
+            content = "";
+        }
+
+        paper.Content = content;
+        paper.ContentAvailable = !unavailable;
     }
 
     private static string InferType(string[] lines, int start, int end)
@@ -193,30 +239,70 @@ internal static partial class MarkdownImportParser
         line.StartsWith("\t", StringComparison.Ordinal) ||
         line.StartsWith("    ", StringComparison.Ordinal);
 
-    private static string StripTrailingSeparator(string content)
-    {
-        var lines = content.Split('\n').ToList();
-        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-        {
-            lines.RemoveAt(lines.Count - 1);
-        }
+    /// <summary>判断一行是否为本插件的分节标记（用于导出时转义笔记正文中的同名行）。</summary>
+    internal static bool IsSectionMarkerLine(string line) =>
+        TypeMarkerPattern().IsMatch(line.Trim());
 
-        if (lines.Count > 0 && IsSeparator(lines[^1]))
-        {
-            lines.RemoveAt(lines.Count - 1);
-            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-            {
-                lines.RemoveAt(lines.Count - 1);
-            }
-        }
-
-        return string.Join("\n", lines);
-    }
-
-    private static bool IsSeparator(string line)
+    /// <summary>判断一行是否是“正文不可读取”标记。</summary>
+    internal static bool IsContentUnavailableMarker(string line)
     {
         var trimmed = line.Trim();
-        return trimmed.Length >= 3 && trimmed.All(character => character == '-');
+        return trimmed.StartsWith("<!--", StringComparison.Ordinal) &&
+               trimmed.EndsWith("-->", StringComparison.Ordinal) &&
+               trimmed.Contains(ContentUnavailableMarker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 代码块围栏：``` 与 ~~~ 只与同种围栏成对切换。
+    /// 在 ~~~ 块内出现 ``` 行时不会误把围栏类型切换掉。
+    /// 返回 true 表示当前行是围栏行。
+    /// </summary>
+    private static bool TryToggleFence(string trimmed, ref char fenceCharacter)
+    {
+        if (trimmed.StartsWith("```", StringComparison.Ordinal))
+        {
+            if (fenceCharacter == '\0')
+            {
+                fenceCharacter = '`';
+            }
+            else if (fenceCharacter == '`')
+            {
+                fenceCharacter = '\0';
+            }
+
+            return true;
+        }
+
+        if (trimmed.StartsWith("~~~", StringComparison.Ordinal))
+        {
+            if (fenceCharacter == '\0')
+            {
+                fenceCharacter = '~';
+            }
+            else if (fenceCharacter == '~')
+            {
+                fenceCharacter = '\0';
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>去掉导出时加到标记行开头的反斜杠。</summary>
+    private static string UnescapeNoteMarkerLine(string line)
+    {
+        var start = line.Length - line.TrimStart().Length;
+        if (start >= line.Length || line[start] != '\\')
+        {
+            return line;
+        }
+
+        var withoutBackslash = line.Remove(start, 1);
+        return IsSectionMarkerLine(withoutBackslash) || IsContentUnavailableMarker(withoutBackslash)
+            ? withoutBackslash
+            : line;
     }
 
     private static string FallbackTitle(string filePath, int paperIndex)
