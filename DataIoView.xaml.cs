@@ -28,6 +28,7 @@ public partial class DataIoView : UserControl
     private bool _suppressModeEvents;
     private bool _suppressFormatEvents;
     private bool _suppressSelectionEvents;
+    private bool _suppressSearchEvents;
     private bool _notesExpanded;
     private bool _todosExpanded;
     private int _notesAnimToken;
@@ -54,8 +55,12 @@ public partial class DataIoView : UserControl
     public event EventHandler? ExportFormatChanged;
     public event EventHandler? NoteSelectionChanged;
     public event EventHandler? TodoSelectionChanged;
+    public event EventHandler? SearchChanged;
     public event EventHandler? PrimaryActionRequested;
     public event EventHandler? ChooseImportFileRequested;
+
+    /// <summary>当前搜索框内容；会话据此过滤列表。</summary>
+    public string SearchText => SearchBox.Text;
 
     public DataIoView()
     {
@@ -108,6 +113,37 @@ public partial class DataIoView : UserControl
         JsonFormatButton.IsChecked = format == DataIoExportFormat.Json;
         MarkdownFormatButton.IsChecked = format == DataIoExportFormat.Markdown;
         _suppressFormatEvents = false;
+    }
+
+    /// <summary>恢复上次的搜索关键字；不触发 SearchChanged。</summary>
+    public void SetSearch(string? text)
+    {
+        _suppressSearchEvents = true;
+        SearchBox.Text = text ?? "";
+        _suppressSearchEvents = false;
+        UpdateSearchVisuals();
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        UpdateSearchVisuals();
+        if (!_suppressSearchEvents)
+        {
+            SearchChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnSearchClearClick(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Text = "";
+        SearchBox.Focus();
+    }
+
+    private void UpdateSearchVisuals()
+    {
+        var hasText = !string.IsNullOrEmpty(SearchBox.Text);
+        SearchPlaceholder.Visibility = hasText ? Visibility.Collapsed : Visibility.Visible;
+        SearchClearButton.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnExportFormatChecked(object? sender, RoutedEventArgs e)
@@ -398,6 +434,8 @@ public partial class DataIoView : UserControl
         TodosClearButton.IsEnabled = !busy;
         NotesInvertButton.IsEnabled = !busy;
         TodosInvertButton.IsEnabled = !busy;
+        SearchBox.IsEnabled = !busy;
+        SearchClearButton.IsEnabled = !busy;
         ExportModeButton.IsEnabled = !busy && _canExport;
         ImportModeButton.IsEnabled = !busy && _canImport;
     }
@@ -528,6 +566,8 @@ public partial class DataIoView : UserControl
         ImportModeButton.Checked += OnModeChecked;
         JsonFormatButton.Checked += OnExportFormatChecked;
         MarkdownFormatButton.Checked += OnExportFormatChecked;
+        SearchBox.TextChanged += OnSearchTextChanged;
+        SearchClearButton.Click += OnSearchClearClick;
 
         NotesRow.MouseLeftButtonUp += OnNotesRowClick;
         TodosRow.MouseLeftButtonUp += OnTodosRowClick;
@@ -1033,7 +1073,8 @@ public partial class DataIoView : UserControl
     /// </summary>
     internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
         IReadOnlyList<ImportPaper> papers,
-        IReadOnlyList<string>? unrecoverable)
+        IReadOnlyList<string>? unrecoverable,
+        bool canCreate)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
@@ -1041,7 +1082,7 @@ public partial class DataIoView : UserControl
             "更新预览",
             "继续导入",
             "取消");
-        dialog.SetUpdatePreview(papers, unrecoverable);
+        dialog.SetUpdatePreview(papers, unrecoverable, canCreate);
         if (dialog.ShowModal(Window.GetWindow(this)) != true)
         {
             return null;
