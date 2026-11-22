@@ -19,4 +19,11 @@
     <!-- 宿主契约工程；打包时由构建脚本剔除该 DLL，由宿主提供。 -->
     <ProjectReference Include="..\PaperTodo-dev\PaperTodo.Plugin.Abstractions\PaperTodo.Plugin.Abstractions.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <!-- 允许测试工程访问 internal 解析/规范化逻辑。 -->
+    <InternalsVisibleTo Include="PaperTodo.Plugin.DATAIO.Tests" />
+    <!-- 测试工程有独立目录，主工程不参与其源码编译（默认通配会包含所有子目录）。 -->
+    <Compile Remove="tests/**/*.cs" />
+  </ItemGroup>
 </Project>
