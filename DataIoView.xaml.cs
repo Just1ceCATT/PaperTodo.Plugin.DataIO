@@ -358,10 +358,18 @@ public partial class DataIoView : UserControl
         PrimaryButton.IsEnabled = !_busy && enabled;
     }
 
-    public void SetImportFileName(string? fileName)
+    /// <summary>
+    /// 更新导入文件信息行。status 为 null 时展示默认的格式支持说明；
+    /// 选择文件后改为展示解析状态，避免重复说明。
+    /// </summary>
+    public void SetImportFileInfo(string? fileName, string? status = null)
     {
         var hasFile = !string.IsNullOrWhiteSpace(fileName);
         ImportFileNameText.Text = hasFile ? fileName! : "尚未选择文件";
+        ImportFileNameText.ToolTip = hasFile ? fileName : null;
+        ImportFileStatusText.Text = string.IsNullOrWhiteSpace(status)
+            ? "支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
+            : status!;
         ChooseFileButton.Content = hasFile ? "重新选择" : "选择文件";
     }
 

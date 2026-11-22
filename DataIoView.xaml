@@ -80,14 +80,22 @@
       </Setter>
     </Style>
 
-    <!-- 展开后的具体纸片行 -->
+    <!-- 条目行：透明容器 + 轻量分割线，悬停时才浮现底色 -->
+    <Style x:Key="PaperListRow" TargetType="Border">
+      <Setter Property="Padding" Value="8,6" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0,0,0,1" />
+      <Setter Property="BorderBrush" Value="{DynamicResource DataIoDividerBrush}" />
+      <Style.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+
+    <!-- 展开后的具体纸片行：紧凑列表，减少重复卡片与边框 -->
     <DataTemplate x:Key="PaperRowTemplate">
-      <Border Padding="10,8"
-              Margin="0,0,0,6"
-              BorderThickness="1"
-              CornerRadius="6"
-              BorderBrush="{DynamicResource DataIoBorderBrush}"
-              Background="{DynamicResource DataIoSurfaceBrush}"
+      <Border Style="{StaticResource PaperListRow}"
               MouseLeftButtonDown="OnRowMouseLeftButtonDown"
               MouseEnter="OnRowMouseEnter"
               MouseLeave="OnRowMouseLeave"
@@ -100,17 +108,28 @@
           </Grid.ColumnDefinitions>
           <CheckBox Grid.Column="0"
                     Margin="0,0,10,0"
-                    VerticalAlignment="Top"
+                    VerticalAlignment="Center"
                     IsChecked="{Binding IsSelected, Mode=TwoWay}"
                     IsEnabled="{Binding CanSelect}" />
-          <StackPanel Grid.Column="1">
+          <StackPanel Grid.Column="1" VerticalAlignment="Center">
             <TextBlock Text="{Binding Title}"
-                       TextWrapping="Wrap"
-                       FontWeight="SemiBold"
-                       Foreground="{DynamicResource DataIoTextBrush}" />
+                       TextTrimming="CharacterEllipsis"
+                       FontWeight="SemiBold">
+              <TextBlock.Style>
+                <Style TargetType="TextBlock">
+                  <!-- 未选中降低对比度，选中后回到正文色 -->
+                  <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+                  <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+                    </DataTrigger>
+                  </Style.Triggers>
+                </Style>
+              </TextBlock.Style>
+            </TextBlock>
             <TextBlock Text="{Binding Summary}"
-                       Margin="0,3,0,0"
-                       TextWrapping="Wrap"
+                       Margin="0,2,0,0"
+                       TextTrimming="CharacterEllipsis"
                        FontSize="{DynamicResource DataIoWeakFontSize}"
                        Foreground="{DynamicResource DataIoWeakBrush}" />
             <TextBlock Text="{Binding Warning}"
@@ -120,10 +139,10 @@
                        Foreground="{DynamicResource DataIoWarningBrush}"
                        Visibility="{Binding WarningVisibility}" />
           </StackPanel>
-          <!-- 类型标签与预览按钮同处一个水平容器，标签在按钮高度内居中，避免错位 -->
+          <!-- 类型标签与预览按钮同处一个水平容器，统一垂直居中 -->
           <StackPanel Grid.Column="2"
                       Orientation="Horizontal"
-                      VerticalAlignment="Top">
+                      VerticalAlignment="Center">
             <Border Margin="8,0,0,0"
                     Padding="7,2"
                     CornerRadius="4"
@@ -134,7 +153,7 @@
                          Foreground="{DynamicResource DataIoAccentBrush}" />
             </Border>
             <Button Margin="8,0,0,0"
-                    VerticalAlignment="Top"
+                    VerticalAlignment="Center"
                     Style="{StaticResource RowIconButton}"
                     Click="OnPreviewRowClick"
                     ToolTip="预览正文">
@@ -234,6 +253,37 @@
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
                 <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.4" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- 批量选择操作：无边框、小字号，只在悬停时浮现底色，避免抢占列表注意力 -->
+    <Style x:Key="CompactGhostButton" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Padding" Value="6,2" />
+      <Setter Property="FontSize" Value="{DynamicResource DataIoWeakFontSize}" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bg"
+                    CornerRadius="5"
+                    Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
               </Trigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter TargetName="Bg" Property="Opacity" Value="0.4" />
@@ -473,24 +523,32 @@
         <!-- 导入文件（仅导入模式） -->
         <StackPanel x:Name="ImportFileSection" Visibility="Collapsed">
           <TextBlock Text="导入文件" Style="{StaticResource SectionTitle}" />
-          <Border Style="{StaticResource RowBorder}">
+          <!-- 紧凑文件信息行：图标 | 文件名 + 状态 | 重新选择 -->
+          <Border Style="{StaticResource RowBorder}" Margin="0,8,0,0" Padding="10,7">
             <Grid>
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" />
-              <StackPanel Grid.Column="1" Margin="10,0,0,0">
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource Icon}" FontSize="16" />
+              <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                 <TextBlock x:Name="ImportFileNameText"
                            Text="尚未选择文件"
-                           Style="{StaticResource RowTitle}"
-                           FontWeight="SemiBold" />
-                <TextBlock Text="支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
-                           Style="{StaticResource SectionHint}" />
+                           FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{DynamicResource DataIoTextBrush}" />
+                <TextBlock x:Name="ImportFileStatusText"
+                           Margin="0,2,0,0"
+                           Text="支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
+                           TextTrimming="CharacterEllipsis"
+                           FontSize="{DynamicResource DataIoWeakFontSize}"
+                           Foreground="{DynamicResource DataIoWeakBrush}" />
               </StackPanel>
               <Button x:Name="ChooseFileButton"
                       Grid.Column="2"
+                      Margin="10,0,0,0"
+                      VerticalAlignment="Center"
                       Content="选择文件"
                       Style="{StaticResource GhostButton}" />
             </Grid>
@@ -534,7 +592,11 @@
                    Text="点击条目展开并选择具体内容"
                    Style="{StaticResource SectionHint}" />
 
-        <Border x:Name="NotesRow" Style="{StaticResource RowBorder}" Margin="0,10,0,0" Cursor="Hand">
+        <Border x:Name="NotesRow"
+                Style="{StaticResource RowBorder}"
+                Margin="0,8,0,0"
+                Padding="10,7"
+                Cursor="Hand">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
@@ -568,28 +630,29 @@
                 Height="0"
                 Visibility="Collapsed"
                 ClipToBounds="True">
-          <StackPanel x:Name="NotesContent" Margin="0,4,0,2">
-            <WrapPanel Margin="0,0,0,6">
+          <StackPanel x:Name="NotesContent" Margin="0,2,0,2">
+            <WrapPanel Margin="0,0,0,2">
               <Button x:Name="NotesSelectAllButton"
                       Content="全选"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2"
-                      Margin="0,0,8,0" />
+                      Style="{StaticResource CompactGhostButton}"
+                      Margin="0,0,6,0" />
               <Button x:Name="NotesClearButton"
                       Content="清空"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2"
-                      Margin="0,0,8,0" />
+                      Style="{StaticResource CompactGhostButton}"
+                      Margin="0,0,6,0" />
               <Button x:Name="NotesInvertButton"
                       Content="反选"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2" />
+                      Style="{StaticResource CompactGhostButton}" />
             </WrapPanel>
             <ItemsControl x:Name="NotesList" ItemTemplate="{StaticResource PaperRowTemplate}" />
           </StackPanel>
         </Border>
 
-        <Border x:Name="TodosRow" Style="{StaticResource RowBorder}" Cursor="Hand">
+        <Border x:Name="TodosRow"
+                Style="{StaticResource RowBorder}"
+                Margin="0,6,0,0"
+                Padding="10,7"
+                Cursor="Hand">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
@@ -623,22 +686,19 @@
                 Height="0"
                 Visibility="Collapsed"
                 ClipToBounds="True">
-          <StackPanel x:Name="TodosContent" Margin="0,4,0,2">
-            <WrapPanel Margin="0,0,0,6">
+          <StackPanel x:Name="TodosContent" Margin="0,2,0,2">
+            <WrapPanel Margin="0,0,0,2">
               <Button x:Name="TodosSelectAllButton"
                       Content="全选"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2"
-                      Margin="0,0,8,0" />
+                      Style="{StaticResource CompactGhostButton}"
+                      Margin="0,0,6,0" />
               <Button x:Name="TodosClearButton"
                       Content="清空"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2"
-                      Margin="0,0,8,0" />
+                      Style="{StaticResource CompactGhostButton}"
+                      Margin="0,0,6,0" />
               <Button x:Name="TodosInvertButton"
                       Content="反选"
-                      Style="{StaticResource GhostButton}"
-                      Padding="8,2" />
+                      Style="{StaticResource CompactGhostButton}" />
             </WrapPanel>
             <ItemsControl x:Name="TodosList" ItemTemplate="{StaticResource PaperRowTemplate}" />
           </StackPanel>

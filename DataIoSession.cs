@@ -85,7 +85,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.ApplyTheme(context.Theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
         _view.SetExportFormat(ParseExportFormat(_state.ExportFormat));
-        _view.SetImportFileName(null);
+        _view.SetImportFileInfo(null);
         _view.SetPrimaryEnabled(false);
 
         _debounce = new DispatcherTimer(DispatcherPriority.Background, _view.Dispatcher)
@@ -310,7 +310,9 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.SetAvailability(
             _gateway.Can(PaperTodoPermissionNames.PapersRead),
             _gateway.Can(PaperTodoPermissionNames.PapersCreate));
-        _view.SetImportFileName(_importFilePath is null ? null : Path.GetFileName(_importFilePath));
+        _view.SetImportFileInfo(
+            _importFilePath is null ? null : Path.GetFileName(_importFilePath),
+            DescribeImportFile());
 
         RefreshRows();
         UpdateImportSummary();
@@ -321,6 +323,23 @@ internal sealed class DataIoSession : IPaperBodySession
                 ? "请选择要导入的文件。"
                 : $"已读取 {_importPlan.Papers.Count} 张纸片。");
         }
+    }
+
+    /// <summary>文件行的次要状态：格式与已解析纸片数；未选择文件时返回 null。</summary>
+    private string? DescribeImportFile()
+    {
+        if (_importFilePath is null)
+        {
+            return null;
+        }
+
+        var format = string.Equals(
+            Path.GetExtension(_importFilePath),
+            ".md",
+            StringComparison.OrdinalIgnoreCase)
+            ? "Markdown"
+            : "JSON";
+        return _importPlan is null ? format : $"{format} · {_importPlan.Papers.Count} 张纸片";
     }
 
     // ---------- 候选与选择 ----------
