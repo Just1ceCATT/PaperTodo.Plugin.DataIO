@@ -89,8 +89,18 @@ internal sealed class ImportIdentityService
                     continue;
                 }
 
-                fingerprint = ComputeTodoFingerprint(
-                    todosByPaper.TryGetValue(target.Id, out var todos) ? todos : []);
+                TodoSnapshot[] localTodos =
+                    todosByPaper.TryGetValue(target.Id, out var todos) ? todos : [];
+                fingerprint = ComputeTodoFingerprint(localTodos);
+                paper.UpdateDiff = TextDiff.Compute(
+                    TextDiff.TodoSnapshot(localTodos
+                        .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+                        .OrderBy(todo => todo.Order)
+                        .Select(todo => (todo.Text, todo.Done))),
+                    TextDiff.TodoSnapshot((paper.Source.Todos ?? [])
+                        .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+                        .OrderBy(todo => todo.Order)
+                        .Select(todo => (todo.Text, todo.Done))));
             }
             else
             {
@@ -108,6 +118,7 @@ internal sealed class ImportIdentityService
                 }
 
                 fingerprint = ComputeNoteFingerprint(note.Content);
+                paper.UpdateDiff = TextDiff.Compute(note.Content, paper.Source.Content ?? "");
             }
 
             paper.UpdateTargetId = target.Id;

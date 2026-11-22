@@ -1090,7 +1090,57 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
-        if (_settings.ConfirmBeforeImport)
+        // 有更新目标时先展示差异，并让用户逐张选择跳过/更新/新增。
+        var updateCandidates = selected
+            .Where(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId))
+            .ToList();
+        var updatePreviewShown = updateCandidates.Count > 0;
+        if (updatePreviewShown)
+        {
+            var choices = _view.ShowUpdatePreviewDialog(updateCandidates);
+            if (choices == null)
+            {
+                SetStatus("已取消导入。");
+                return;
+            }
+
+            var kept = new List<ImportPaper>(selected.Count);
+            foreach (var paper in selected)
+            {
+                if (string.IsNullOrWhiteSpace(paper.UpdateTargetId))
+                {
+                    kept.Add(paper);
+                    continue;
+                }
+
+                var action = choices.TryGetValue(paper, out var chosen)
+                    ? chosen
+                    : ImportUpdateAction.Update;
+                switch (action)
+                {
+                    case ImportUpdateAction.Skip:
+                        break;
+                    case ImportUpdateAction.CreateNew:
+                        paper.UpdateTargetId = null;
+                        paper.TargetLocallyModified = false;
+                        paper.UpdateDiff = null;
+                        kept.Add(paper);
+                        break;
+                    default:
+                        kept.Add(paper);
+                        break;
+                }
+            }
+
+            selected = kept;
+            if (selected.Count == 0)
+            {
+                SetStatus("已跳过全部待导入内容。");
+                return;
+            }
+        }
+
+        if (_settings.ConfirmBeforeImport && !updatePreviewShown)
         {
             var confirmation = BuildConfirmation(selected, _importPlan);
             if (!_view.ShowConfirmDialog("确认导入", confirmation, "继续导入", "取消"))

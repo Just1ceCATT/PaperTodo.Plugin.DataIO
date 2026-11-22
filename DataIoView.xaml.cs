@@ -978,6 +978,25 @@ public partial class DataIoView : UserControl
         return dialog.ShowModal(Window.GetWindow(this)) == true;
     }
 
+    /// <summary>展示更新差异并收集每张纸片的处理方式；返回 null 表示取消导入。</summary>
+    internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
+        IReadOnlyList<ImportPaper> papers)
+    {
+        var dialog = new DataIoDialog(
+            CurrentTheme,
+            ResolveTintColor(),
+            "更新预览",
+            "继续导入",
+            "取消");
+        dialog.SetUpdatePreview(papers);
+        if (dialog.ShowModal(Window.GetWindow(this)) != true)
+        {
+            return null;
+        }
+
+        return new Dictionary<ImportPaper, ImportUpdateAction>(dialog.UpdateChoices);
+    }
+
     public void ShowResultDialog(
         string title,
         IReadOnlyList<(string Label, string Value)> stats,

@@ -34,4 +34,7 @@ internal sealed class ImportPaper
 
     /// <summary>命中的本地纸片自上次导入后被修改过。</summary>
     public bool TargetLocallyModified { get; set; }
+
+    /// <summary>本地现有内容与导入内容的差异，供更新预览展示。</summary>
+    public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
 }

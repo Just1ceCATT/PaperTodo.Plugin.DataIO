@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using PaperTodo.Plugin;
@@ -14,6 +15,7 @@ public partial class DataIoDialog : Window
 {
     private readonly double _scale;
     private readonly Color _tint;
+    private readonly Dictionary<ImportPaper, ImportUpdateAction> _updateChoices = [];
 
     public DataIoDialog(
         PaperBodyTheme theme,
@@ -118,6 +120,154 @@ public partial class DataIoDialog : Window
         }
     }
 
+    internal IReadOnlyDictionary<ImportPaper, ImportUpdateAction> UpdateChoices => _updateChoices;
+
+    /// <summary>更新预览：逐张展示本地内容与导入内容的差异，并让用户选择跳过/更新/新增。</summary>
+    internal void SetUpdatePreview(IReadOnlyList<ImportPaper> papers)
+    {
+        Width = 640;
+
+        BodyPanel.Children.Add(new TextBlock
+        {
+            Text = "以下纸片将更新本地已有内容，请为每张纸片选择处理方式：",
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12.5 * _scale,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+
+        for (var index = 0; index < papers.Count; index++)
+        {
+            BodyPanel.Children.Add(BuildUpdateCard(papers[index], index));
+        }
+    }
+
+    private FrameworkElement BuildUpdateCard(ImportPaper paper, int index)
+    {
+        var card = new StackPanel
+        {
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+
+        card.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title,
+            FontSize = 13.0 * _scale,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Resources["DialogTextBrush"]
+        });
+
+        var typeLabel = string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase)
+            ? "笔记"
+            : "待办";
+        var targetLabel = string.IsNullOrWhiteSpace(paper.UpdateTargetTitle)
+            ? "本地已有纸片"
+            : $"本地纸片：{paper.UpdateTargetTitle}";
+        card.Children.Add(new TextBlock
+        {
+            Text = $"{typeLabel} · {targetLabel}",
+            FontSize = 11.5 * _scale,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(0, 2, 0, 0)
+        });
+
+        if (paper.TargetLocallyModified)
+        {
+            card.Children.Add(new TextBlock
+            {
+                Text = "本地内容自上次导入后被修改，更新会覆盖这些修改。",
+                FontSize = 11.5 * _scale,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Resources["DialogWarningBrush"],
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+        }
+
+        var choices = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 6, 0, 5)
+        };
+        AddChoice(choices, paper, index, ImportUpdateAction.Skip, "跳过");
+        AddChoice(choices, paper, index, ImportUpdateAction.Update, "更新");
+        AddChoice(choices, paper, index, ImportUpdateAction.CreateNew, "新增");
+        card.Children.Add(choices);
+
+        card.Children.Add(BuildDiffPanel(paper.UpdateDiff));
+        return card;
+    }
+
+    private void AddChoice(
+        Panel host,
+        ImportPaper paper,
+        int index,
+        ImportUpdateAction action,
+        string label)
+    {
+        var radio = new RadioButton
+        {
+            Content = label,
+            GroupName = $"DataIoUpdateChoice{index}",
+            Style = (Style)FindResource("UpdateChoice"),
+            FontSize = 12.0 * _scale,
+            IsChecked = action == ImportUpdateAction.Update
+        };
+        _updateChoices[paper] = ImportUpdateAction.Update;
+        radio.Checked += (_, _) => _updateChoices[paper] = action;
+        host.Children.Add(radio);
+    }
+
+    private FrameworkElement BuildDiffPanel(IReadOnlyList<DiffLine>? diff)
+    {
+        var text = new TextBlock
+        {
+            FontFamily = new FontFamily("Consolas, Microsoft YaHei UI"),
+            FontSize = 11.5 * _scale,
+            TextWrapping = TextWrapping.Wrap
+        };
+
+        if (diff is not { Count: > 0 } ||
+            diff.All(line => line.Kind == ' '))
+        {
+            text.Inlines.Add(new Run("（内容无变化）")
+            {
+                Foreground = (Brush)Resources["DialogWeakBrush"]
+            });
+        }
+        else
+        {
+            foreach (var line in diff)
+            {
+                var run = new Run(line.Kind switch
+                {
+                    '+' => "+ " + line.Text,
+                    '-' => "- " + line.Text,
+                    _ => "  " + line.Text
+                })
+                {
+                    Foreground = (Brush)Resources[line.Kind switch
+                    {
+                        '+' => "DialogAddedBrush",
+                        '-' => "DialogRemovedBrush",
+                        _ => "DialogWeakBrush"
+                    }]
+                };
+                text.Inlines.Add(run);
+                text.Inlines.Add(new Run(Environment.NewLine));
+            }
+        }
+
+        return new Border
+        {
+            Background = TintBrush(8),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(9, 7, 9, 7),
+            Child = text
+        };
+    }
+
     public bool? ShowModal(Window? owner)
     {
         if (owner is { IsVisible: true })
@@ -143,6 +293,16 @@ public partial class DataIoDialog : Window
             theme.IsDark ? Color.FromRgb(0x21, 0x1F, 0x1C) : Color.FromRgb(0xFF, 0xF9, 0xEA));
         Resources["DialogBorderBrush"] = MakeBrush(theme.BorderColor, Color.FromRgb(0x4C, 0x45, 0x3D));
         Resources["DialogButtonHoverBrush"] = TintBrush(46);
+        Resources["DialogTintBrush"] = TintBrush(32);
+        Resources["DialogWarningBrush"] = MakeBrush(
+            theme.IsDark ? "#E0A458" : "#9A5B00",
+            Color.FromRgb(0xE0, 0xA4, 0x58));
+        Resources["DialogAddedBrush"] = MakeBrush(
+            theme.IsDark ? "#7FD99A" : "#1E7F45",
+            Color.FromRgb(0x7F, 0xD9, 0x9A));
+        Resources["DialogRemovedBrush"] = MakeBrush(
+            theme.IsDark ? "#F08A80" : "#B3261E",
+            Color.FromRgb(0xF0, 0x8A, 0x80));
 
         FontFamily = new FontFamily(string.IsNullOrWhiteSpace(theme.FontFamily)
             ? "Microsoft YaHei UI"

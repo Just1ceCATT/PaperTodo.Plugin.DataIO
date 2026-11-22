@@ -10,6 +10,36 @@
         SizeToContent="Height"
         WindowStartupLocation="CenterOwner">
   <Window.Resources>
+    <Style x:Key="UpdateChoice" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{DynamicResource DialogTextBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Margin" Value="0,0,6,0" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="Chip"
+                    Padding="9,3"
+                    CornerRadius="6"
+                    BorderThickness="1"
+                    BorderBrush="Transparent"
+                    Background="Transparent">
+              <ContentPresenter VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource DialogButtonHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Chip" Property="Background" Value="{DynamicResource DialogTintBrush}" />
+                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource DialogBorderBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style x:Key="DialogButton" TargetType="Button">
       <Setter Property="MinWidth" Value="72" />
       <Setter Property="Padding" Value="16,7" />
@@ -62,7 +92,12 @@
                  TextTrimming="CharacterEllipsis"
                  Foreground="{DynamicResource DialogTextBrush}" />
 
-      <StackPanel x:Name="BodyPanel" Grid.Row="1" />
+      <ScrollViewer Grid.Row="1"
+                    MaxHeight="520"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="BodyPanel" />
+      </ScrollViewer>
 
       <WrapPanel x:Name="ButtonPanel"
                  Grid.Row="2"

@@ -13,3 +13,11 @@ public enum DataIoExportFormat
     Json,
     Markdown
 }
+
+/// <summary>更新预览中，用户对单张纸片选择的处理方式。</summary>
+public enum ImportUpdateAction
+{
+    Skip,
+    Update,
+    CreateNew
+}
