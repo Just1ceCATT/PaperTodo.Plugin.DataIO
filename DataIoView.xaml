@@ -175,6 +175,12 @@
       </Setter>
     </Style>
 
+    <Style x:Key="FormatChoice" TargetType="RadioButton" BasedOn="{StaticResource ModeCard}">
+      <Setter Property="Padding" Value="10,3" />
+      <Setter Property="FontSize" Value="{DynamicResource DataIoWeakFontSize}" />
+      <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+    </Style>
+
     <Style x:Key="PrimaryButton" TargetType="Button">
       <Setter Property="Height" Value="{DynamicResource DataIoPrimaryHeight}" />
       <Setter Property="Cursor" Value="Hand" />
@@ -478,7 +484,7 @@
                            Text="尚未选择文件"
                            Style="{StaticResource RowTitle}"
                            FontWeight="SemiBold" />
-                <TextBlock Text="支持 PaperTodo 归档 (.zip) 或 .json"
+                <TextBlock Text="支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
                            Style="{StaticResource SectionHint}" />
               </StackPanel>
               <Button x:Name="ChooseFileButton"
@@ -621,11 +627,21 @@
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
-          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" />
-          <TextBlock Grid.Column="1"
-                     Text="PaperTodo Archive (.zip)"
-                     FontWeight="SemiBold"
-                     Foreground="{DynamicResource DataIoTextBrush}" />
+          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
+          <StackPanel Grid.Column="1"
+                      Orientation="Horizontal"
+                      VerticalAlignment="Center">
+            <RadioButton x:Name="JsonFormatButton"
+                         Content="JSON"
+                         GroupName="DataIoExportFormat"
+                         Style="{StaticResource FormatChoice}"
+                         IsChecked="True" />
+            <RadioButton x:Name="MarkdownFormatButton"
+                         Content="Markdown"
+                         GroupName="DataIoExportFormat"
+                         Style="{StaticResource FormatChoice}"
+                         Margin="6,0,0,0" />
+          </StackPanel>
         </Grid>
 
         <Grid x:Name="StrategyRow" Visibility="Collapsed">

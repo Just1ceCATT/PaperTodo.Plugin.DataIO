@@ -62,6 +62,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.PreviewLoader = LoadPreviewAsync;
 
         _view.ModeChanged += OnModeChanged;
+        _view.ExportFormatChanged += OnExportFormatChanged;
         _view.NoteSelectionChanged += OnNoteSelectionChanged;
         _view.TodoSelectionChanged += OnTodoSelectionChanged;
         _view.PrimaryActionRequested += OnPrimaryActionRequested;
@@ -69,6 +70,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         _view.ApplyTheme(context.Theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
+        _view.SetExportFormat(ParseExportFormat(_state.ExportFormat));
         _view.SetImportFileName(null);
         _view.SetPrimaryEnabled(false);
 
@@ -147,6 +149,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.PreviewLoader = null;
 
         _view.ModeChanged -= OnModeChanged;
+        _view.ExportFormatChanged -= OnExportFormatChanged;
         _view.NoteSelectionChanged -= OnNoteSelectionChanged;
         _view.TodoSelectionChanged -= OnTodoSelectionChanged;
         _view.PrimaryActionRequested -= OnPrimaryActionRequested;
@@ -167,6 +170,14 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             RefreshImportView();
         }
+    }
+
+    private void OnExportFormatChanged(object? sender, EventArgs e)
+    {
+        _state.ExportFormat = _view.ExportFormat == DataIoExportFormat.Markdown
+            ? "markdown"
+            : "json";
+        SaveState();
     }
 
     private void OnDebounceTick(object? sender, EventArgs e)
@@ -722,7 +733,7 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             _view.SetCounts("0 条", "0 条");
             _view.SetTypeAvailability(false, false);
-            _view.SetEstimate("尚未选择导入文件", "选择归档或 JSON 文件后显示预估");
+            _view.SetEstimate("尚未选择导入文件", "选择 JSON 或 Markdown 文件后显示预估");
             _view.SetPrimaryEnabled(false);
             _view.SetImageWarning(null);
             return;
@@ -730,7 +741,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         _view.SetImageWarning(_importPlan.ImageReferenceCount > 0
             ? $"文件中有 {_importPlan.NotesWithImages} 张笔记包含 {_importPlan.ImageReferenceCount} 处图片引用。" +
-              "归档只保存正文文本，图片本体不在文件中；导入到其他设备或原图已清理后将无法显示。"
+              "导出文件只保存正文文本，图片本体不在文件中；导入到其他设备或原图已清理后将无法显示。"
             : null);
 
         var notes = GetImportCandidates("note").ToList();
@@ -854,13 +865,17 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
+        var markdown = _view.ExportFormat == DataIoExportFormat.Markdown;
+        var extension = markdown ? ".md" : ".json";
         var dialog = new SaveFileDialog
         {
             Title = "导出纸片数据",
-            Filter = "PaperTodo 归档 (*.zip)|*.zip|PaperTodo 数据 (*.json)|*.json",
-            DefaultExt = ".zip",
+            Filter = markdown
+                ? "Markdown 文档 (*.md)|*.md"
+                : "PaperTodo 数据 (*.json)|*.json",
+            DefaultExt = extension,
             AddExtension = true,
-            FileName = $"papertodo-export-{DateTime.Now:yyyyMMdd-HHmmss}.zip"
+            FileName = $"papertodo-export-{DateTime.Now:yyyyMMdd-HHmmss}{extension}"
         };
 
         var initial = ResolveDirectory(_state.LastExportDirectory);
@@ -877,6 +892,8 @@ internal sealed class DataIoSession : IPaperBodySession
         _state.LastExportDirectory = Path.GetDirectoryName(dialog.FileName) ?? "";
         SaveState();
 
+        var formatLabel = markdown ? "Markdown" : "JSON";
+
         SetStatus("正在读取数据…");
         var document = await _exportService.CaptureAsync(
             selected.Select(p => p.Id).ToList(),
@@ -884,7 +901,17 @@ internal sealed class DataIoSession : IPaperBodySession
             CancellationToken.None);
 
         SetStatus("正在写入文件…");
-        await Task.Run(() => ArchiveService.Write(dialog.FileName, document));
+        await Task.Run(() =>
+        {
+            if (markdown)
+            {
+                MarkdownExportService.Write(dialog.FileName, document);
+            }
+            else
+            {
+                DataFileService.Write(dialog.FileName, document);
+            }
+        });
 
         var imageSummary = ImageReferenceSummary.FromNotes(
             document.Papers
@@ -893,7 +920,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         var unavailableNotes = document.Papers.Count(
             p => string.Equals(p.Type, "note", StringComparison.Ordinal) && p.ContentAvailable == false);
-        var status = $"已导出 {document.Papers.Count} 张纸片：{dialog.FileName}";
+        var status = $"已导出 {document.Papers.Count} 张纸片（{formatLabel}）：{dialog.FileName}";
         if (unavailableNotes > 0)
         {
             status += $"（{unavailableNotes} 张笔记正文不可读取，已按空正文导出）";
@@ -901,24 +928,46 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (imageSummary.HasAny)
         {
-            status += $"（{imageSummary.NoteCount} 张笔记含 {imageSummary.ReferenceCount} 处图片引用，图片未包含在归档中）";
+            status += $"（{imageSummary.NoteCount} 张笔记含 {imageSummary.ReferenceCount} 处图片引用，图片未包含在导出文件中）";
+        }
+
+        if (markdown)
+        {
+            status += "（不包含提醒、关联纸片、可见性等数据）";
         }
 
         SetStatus(status);
 
-        if (imageSummary.HasAny)
+        if (imageSummary.HasAny || markdown)
         {
-            _view.ShowResultDialog(
-                "导出完成",
-                new List<(string Label, string Value)>
-                {
-                    ("导出纸片", $"{document.Papers.Count} 张"),
-                    ("含图片笔记", $"{imageSummary.NoteCount} 张"),
-                    ("图片引用", $"{imageSummary.ReferenceCount} 处")
-                },
-                $"文件：{dialog.FileName}{Environment.NewLine}{Environment.NewLine}" +
-                "图片本体未包含在归档中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
-                "如果图片 ID 被复用，还可能显示成其他图片。");
+            var stats = new List<(string Label, string Value)>
+            {
+                ("导出纸片", $"{document.Papers.Count} 张"),
+                ("导出格式", formatLabel)
+            };
+            if (imageSummary.HasAny)
+            {
+                stats.Add(("含图片笔记", $"{imageSummary.NoteCount} 张"));
+                stats.Add(("图片引用", $"{imageSummary.ReferenceCount} 处"));
+            }
+
+            var details = new List<string> { $"文件：{dialog.FileName}" };
+            if (markdown)
+            {
+                details.Add(
+                    "Markdown 只保留标题、待办勾选状态和笔记正文；" +
+                    "提醒、关联纸片、可见性等 PaperTodo 专有数据不会保留。");
+            }
+
+            if (imageSummary.HasAny)
+            {
+                details.Add(markdown
+                    ? "图片本体未包含在文件中，图片引用已替换为“图片缺失”标记。"
+                    : "图片本体未包含在文件中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
+                      "如果图片 ID 被复用，还可能显示成其他图片。");
+            }
+
+            _view.ShowResultDialog("导出完成", stats, details);
         }
     }
 
@@ -935,7 +984,7 @@ internal sealed class DataIoSession : IPaperBodySession
         var dialog = new OpenFileDialog
         {
             Title = "选择导入文件",
-            Filter = "PaperTodo 归档 (*.zip;*.json)|*.zip;*.json|所有文件 (*.*)|*.*",
+            Filter = "PaperTodo 数据 (*.json)|*.json|Markdown 文档 (*.md)|*.md|所有文件 (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -1042,7 +1091,7 @@ internal sealed class DataIoSession : IPaperBodySession
             {
                 result.Warnings.Insert(0,
                     $"文件中有 {imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用；" +
-                    "图片本体未随归档导入，跨设备或原图已清理时可能无法显示。");
+                    "图片本体未随文件导入，跨设备或原图已清理时可能无法显示。");
             }
 
             ShowImportResult(result);
@@ -1256,8 +1305,13 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.ShowResultDialog(
             title,
             stats,
-            lines.Count > 0 ? string.Join(Environment.NewLine, lines) : null);
+            lines.Count > 0 ? lines : null);
     }
+
+    private static DataIoExportFormat ParseExportFormat(string? value) =>
+        string.Equals(value, "markdown", StringComparison.OrdinalIgnoreCase)
+            ? DataIoExportFormat.Markdown
+            : DataIoExportFormat.Json;
 
     private static string? ResolveDirectory(string? path)
     {

@@ -50,10 +50,10 @@ public partial class DataIoDialog : Window
         });
     }
 
-    /// <summary>结果型内容：统计行 + 可选详情。</summary>
+    /// <summary>结果型内容：统计行 + 可选详情（逐条渲染，条目之间留出间距）。</summary>
     public void SetStats(
         IReadOnlyList<(string Label, string Value)> stats,
-        string? details)
+        IReadOnlyList<string>? details)
     {
         var rows = new StackPanel();
         foreach (var (label, value) in stats)
@@ -93,18 +93,28 @@ public partial class DataIoDialog : Window
             Child = rows
         });
 
-        if (!string.IsNullOrWhiteSpace(details))
+        if (details is { Count: > 0 })
         {
-            BodyPanel.Children.Add(new TextBlock
+            var detailPanel = new StackPanel
             {
-                Text = details,
-                Margin = new Thickness(0, 8, 0, 0),
-                TextWrapping = TextWrapping.Wrap,
-                MaxWidth = Width - 38,
-                LineHeight = 18.0 * _scale,
-                FontSize = 12.0 * _scale,
-                Foreground = (Brush)Resources["DialogWeakBrush"]
-            });
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            foreach (var detail in details)
+            {
+                detailPanel.Children.Add(new TextBlock
+                {
+                    Text = detail,
+                    TextWrapping = TextWrapping.Wrap,
+                    MaxWidth = Width - 38,
+                    LineHeight = 18.0 * _scale,
+                    FontSize = 12.0 * _scale,
+                    Foreground = (Brush)Resources["DialogWeakBrush"],
+                    // 条目之间留出间距，长文本换行仍沿用行高。
+                    Margin = new Thickness(0, 0, 0, 6)
+                });
+            }
+
+            BodyPanel.Children.Add(detailPanel);
         }
     }
 

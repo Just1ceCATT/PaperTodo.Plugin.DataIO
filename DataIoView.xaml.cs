@@ -26,6 +26,7 @@ public partial class DataIoView : UserControl
     private int _hoverCardToken;
     private bool _previewOpen;
     private bool _suppressModeEvents;
+    private bool _suppressFormatEvents;
     private bool _suppressSelectionEvents;
     private bool _notesExpanded;
     private bool _todosExpanded;
@@ -40,6 +41,9 @@ public partial class DataIoView : UserControl
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
 
+    /// <summary>当前选择的导出格式，由“导出格式”胶囊切换。</summary>
+    public DataIoExportFormat ExportFormat { get; private set; } = DataIoExportFormat.Json;
+
     /// <summary>
     /// 由会话注入的按需读取器：导出模式经宿主 API 读取，导入模式读取文件内容。
     /// 视图不直接访问宿主数据，预览与悬停卡片都只消费这个委托。
@@ -47,6 +51,7 @@ public partial class DataIoView : UserControl
     internal Func<string, Task<PreviewContent?>>? PreviewLoader { get; set; }
 
     public event EventHandler? ModeChanged;
+    public event EventHandler? ExportFormatChanged;
     public event EventHandler? NoteSelectionChanged;
     public event EventHandler? TodoSelectionChanged;
     public event EventHandler? PrimaryActionRequested;
@@ -95,6 +100,34 @@ public partial class DataIoView : UserControl
     // ---------- 模式 ----------
 
     public void SetMode(DataIoMode mode) => ApplyModeVisuals(mode);
+
+    public void SetExportFormat(DataIoExportFormat format)
+    {
+        ExportFormat = format;
+        _suppressFormatEvents = true;
+        JsonFormatButton.IsChecked = format == DataIoExportFormat.Json;
+        MarkdownFormatButton.IsChecked = format == DataIoExportFormat.Markdown;
+        _suppressFormatEvents = false;
+    }
+
+    private void OnExportFormatChecked(object? sender, RoutedEventArgs e)
+    {
+        if (_suppressFormatEvents)
+        {
+            return;
+        }
+
+        var format = ReferenceEquals(sender, MarkdownFormatButton)
+            ? DataIoExportFormat.Markdown
+            : DataIoExportFormat.Json;
+        if (format == ExportFormat)
+        {
+            return;
+        }
+
+        ExportFormat = format;
+        ExportFormatChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     private void OnModeChecked(object? sender, RoutedEventArgs e)
     {
@@ -444,6 +477,8 @@ public partial class DataIoView : UserControl
     {
         ExportModeButton.Checked += OnModeChecked;
         ImportModeButton.Checked += OnModeChecked;
+        JsonFormatButton.Checked += OnExportFormatChecked;
+        MarkdownFormatButton.Checked += OnExportFormatChecked;
 
         NotesRow.MouseLeftButtonUp += OnNotesRowClick;
         TodosRow.MouseLeftButtonUp += OnTodosRowClick;
@@ -946,7 +981,7 @@ public partial class DataIoView : UserControl
     public void ShowResultDialog(
         string title,
         IReadOnlyList<(string Label, string Value)> stats,
-        string? details)
+        IReadOnlyList<string>? details)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,

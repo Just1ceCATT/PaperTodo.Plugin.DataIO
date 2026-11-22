@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -12,7 +13,34 @@ internal static class ImportPlanParser
     public const int MaxTodoTextChars = 5_000;
     public const int MaxTodosPerPaper = 200;
 
-    public static ImportPlan ParseFile(string path) => Parse(ArchiveService.ReadPayload(path));
+    public static ImportPlan ParseFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        if (string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(extension, ".markdown", StringComparison.OrdinalIgnoreCase))
+        {
+            return ParseMarkdown(JsonFiles.ReadAllText(path), path);
+        }
+
+        return Parse(DataFileService.ReadPayload(path));
+    }
+
+    private static ImportPlan ParseMarkdown(string markdown, string path)
+    {
+        if (string.IsNullOrWhiteSpace(markdown))
+        {
+            return new ImportPlan { FatalError = "Markdown 文件为空。" };
+        }
+
+        var document = MarkdownImportParser.Parse(markdown, path);
+        var plan = Parse(JsonSerializer.Serialize(document, ExportJson.Options));
+        if (plan.FatalError == null)
+        {
+            plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
+        }
+
+        return plan;
+    }
 
     public static ImportPlan Parse(string json)
     {

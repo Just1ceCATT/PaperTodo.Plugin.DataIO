@@ -2,7 +2,7 @@
   "kind": "native",
   "id": "papertodo.dataio.native",
   "name": "纸片数据导入导出",
-  "description": "按整张纸片导出为 PaperTodo 归档 (.zip) 或 JSON，并把文件内容追加导入为新纸片。",
+  "description": "按整张纸片导出为 JSON 或 Markdown 文件，并把 JSON 内容追加导入为新纸片。",
   "version": "1.0.0",
   "apiVersion": "2.3",
   "stateVersion": 1,

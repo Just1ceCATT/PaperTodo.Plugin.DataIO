@@ -13,6 +13,7 @@ internal sealed class DataIoState
     public int Version { get; set; } = CurrentVersion;
     public string LastExportDirectory { get; set; } = "";
     public string LastImportDirectory { get; set; } = "";
+    public string ExportFormat { get; set; } = "json";
     public string Filter { get; set; } = "all";
     public string Search { get; set; } = "";
 
@@ -48,6 +49,7 @@ internal sealed class DataIoState
         state.Filter = NormalizeFilter(state.Filter);
         state.LastExportDirectory ??= "";
         state.LastImportDirectory ??= "";
+        state.ExportFormat = NormalizeExportFormat(state.ExportFormat);
         state.Search ??= "";
         return Serialize(state);
     }
@@ -57,4 +59,7 @@ internal sealed class DataIoState
 
     public static string NormalizeFilter(string? value) =>
         value is "todo" or "note" ? value : "all";
+
+    public static string NormalizeExportFormat(string? value) =>
+        value is "markdown" ? "markdown" : "json";
 }
