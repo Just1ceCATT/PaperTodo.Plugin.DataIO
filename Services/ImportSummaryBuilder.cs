@@ -30,7 +30,7 @@ internal static class ImportSummaryBuilder
 
         if (updatePapers == 0)
         {
-            lines.Add("导入不会覆盖或删除任何现有纸片，宿主会生成新 ID。");
+            lines.Add("导入不会覆盖或删除任何现有纸片，导入时会生成新 ID。");
         }
         else
         {
@@ -70,7 +70,8 @@ internal static class ImportSummaryBuilder
         if (imageSummary.HasAny)
         {
             problems.Add(
-                $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用（图片本体不在文件中）");
+                $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用" +
+                "（跨设备或原图已清理时可能无法显示）");
         }
 
         if (sourcePlan.LossyImageNotes > 0)

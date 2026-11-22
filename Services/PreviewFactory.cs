@@ -70,7 +70,7 @@ internal static class PreviewFactory
         }
         else if (!available)
         {
-            warning = "宿主未能读取这张笔记的正文。";
+            warning = "无法读取这张笔记的正文。";
         }
 
         return new PreviewContent

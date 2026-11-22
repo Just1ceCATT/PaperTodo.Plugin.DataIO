@@ -52,7 +52,7 @@ internal sealed class ImportService
             if (existingCount + newPaperCount > MaxPapers)
             {
                 result.FatalError =
-                    $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过宿主 {MaxPapers} 张上限。";
+                    $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过 {MaxPapers} 张上限。";
                 return result;
             }
         }
@@ -110,7 +110,7 @@ internal sealed class ImportService
                     result.FailedPapers++;
                     result.Failures.Add(Failure(i, importPaper, ex));
                     result.StoppedEarly = true;
-                    result.FatalError = $"导入被宿主中止（{ex.Code}）：{ex.Message}";
+                    result.FatalError = $"导入被中止（{ex.Code}）：{ex.Message}";
                     break;
                 }
                 catch (PaperTodoPluginException ex)
@@ -180,7 +180,7 @@ internal sealed class ImportService
             !string.Equals(target.Title, importPaper.SafeTitle, StringComparison.Ordinal))
         {
             result.Warnings.Add(
-                $"纸片“{DisplayTitle(importPaper)}”的标题与本地不一致，宿主不支持重命名，已保留本地标题。");
+                $"纸片“{DisplayTitle(importPaper)}”的标题与本地不一致，当前版本不支持重命名，已保留本地标题。");
         }
 
         if (type == "note")
@@ -416,7 +416,7 @@ internal sealed class ImportService
                     normalized,
                     Math.Clamp(limit, 1, TitleSanitizer.MaxConfiguredTitleLength) * 2);
 
-                result.Warnings.Add($"标题“{normalized}”超过宿主上限，已截断为“{truncated}”。");
+                result.Warnings.Add($"标题“{normalized}”超过标题上限，已截断为“{truncated}”。");
                 request = request with { Title = truncated.Length == 0 ? null : truncated };
             }
         }
@@ -481,7 +481,7 @@ internal sealed class ImportService
 
             if (!queues.TryGetValue((original.Text, original.Done), out var queue) || queue.Count == 0)
             {
-                result.Warnings.Add($"待办“{Shorten(original.Text)}”未能找回，可能被宿主自动清除。");
+                result.Warnings.Add($"待办“{Shorten(original.Text)}”未能找回，可能已被自动清除。");
                 continue;
             }
 
@@ -544,7 +544,7 @@ internal sealed class ImportService
                     if (!linksDisabled)
                     {
                         linksDisabled = true;
-                        result.Warnings.Add("宿主已关闭“启用待办关联纸片”，所有关联未还原。");
+                        result.Warnings.Add("已关闭“启用待办关联纸片”，所有关联未还原。");
                     }
                 }
                 catch (PaperTodoPluginException ex)

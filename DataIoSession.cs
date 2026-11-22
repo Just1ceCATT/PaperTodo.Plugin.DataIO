@@ -1365,7 +1365,7 @@ internal sealed class DataIoSession : IPaperBodySession
             summary = result.FatalError ??
                 (result.Cancelled
                     ? $"导入已中断：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
-                      $"失败 {result.FailedPapers} 张；已完成的部分已写入宿主。"
+                      $"失败 {result.FailedPapers} 张；已完成的部分已写入纸片。"
                     : $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
                       $"跳过 {result.SkippedPapers} 张，失败 {result.FailedPapers} 张。");
         }
@@ -1466,7 +1466,7 @@ internal sealed class DataIoSession : IPaperBodySession
         }
         catch (PaperTodoPluginException ex)
         {
-            SetStatus($"宿主拒绝了操作：{ex.Code} · {ex.Message}");
+            SetStatus($"操作被拒绝：{ex.Code} · {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -1526,7 +1526,7 @@ internal sealed class DataIoSession : IPaperBodySession
         var lines = new List<string>();
         if (result.Cancelled)
         {
-            lines.Add("导入被中断：已完成的部分已写入宿主且不会回滚，请检查纸片内容后再继续。");
+            lines.Add("导入被中断：已完成的部分已写入且不会回滚，请检查纸片内容后再继续。");
         }
 
         if (result.StoppedEarly && result.FatalError != null)
@@ -1609,7 +1609,7 @@ internal sealed class DataIoSession : IPaperBodySession
     {
         "permission_denied" => $"缺少权限：{ex.Message}",
         "session_closed" => "当前纸片会话已失效。",
-        "data_reload_in_progress" => "宿主正在重载数据，请稍后重试。",
+        "data_reload_in_progress" => "正在重载数据，请稍后重试。",
         _ => $"读取失败（{ex.Code}）：{ex.Message}"
     };
 }

@@ -100,7 +100,7 @@ internal static class ImportPlanParser
 
         if (document.Papers.Count > MaxPapers)
         {
-            plan.FatalError = $"文件包含 {document.Papers.Count} 张纸片，超过宿主单工作区 {MaxPapers} 张上限。";
+            plan.FatalError = $"文件包含 {document.Papers.Count} 张纸片，超过单个工作区 {MaxPapers} 张上限。";
             return plan;
         }
 
@@ -153,7 +153,7 @@ internal static class ImportPlanParser
 
             if (type == "note" && (source.Content?.Length ?? 0) > MaxNoteChars)
             {
-                plan.Warnings.Add($"跳过笔记“{source.Title}”：正文超过宿主 {MaxNoteChars} 字符上限。");
+                plan.Warnings.Add($"跳过笔记“{source.Title}”：正文超过 {MaxNoteChars} 字符上限。");
                 continue;
             }
 
@@ -200,7 +200,7 @@ internal static class ImportPlanParser
             if (normalizedTitle.Length == 0)
             {
                 safeTitle = null;
-                plan.Warnings.Add($"纸片“{source.Title}”标题为空，导入时将使用宿主默认标题。");
+                plan.Warnings.Add($"纸片“{source.Title}”标题为空，导入时将使用默认标题。");
             }
             else if (TitleSanitizer.DisplayWidth(normalizedTitle) > TitleSanitizer.PreTruncateDisplayWidth)
             {

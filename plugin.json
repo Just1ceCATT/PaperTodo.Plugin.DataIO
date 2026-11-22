@@ -92,7 +92,7 @@
       "id": "restoreOrder",
       "type": "boolean",
       "name": "还原待办顺序",
-      "description": "导入后按导出顺序修正待办 Order；宿主开启“完成项自动置底”时仍以宿主排序为准。",
+      "description": "导入后按导出顺序修正待办 Order；开启“完成项自动置底”时仍以自动排序为准。",
       "default": true,
       "category": "导入"
     },
@@ -108,7 +108,7 @@
       "id": "restoreReminders",
       "type": "boolean",
       "name": "还原提醒",
-      "description": "只还原未来且未完成待办的提醒；宿主关闭提醒实验特性时会跳过。",
+      "description": "只还原未来且未完成待办的提醒；关闭提醒实验特性时会跳过。",
       "default": true,
       "category": "导入"
     }
