@@ -1055,7 +1055,8 @@ public partial class DataIoView : UserControl
         string title,
         string message,
         string confirmText = "继续",
-        string cancelText = "取消")
+        string cancelText = "取消",
+        IReadOnlyList<string>? warnings = null)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
@@ -1063,7 +1064,7 @@ public partial class DataIoView : UserControl
             title,
             confirmText,
             cancelText);
-        dialog.SetMessage(message);
+        dialog.SetMessage(message, warnings);
         return dialog.ShowModal(Window.GetWindow(this)) == true;
     }
 
@@ -1074,7 +1075,8 @@ public partial class DataIoView : UserControl
     internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,
-        bool canCreate)
+        bool canCreate,
+        IReadOnlyList<string>? warnings = null)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
@@ -1082,7 +1084,7 @@ public partial class DataIoView : UserControl
             "更新预览",
             "继续导入",
             "取消");
-        dialog.SetUpdatePreview(papers, unrecoverable, canCreate);
+        dialog.SetUpdatePreview(papers, unrecoverable, canCreate, warnings);
         if (dialog.ShowModal(Window.GetWindow(this)) != true)
         {
             return null;

@@ -40,6 +40,32 @@
       </Setter>
     </Style>
 
+    <!-- 预检提示的展开/收起标题：低干扰、整行可点 -->
+    <Style x:Key="WarningsToggle" TargetType="Button">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="HorizontalAlignment" Value="Left" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="Bd"
+                    CornerRadius="6"
+                    Padding="6,3"
+                    Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DialogButtonHoverBrush}" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <Style x:Key="DialogButton" TargetType="Button">
       <Setter Property="MinWidth" Value="72" />
       <Setter Property="Padding" Value="16,7" />

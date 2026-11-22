@@ -1231,7 +1231,8 @@ internal sealed class DataIoSession : IPaperBodySession
             var choices = _view.ShowUpdatePreviewDialog(
                 updateCandidates,
                 ImportSummaryBuilder.BuildUnrecoverable(selected, _importPlan),
-                _gateway.Can(PaperTodoPermissionNames.PapersCreate));
+                _gateway.Can(PaperTodoPermissionNames.PapersCreate),
+                _importPlan.Warnings);
             if (choices == null)
             {
                 SetStatus("已取消导入。");
@@ -1288,7 +1289,12 @@ internal sealed class DataIoSession : IPaperBodySession
         if (_settings.ConfirmBeforeImport && !updatePreviewShown)
         {
             var confirmation = ImportSummaryBuilder.BuildConfirmation(selected, _importPlan);
-            if (!_view.ShowConfirmDialog("确认导入", confirmation, "继续导入", "取消"))
+            if (!_view.ShowConfirmDialog(
+                    "确认导入",
+                    confirmation,
+                    "继续导入",
+                    "取消",
+                    warnings: _importPlan.Warnings))
             {
                 SetStatus("已取消导入。");
                 return;

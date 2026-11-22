@@ -42,8 +42,8 @@ public partial class DataIoDialog : Window
         Shell.MouseLeftButtonDown += OnShellMouseDown;
     }
 
-    /// <summary>消息型内容：自动换行的多行文本。</summary>
-    public void SetMessage(string message)
+    /// <summary>消息型内容：自动换行的多行文本，可选可折叠的预检提示。</summary>
+    public void SetMessage(string message, IReadOnlyList<string>? warnings = null)
     {
         BodyPanel.Children.Add(new TextBlock
         {
@@ -55,6 +55,93 @@ public partial class DataIoDialog : Window
             FontSize = 13.0 * _scale,
             Foreground = (Brush)Resources["DialogWeakBrush"]
         });
+
+        if (warnings is { Count: > 0 })
+        {
+            BodyPanel.Children.Add(BuildWarningsPanel(warnings));
+        }
+    }
+
+    /// <summary>
+    /// 可折叠的预检提示列表。默认收起，点击标题展开；只有这一区域参与折叠，
+    /// 确认正文与按钮保持常驻。
+    /// </summary>
+    private FrameworkElement BuildWarningsPanel(IReadOnlyList<string> warnings)
+    {
+        var content = new StackPanel
+        {
+            Margin = new Thickness(4, 2, 0, 2)
+        };
+        foreach (var warning in warnings)
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = "· " + warning,
+                TextWrapping = TextWrapping.Wrap,
+                MaxWidth = Width - 58,
+                LineHeight = 18.0 * _scale,
+                FontSize = 11.5 * _scale,
+                Foreground = (Brush)Resources["DialogWeakBrush"],
+                Margin = new Thickness(0, 0, 0, 3)
+            });
+        }
+
+        var contentHost = new Border
+        {
+            Child = content,
+            Visibility = Visibility.Collapsed,
+            Margin = new Thickness(0, 2, 0, 0)
+        };
+
+        var chevron = new TextBlock
+        {
+            Text = ((char)0xE76C).ToString(),
+            FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+            FontSize = 10.5 * _scale,
+            Margin = new Thickness(0, 0, 7, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            RenderTransformOrigin = new Point(0.5, 0.5),
+            RenderTransform = new RotateTransform(0)
+        };
+
+        var header = new Button
+        {
+            Style = (Style)FindResource("WarningsToggle"),
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Children =
+                {
+                    chevron,
+                    new TextBlock
+                    {
+                        Text = $"预检提示（{warnings.Count}）",
+                        FontSize = 12.0 * _scale,
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Foreground = (Brush)Resources["DialogWeakBrush"]
+                    }
+                }
+            }
+        };
+
+        header.Click += (_, _) =>
+        {
+            var expand = contentHost.Visibility != Visibility.Visible;
+            contentHost.Visibility = expand ? Visibility.Visible : Visibility.Collapsed;
+            if (chevron.RenderTransform is RotateTransform rotate)
+            {
+                rotate.Angle = expand ? 90 : 0;
+            }
+        };
+
+        var panel = new StackPanel
+        {
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        panel.Children.Add(header);
+        panel.Children.Add(contentHost);
+        return panel;
     }
 
     /// <summary>结果型内容：统计行 + 可选详情（逐条渲染，条目之间留出间距）。</summary>
@@ -134,7 +221,8 @@ public partial class DataIoDialog : Window
     internal void SetUpdatePreview(
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,
-        bool canCreate)
+        bool canCreate,
+        IReadOnlyList<string>? warnings = null)
     {
         // 固定宽度，差异文本在剩余空间内自动换行。
         Width = 660;
@@ -153,6 +241,11 @@ public partial class DataIoDialog : Window
         if (unrecoverable is { Count: > 0 })
         {
             BodyPanel.Children.Add(BuildUnrecoverablePanel(unrecoverable));
+        }
+
+        if (warnings is { Count: > 0 })
+        {
+            BodyPanel.Children.Add(BuildWarningsPanel(warnings));
         }
 
         for (var index = 0; index < papers.Count; index++)

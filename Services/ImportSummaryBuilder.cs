@@ -51,12 +51,6 @@ internal static class ImportSummaryBuilder
             lines.AddRange(problems.Select(problem => "- " + problem));
         }
 
-        if (sourcePlan.Warnings.Count > 0)
-        {
-            lines.Add("");
-            lines.Add($"另有 {sourcePlan.Warnings.Count} 条预检提示，详见导入结果。");
-        }
-
         return string.Join(Environment.NewLine, lines);
     }
 
