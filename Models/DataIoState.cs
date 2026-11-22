@@ -18,6 +18,12 @@ internal sealed class DataIoState
     public string Search { get; set; } = "";
 
     /// <summary>
+    /// 是否已完成首次自动命名。为 false 时（例如把一篇 Markdown 笔记转换为本插件）
+    /// 会在会话创建时把纸片标题设为“DataIO”；之后不再覆盖用户手动改过的标题。
+    /// </summary>
+    public bool TitleInitialized { get; set; }
+
+    /// <summary>
     /// 导入身份映射：导出文件中的 sourceId → 本工作区纸片 ID。
     /// 首次导入时登记，后续导入同一来源时用于更新原纸片。
     /// </summary>

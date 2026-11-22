@@ -43,7 +43,7 @@
       "id": "autoStart",
       "type": "boolean",
       "name": "启动后自动打开",
-      "description": "自动创建或恢复一张“数据导入导出”工具纸片。",
+      "description": "自动创建或恢复一张“DataIO”工具纸片。",
       "default": true,
       "quick": true,
       "category": "界面"
@@ -117,6 +117,6 @@
     "enabledSetting": "autoStart",
     "instanceKey": "main",
     "presentation": "expanded",
-    "title": "数据导入导出"
+    "title": "DataIO"
   }
 }

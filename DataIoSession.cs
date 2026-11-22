@@ -16,6 +16,9 @@ internal sealed class DataIoSession : IPaperBodySession
 {
     private const string MarkdownProviderId = "builtin.markdown";
 
+    /// <summary>纸片转换为本插件后的默认标题。</summary>
+    private const string DefaultPaperTitle = "DataIO";
+
     private readonly PaperBodyContext _context;
     private readonly DataIoView _view;
     private readonly HostGateway _gateway;
@@ -56,6 +59,15 @@ internal sealed class DataIoSession : IPaperBodySession
         _context = context;
         _state = DataIoState.Parse(context.StateJson);
         _settings = DataIoSettings.Parse(context.SettingsJson);
+
+        // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时自动命名；
+        // 标记持久化后不再覆盖用户手动修改的标题。
+        if (!_state.TitleInitialized)
+        {
+            _state.TitleInitialized = true;
+            _context.SetTitle(DefaultPaperTitle);
+            _context.SaveStateJson(DataIoState.Serialize(_state));
+        }
 
         _view = new DataIoView();
         _gateway = new HostGateway(context, _view.Dispatcher);
