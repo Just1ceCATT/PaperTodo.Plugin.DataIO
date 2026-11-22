@@ -644,19 +644,6 @@
 
         <Border Style="{StaticResource Divider}" />
 
-        <!-- 导入策略 -->
-        <Grid x:Name="StrategyRow" Visibility="Collapsed">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
-          </Grid.ColumnDefinitions>
-          <TextBlock Text="导入策略" Style="{StaticResource SectionTitle}" />
-          <TextBlock Grid.Column="1"
-                     Text="新建 / 更新已导入纸片"
-                     FontWeight="SemiBold"
-                     Foreground="{DynamicResource DataIoTextBrush}" />
-        </Grid>
-
         <!-- 预估 -->
         <TextBlock x:Name="EstimateTitle"
                    Text="导出预估"

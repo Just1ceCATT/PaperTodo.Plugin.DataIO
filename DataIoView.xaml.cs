@@ -160,7 +160,6 @@ public partial class DataIoView : UserControl
         ContentSectionTitle.Text = isExport ? "导出内容" : "导入内容";
         ContentSectionHint.Text = "点击条目展开并选择；行内预览按钮可查看正文";
         FormatRow.Visibility = isExport ? Visibility.Visible : Visibility.Collapsed;
-        StrategyRow.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         EstimateTitle.Text = isExport ? "导出预估" : "导入预估";
         PrimaryButton.Content = isExport ? "导出所选内容" : "导入所选内容";
 
