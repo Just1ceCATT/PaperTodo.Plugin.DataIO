@@ -1,6 +1,7 @@
+using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Documents;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using PaperTodo.Plugin;
@@ -35,6 +36,10 @@ public partial class DataIoDialog : Window
 
         BuildButtons(primaryText, secondaryText);
         PreviewKeyDown += OnPreviewKeyDown;
+
+        // 无标题栏窗口：标题区域和空白区域可用于拖动。
+        TitleText.MouseLeftButtonDown += OnDragAreaMouseDown;
+        Shell.MouseLeftButtonDown += OnShellMouseDown;
     }
 
     /// <summary>消息型内容：自动换行的多行文本。</summary>
@@ -125,7 +130,10 @@ public partial class DataIoDialog : Window
     /// <summary>更新预览：逐张展示本地内容与导入内容的差异，并让用户选择跳过/更新/新增。</summary>
     internal void SetUpdatePreview(IReadOnlyList<ImportPaper> papers)
     {
-        Width = 640;
+        // 固定宽度，差异文本在剩余空间内自动换行。
+        Width = 660;
+        MinWidth = 660;
+        MaxWidth = 660;
 
         BodyPanel.Children.Add(new TextBlock
         {
@@ -221,18 +229,16 @@ public partial class DataIoDialog : Window
 
     private FrameworkElement BuildDiffPanel(IReadOnlyList<DiffLine>? diff)
     {
-        var text = new TextBlock
-        {
-            FontFamily = new FontFamily("Consolas, Microsoft YaHei UI"),
-            FontSize = 11.5 * _scale,
-            TextWrapping = TextWrapping.Wrap
-        };
+        var panel = new StackPanel();
+        var mono = new FontFamily("Consolas, Microsoft YaHei UI");
 
         if (diff is not { Count: > 0 } ||
             diff.All(line => line.Kind == ' '))
         {
-            text.Inlines.Add(new Run("（内容无变化）")
+            panel.Children.Add(new TextBlock
             {
+                Text = "（内容无变化）",
+                FontSize = 11.5 * _scale,
                 Foreground = (Brush)Resources["DialogWeakBrush"]
             });
         }
@@ -240,22 +246,46 @@ public partial class DataIoDialog : Window
         {
             foreach (var line in diff)
             {
-                var run = new Run(line.Kind switch
+                var row = new Grid
                 {
-                    '+' => "+ " + line.Text,
-                    '-' => "- " + line.Text,
-                    _ => "  " + line.Text
-                })
-                {
-                    Foreground = (Brush)Resources[line.Kind switch
+                    Margin = new Thickness(0, 0, 0, 1),
+                    Background = (Brush)Resources[line.Kind switch
                     {
-                        '+' => "DialogAddedBrush",
-                        '-' => "DialogRemovedBrush",
-                        _ => "DialogWeakBrush"
+                        '+' => "DialogAddedBackgroundBrush",
+                        '-' => "DialogRemovedBackgroundBrush",
+                        _ => "DialogTransparentBrush"
                     }]
                 };
-                text.Inlines.Add(run);
-                text.Inlines.Add(new Run(Environment.NewLine));
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(16) });
+                row.ColumnDefinitions.Add(new ColumnDefinition
+                {
+                    Width = new GridLength(1, GridUnitType.Star)
+                });
+
+                var foreground = (Brush)Resources[line.Kind switch
+                {
+                    '+' => "DialogAddedBrush",
+                    '-' => "DialogRemovedBrush",
+                    _ => "DialogWeakBrush"
+                }];
+                AddCell(row, 0, line.OldLine, mono, foreground);
+                AddCell(row, 1, line.NewLine, mono, foreground);
+                AddCell(row, 2, line.Kind == ' ' ? "" : line.Kind.ToString(), mono, foreground);
+
+                var content = new TextBlock
+                {
+                    Text = string.IsNullOrEmpty(line.Text) ? " " : line.Text,
+                    FontFamily = mono,
+                    FontSize = 11.5 * _scale,
+                    Foreground = foreground,
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalAlignment = VerticalAlignment.Top
+                };
+                Grid.SetColumn(content, 3);
+                row.Children.Add(content);
+                panel.Children.Add(row);
             }
         }
 
@@ -264,8 +294,78 @@ public partial class DataIoDialog : Window
             Background = TintBrush(8),
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(9, 7, 9, 7),
-            Child = text
+            Child = panel
         };
+    }
+
+    private void AddCell(Grid row, int column, int lineNumber, FontFamily font, Brush foreground) =>
+        AddCell(
+            row,
+            column,
+            lineNumber == 0 ? "" : lineNumber.ToString(CultureInfo.InvariantCulture),
+            font,
+            foreground);
+
+    private void AddCell(Grid row, int column, string value, FontFamily font, Brush foreground)
+    {
+        var text = new TextBlock
+        {
+            Text = value,
+            FontFamily = font,
+            FontSize = 10.5 * _scale,
+            Foreground = foreground,
+            Opacity = 0.72,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 0, 6, 0)
+        };
+        Grid.SetColumn(text, column);
+        row.Children.Add(text);
+    }
+
+    private void OnDragAreaMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        try
+        {
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口尚未完成显示时忽略拖动。
+        }
+
+        e.Handled = true;
+    }
+
+    private void OnShellMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed ||
+            e.OriginalSource is DependencyObject source && IsInteractive(source))
+        {
+            return;
+        }
+
+        OnDragAreaMouseDown(sender, e);
+    }
+
+    private bool IsInteractive(DependencyObject source)
+    {
+        for (var node = source;
+             node != null && !ReferenceEquals(node, Shell);
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is ButtonBase or TextBox or ScrollBar or RadioButton)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public bool? ShowModal(Window? owner)
@@ -297,12 +397,17 @@ public partial class DataIoDialog : Window
         Resources["DialogWarningBrush"] = MakeBrush(
             theme.IsDark ? "#E0A458" : "#9A5B00",
             Color.FromRgb(0xE0, 0xA4, 0x58));
-        Resources["DialogAddedBrush"] = MakeBrush(
-            theme.IsDark ? "#7FD99A" : "#1E7F45",
-            Color.FromRgb(0x7F, 0xD9, 0x9A));
-        Resources["DialogRemovedBrush"] = MakeBrush(
-            theme.IsDark ? "#F08A80" : "#B3261E",
-            Color.FromRgb(0xF0, 0x8A, 0x80));
+        var addedColor = theme.IsDark
+            ? Color.FromRgb(0x7F, 0xD9, 0x9A)
+            : Color.FromRgb(0x1E, 0x7F, 0x45);
+        var removedColor = theme.IsDark
+            ? Color.FromRgb(0xF0, 0x8A, 0x80)
+            : Color.FromRgb(0xB3, 0x26, 0x1E);
+        Resources["DialogAddedBrush"] = FreezeBrush(addedColor);
+        Resources["DialogRemovedBrush"] = FreezeBrush(removedColor);
+        Resources["DialogAddedBackgroundBrush"] = AlphaBrush(22, addedColor);
+        Resources["DialogRemovedBackgroundBrush"] = AlphaBrush(22, removedColor);
+        Resources["DialogTransparentBrush"] = Brushes.Transparent;
 
         FontFamily = new FontFamily(string.IsNullOrWhiteSpace(theme.FontFamily)
             ? "Microsoft YaHei UI"
@@ -365,6 +470,16 @@ public partial class DataIoDialog : Window
             e.Handled = true;
         }
     }
+
+    private static SolidColorBrush FreezeBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    private static SolidColorBrush AlphaBrush(byte alpha, Color color) =>
+        FreezeBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
 
     private static SolidColorBrush MakeBrush(string? hex, Color fallback)
     {
