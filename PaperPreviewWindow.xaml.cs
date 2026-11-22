@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -64,6 +65,10 @@ internal partial class PaperPreviewWindow : Window
         DoneButton.Click += (_, _) => Close();
         CloseIconButton.Click += (_, _) => Close();
         PreviewKeyDown += OnPreviewKeyDown;
+
+        // 无标题栏窗口：标题区域和空白区域可用于拖动。
+        TitleText.MouseLeftButtonDown += OnDragAreaMouseDown;
+        Shell.MouseLeftButtonDown += OnShellMouseDown;
 
         // 首帧先隐藏，等 Loaded 后再做淡入缩放，避免窗口出现时闪一下。
         if (AnimationsEnabled)
@@ -323,6 +328,51 @@ internal partial class PaperPreviewWindow : Window
             ? (selected ? "移出导出" : "加入导出")
             : (selected ? "移出导入" : "加入导入");
         SelectButton.Background = TintBrush(selected ? 56 : 32);
+    }
+
+    private void OnDragAreaMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        try
+        {
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口尚未完成显示时忽略拖动。
+        }
+
+        e.Handled = true;
+    }
+
+    private void OnShellMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed ||
+            e.OriginalSource is DependencyObject source && IsInteractive(source))
+        {
+            return;
+        }
+
+        OnDragAreaMouseDown(sender, e);
+    }
+
+    private bool IsInteractive(DependencyObject source)
+    {
+        for (var node = source;
+             node != null && !ReferenceEquals(node, Shell);
+             node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is ButtonBase or TextBox or ScrollBar or RadioButton)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
