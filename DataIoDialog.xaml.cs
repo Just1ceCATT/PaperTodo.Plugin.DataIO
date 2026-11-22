@@ -133,7 +133,8 @@ public partial class DataIoDialog : Window
     /// </summary>
     internal void SetUpdatePreview(
         IReadOnlyList<ImportPaper> papers,
-        IReadOnlyList<string>? unrecoverable)
+        IReadOnlyList<string>? unrecoverable,
+        bool canCreate)
     {
         // 固定宽度，差异文本在剩余空间内自动换行。
         Width = 660;
@@ -156,7 +157,7 @@ public partial class DataIoDialog : Window
 
         for (var index = 0; index < papers.Count; index++)
         {
-            BodyPanel.Children.Add(BuildUpdateCard(papers[index], index));
+            BodyPanel.Children.Add(BuildUpdateCard(papers[index], index, canCreate));
         }
     }
 
@@ -195,7 +196,7 @@ public partial class DataIoDialog : Window
         };
     }
 
-    private FrameworkElement BuildUpdateCard(ImportPaper paper, int index)
+    private FrameworkElement BuildUpdateCard(ImportPaper paper, int index, bool canCreate)
     {
         var card = new StackPanel
         {
@@ -250,14 +251,47 @@ public partial class DataIoDialog : Window
             });
         }
 
+        // 笔记正文不可用时更新没有意义（会抛 content_unavailable），提前禁用该选项。
+        var contentUnavailable = string.Equals(
+                paper.Source.Type,
+                "note",
+                StringComparison.OrdinalIgnoreCase) &&
+            paper.Source.ContentAvailable != true;
+        if (contentUnavailable)
+        {
+            card.Children.Add(new TextBlock
+            {
+                Text = "文件未包含可用的笔记正文，只能选择“跳过”或“新增”。",
+                FontSize = 11.5 * _scale,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Resources["DialogWarningBrush"],
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+        }
+
+        var updateAllowed = !paper.TargetImagesAtRisk && !contentUnavailable;
         var choices = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(0, 6, 0, 5)
         };
         AddChoice(choices, paper, index, ImportUpdateAction.Skip, "跳过");
-        AddChoice(choices, paper, index, ImportUpdateAction.Update, "更新");
-        AddChoice(choices, paper, index, ImportUpdateAction.CreateNew, "新增");
+        AddChoice(
+            choices,
+            paper,
+            index,
+            ImportUpdateAction.Update,
+            "更新",
+            updateAllowed,
+            updateAllowed ? null : "当前内容不适合更新，请选择跳过或新增");
+        AddChoice(
+            choices,
+            paper,
+            index,
+            ImportUpdateAction.CreateNew,
+            "新增",
+            canCreate,
+            canCreate ? null : "缺少 papers.create 权限，无法新增纸片");
         card.Children.Add(choices);
 
         card.Children.Add(BuildDiffPanel(paper.UpdateDiff));
@@ -269,7 +303,9 @@ public partial class DataIoDialog : Window
         ImportPaper paper,
         int index,
         ImportUpdateAction action,
-        string label)
+        string label,
+        bool enabled = true,
+        string? disabledToolTip = null)
     {
         var radio = new RadioButton
         {
@@ -277,10 +313,13 @@ public partial class DataIoDialog : Window
             GroupName = $"DataIoUpdateChoice{index}",
             Style = (Style)FindResource("UpdateChoice"),
             FontSize = 12.0 * _scale,
+            IsEnabled = enabled,
+            ToolTip = disabledToolTip,
             // 默认“跳过”：覆盖本地数据必须是显式选择。
             IsChecked = action == ImportUpdateAction.Skip
         };
         _updateChoices[paper] = ImportUpdateAction.Skip;
+        ToolTipService.SetShowOnDisabled(radio, true);
         radio.Checked += (_, _) => _updateChoices[paper] = action;
         host.Children.Add(radio);
     }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
@@ -44,20 +45,42 @@ internal sealed class DataIoSession : IPaperBodySession
     private ImportPlan? _importPlan;
     private string? _importFilePath;
 
-    /// <summary>预览正文缓存；列表或导入文件变化时整体清空，避免显示陈旧内容。</summary>
+    /// <summary>预览正文缓存；导出数据变化、切换模式或更换导入文件时整体清空。</summary>
     private readonly Dictionary<string, PreviewContent> _previewCache = new(StringComparer.Ordinal);
 
     /// <summary>缓存代次：清理后递增，阻止刷新前发出的异步读取把旧内容写回缓存。</summary>
     private int _previewGeneration;
 
+    /// <summary>上一次刷新看到的数据指纹；未变化时保留预览缓存，避免每次宿主事件都重读。</summary>
+    private string _dataSignature = "";
+
+    /// <summary>宿主报告过笔记正文变化，需要失效笔记预览缓存。</summary>
+    private bool _noteContentDirty;
+
     private CancellationTokenSource? _operation;
     private bool _busy;
     private bool _disposed;
 
+    /// <summary>列表搜索关键字；空串表示不过滤。</summary>
+    private string _searchQuery = "";
+
+    /// <summary>搜索关键字有变化、需要等待防抖后再持久化。</summary>
+    private bool _searchDirty;
+
+    /// <summary>插件状态损坏时的提示；只展示一次。</summary>
+    private string? _startupWarning;
+    private bool _startupWarningShown;
+
     public DataIoSession(PaperBodyContext context)
     {
         _context = context;
-        _state = DataIoState.Parse(context.StateJson);
+        _state = DataIoState.Parse(context.StateJson, out var stateRecovered);
+        if (stateRecovered)
+        {
+            _startupWarning = BackupCorruptState(context.StateJson);
+        }
+
+        _searchQuery = _state.Search ?? "";
         _settings = DataIoSettings.Parse(context.SettingsJson);
 
         // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时自动命名；
@@ -83,12 +106,14 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.ExportFormatChanged += OnExportFormatChanged;
         _view.NoteSelectionChanged += OnNoteSelectionChanged;
         _view.TodoSelectionChanged += OnTodoSelectionChanged;
+        _view.SearchChanged += OnSearchChanged;
         _view.PrimaryActionRequested += OnPrimaryActionRequested;
         _view.ChooseImportFileRequested += OnChooseImportFileRequested;
 
         _view.ApplyTheme(context.Theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
         _view.SetExportFormat(ParseExportFormat(_state.ExportFormat));
+        _view.SetSearch(_searchQuery);
         _view.SetImportFileInfo(null);
         _view.SetPrimaryEnabled(false);
 
@@ -170,6 +195,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.ExportFormatChanged -= OnExportFormatChanged;
         _view.NoteSelectionChanged -= OnNoteSelectionChanged;
         _view.TodoSelectionChanged -= OnTodoSelectionChanged;
+        _view.SearchChanged -= OnSearchChanged;
         _view.PrimaryActionRequested -= OnPrimaryActionRequested;
         _view.ChooseImportFileRequested -= OnChooseImportFileRequested;
     }
@@ -179,6 +205,9 @@ internal sealed class DataIoSession : IPaperBodySession
     private void OnModeChanged(object? sender, EventArgs e)
     {
         _mode = _view.Mode;
+
+        // 导出用纸片 ID、导入用计划序号作为缓存键，切换模式必须清空。
+        InvalidatePreviewCache();
 
         if (_mode == DataIoMode.Export)
         {
@@ -201,7 +230,29 @@ internal sealed class DataIoSession : IPaperBodySession
     private void OnDebounceTick(object? sender, EventArgs e)
     {
         _debounce.Stop();
+
+        // 搜索输入较频繁，统一等到防抖窗口结束再持久化，减少状态写入。
+        if (_searchDirty)
+        {
+            _searchDirty = false;
+            SaveState();
+        }
+
         _ = RefreshAsync();
+    }
+
+    private void OnSearchChanged(object? sender, EventArgs e)
+    {
+        var query = _view.SearchText.Trim();
+        if (string.Equals(query, _searchQuery, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _searchQuery = query;
+        _state.Search = query;
+        _searchDirty = true;
+        ScheduleRefresh();
     }
 
     private void ScheduleRefresh()
@@ -279,10 +330,21 @@ internal sealed class DataIoSession : IPaperBodySession
                     g => g.OrderBy(t => t.Order).ToArray(),
                     StringComparer.Ordinal);
 
-            // 移除已经不存在的纸片选择，避免陈旧 ID。
+            // 只有数据真的变化时才丢弃预览缓存；否则勾选、搜索等操作会让悬停预览反复重读。
+            var signature = ComputeDataSignature();
+            if (_noteContentDirty || !string.Equals(signature, _dataSignature, StringComparison.Ordinal))
+            {
+                _dataSignature = signature;
+                _noteContentDirty = false;
+                InvalidatePreviewCache();
+            }
+
+            // 移除已经不存在的纸片选择，避免陈旧 ID；搜索过滤不应影响已选集合。
             if (_exportSelection is { } selection)
             {
-                var valid = GetExportCandidates(null).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
+                var valid = GetExportCandidates(null, ignoreSearch: true)
+                    .Select(p => p.Id)
+                    .ToHashSet(StringComparer.Ordinal);
                 selection.IntersectWith(valid);
             }
 
@@ -295,7 +357,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
             if (!_busy)
             {
-                SetStatus($"共 {_papers.Count} 张纸片。");
+                SetStatus(StartupPrefix() + $"共 {_papers.Count} 张纸片。");
             }
         }
         catch (Exception ex)
@@ -323,10 +385,22 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (!_busy)
         {
-            SetStatus(_importPlan is null
+            SetStatus(StartupPrefix() + (_importPlan is null
                 ? "请选择要导入的文件。"
-                : $"已读取 {_importPlan.Papers.Count} 张纸片。");
+                : $"已读取 {_importPlan.Papers.Count} 张纸片。"));
         }
+    }
+
+    /// <summary>首次展示状态栏时带上“状态已损坏并备份”的提示。</summary>
+    private string StartupPrefix()
+    {
+        if (_startupWarningShown || _startupWarning is null)
+        {
+            return "";
+        }
+
+        _startupWarningShown = true;
+        return _startupWarning + " ";
     }
 
     /// <summary>文件行的次要状态：格式与已解析纸片数；未选择文件时返回 null。</summary>
@@ -337,10 +411,9 @@ internal sealed class DataIoSession : IPaperBodySession
             return null;
         }
 
-        var format = string.Equals(
-            Path.GetExtension(_importFilePath),
-            ".md",
-            StringComparison.OrdinalIgnoreCase)
+        var extension = Path.GetExtension(_importFilePath);
+        var format = string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(extension, ".markdown", StringComparison.OrdinalIgnoreCase)
             ? "Markdown"
             : "JSON";
         return _importPlan is null ? format : $"{format} · {_importPlan.Papers.Count} 张纸片";
@@ -378,7 +451,7 @@ internal sealed class DataIoSession : IPaperBodySession
     private int DoneCount(string paperId) =>
         _todosByPaper.TryGetValue(paperId, out var todos) ? todos.Count(t => t.Done) : 0;
 
-    private IEnumerable<PaperSnapshot> GetExportCandidates(string? type)
+    private IEnumerable<PaperSnapshot> GetExportCandidates(string? type, bool ignoreSearch = false)
     {
         foreach (var paper in _papers)
         {
@@ -395,7 +468,8 @@ internal sealed class DataIoSession : IPaperBodySession
                     continue;
                 }
 
-                if (type is null || type == "todo")
+                if ((type is null || type == "todo") &&
+                    (ignoreSearch || MatchesExportSearch(paper)))
                 {
                     yield return paper;
                 }
@@ -409,7 +483,8 @@ internal sealed class DataIoSession : IPaperBodySession
                     continue;
                 }
 
-                if (type is null || type == "note")
+                if ((type is null || type == "note") &&
+                    (ignoreSearch || MatchesExportSearch(paper)))
                 {
                     yield return paper;
                 }
@@ -417,10 +492,29 @@ internal sealed class DataIoSession : IPaperBodySession
         }
     }
 
+    /// <summary>导出检索：匹配标题或待办文本（笔记正文需读取宿主才可知，不参与过滤）。</summary>
+    private bool MatchesExportSearch(PaperSnapshot paper)
+    {
+        if (_searchQuery.Length == 0)
+        {
+            return true;
+        }
+
+        if (paper.Title.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return _todosByPaper.TryGetValue(paper.Id, out var todos) &&
+               todos.Any(todo => todo.Text.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string ImportKey(int index) =>
         index.ToString(CultureInfo.InvariantCulture);
 
-    private IEnumerable<(int Index, ImportPaper Paper)> GetImportCandidates(string? type)
+    private IEnumerable<(int Index, ImportPaper Paper)> GetImportCandidates(
+        string? type,
+        bool ignoreSearch = false)
     {
         if (_importPlan is null)
         {
@@ -447,12 +541,41 @@ internal sealed class DataIoSession : IPaperBodySession
                 continue;
             }
 
-            if (type is null || type == kind)
+            if ((type is null || type == kind) &&
+                (ignoreSearch || MatchesImportSearch(paper)))
             {
                 yield return (i, paper);
             }
         }
     }
+
+    /// <summary>导入检索：匹配标题、笔记正文或待办文本。</summary>
+    private bool MatchesImportSearch(ImportPaper paper)
+    {
+        if (_searchQuery.Length == 0)
+        {
+            return true;
+        }
+
+        var source = paper.Source;
+        if ((source.Title ?? "").Contains(_searchQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if ((source.Content ?? "").Contains(_searchQuery, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return (source.Todos ?? [])
+            .Any(todo => todo.Text.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>缺少 papers.create 时，只有已命中更新目标的纸片仍可选择。</summary>
+    private bool IsImportSelectable(ImportPaper paper) =>
+        !string.IsNullOrWhiteSpace(paper.UpdateTargetId) ||
+        _gateway.Can(PaperTodoPermissionNames.PapersCreate);
 
     private List<PaperSnapshot> GetExportSelectedPapers()
     {
@@ -467,29 +590,72 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private List<ImportPaper> GetImportSelectedPapers()
     {
-        var candidates = GetImportCandidates(null).ToList();
+        var candidates = GetImportCandidates(null);
         if (_importSelection is not null)
         {
-            candidates = candidates
-                .Where(c => _importSelection.Contains(ImportKey(c.Index)))
-                .ToList();
+            candidates = candidates.Where(c => _importSelection.Contains(ImportKey(c.Index)));
         }
 
-        return candidates.Select(c => c.Paper).ToList();
+        // 无 papers.create 时，“全选”只覆盖可更新的纸片，避免统计与实际执行不一致。
+        return candidates
+            .Where(c => IsImportSelectable(c.Paper))
+            .Select(c => c.Paper)
+            .ToList();
     }
 
     // ---------- 行与汇总 ----------
 
     private void RefreshRows()
     {
-        _previewCache.Clear();
-        _previewGeneration++;
-
         var rows = _mode == DataIoMode.Export ? BuildExportRows() : BuildImportRows();
         var selection = _mode == DataIoMode.Export ? _exportSelection : _importSelection;
 
         // selection 为 null 时由视图默认全选。
         _view.SetRows(rows, selection);
+    }
+
+    /// <summary>清空预览缓存并递增代次；用于模式切换、更换导入文件等键空间变化。</summary>
+    private void InvalidatePreviewCache()
+    {
+        _previewCache.Clear();
+        _previewGeneration++;
+    }
+
+    /// <summary>纸片与待办快照的轻量指纹，用于判断预览缓存是否仍然有效。</summary>
+    private string ComputeDataSignature()
+    {
+        const char fieldSeparator = (char)0x1f;
+        const char recordSeparator = (char)0x1e;
+
+        var builder = new StringBuilder(_papers.Count * 64);
+        foreach (var paper in _papers)
+        {
+            builder
+                .Append(paper.Id).Append(fieldSeparator)
+                .Append(paper.Title).Append(fieldSeparator)
+                .Append(paper.Type).Append(fieldSeparator)
+                .Append(paper.BodyProviderId).Append(fieldSeparator)
+                .Append(paper.IsVisible ? '1' : '0')
+                .Append(recordSeparator);
+        }
+
+        foreach (var (paperId, todos) in _todosByPaper)
+        {
+            builder.Append(paperId).Append(fieldSeparator);
+            foreach (var todo in todos)
+            {
+                builder
+                    .Append(todo.Id).Append(fieldSeparator)
+                    .Append(todo.Text).Append(fieldSeparator)
+                    .Append(todo.Done ? '1' : '0').Append(fieldSeparator)
+                    .Append(todo.Order).Append(fieldSeparator)
+                    .Append(todo.ReminderAt?.ToUnixTimeSeconds() ?? 0).Append(fieldSeparator)
+                    .Append(todo.LinkedPaperId).Append(fieldSeparator)
+                    .Append(todo.LinkedPath).Append(recordSeparator);
+            }
+        }
+
+        return builder.ToString();
     }
 
     private IReadOnlyList<PaperRowItem> BuildExportRows()
@@ -529,6 +695,7 @@ internal sealed class DataIoSession : IPaperBodySession
             var todoCount = paper.Source.Todos?.Count ?? 0;
             var isUpdate = !string.IsNullOrWhiteSpace(paper.UpdateTargetId);
 
+            var selectable = IsImportSelectable(paper);
             var warnings = new List<string>();
             if (isNote && contentLength == 0)
             {
@@ -538,6 +705,16 @@ internal sealed class DataIoSession : IPaperBodySession
             if (paper.TargetLocallyModified)
             {
                 warnings.Add("本地已修改，更新会覆盖");
+            }
+
+            if (paper.TargetImagesAtRisk)
+            {
+                warnings.Add("图片引用会被破坏，只能跳过或新增");
+            }
+
+            if (!selectable)
+            {
+                warnings.Add("缺少 papers.create 权限，无法新建");
             }
 
             rows.Add(new PaperRowItem
@@ -551,7 +728,7 @@ internal sealed class DataIoSession : IPaperBodySession
                         : $"{todoCount} 项待办") +
                     (isUpdate ? " · 将更新" : ""),
                 Warning = string.Join("；", warnings),
-                CanSelect = true
+                CanSelect = selectable
             });
         }
 
@@ -577,7 +754,7 @@ internal sealed class DataIoSession : IPaperBodySession
         var mode = _mode;
         var content = mode == DataIoMode.Export
             ? await BuildExportPreviewAsync(key)
-            : BuildImportPreview(key);
+            : PreviewFactory.BuildImport(_importPlan, key);
 
         if (content is not null && !_disposed && generation == _previewGeneration)
         {
@@ -587,180 +764,11 @@ internal sealed class DataIoSession : IPaperBodySession
         return content;
     }
 
-    private async Task<PreviewContent?> BuildExportPreviewAsync(string paperId)
+    private Task<PreviewContent?> BuildExportPreviewAsync(string paperId)
     {
         var paper = _papers.FirstOrDefault(p => string.Equals(p.Id, paperId, StringComparison.Ordinal));
-        if (paper is null)
-        {
-            return null;
-        }
-
-        var isNote = string.Equals(paper.Type, "note", StringComparison.Ordinal);
-        var title = string.IsNullOrWhiteSpace(paper.Title) ? "（无标题）" : paper.Title;
-
-        if (!isNote)
-        {
-            TodoSnapshot[] todos = _todosByPaper.TryGetValue(paperId, out var stored)
-                ? stored
-                : [];
-            var items = todos
-                .Select(t => new PreviewTodoItem(t.Text, t.Done, DescribeHostTodo(t)))
-                .ToList();
-            var done = items.Count(t => t.Done);
-
-            return new PreviewContent
-            {
-                Key = paperId,
-                Title = title,
-                TypeLabel = "待办",
-                Meta = items.Count == 0
-                    ? "暂无待办"
-                    : $"{items.Count} 项待办 · {done} 项已完成",
-                Todos = items
-            };
-        }
-
-        NoteSnapshot? note = null;
-        if (_gateway.Can(PaperTodoPermissionNames.NotesRead))
-        {
-            try
-            {
-                note = await _gateway.OnUiAsync(() => _context.Workspace.GetNote(paperId));
-            }
-            catch (Exception)
-            {
-                note = null;
-            }
-        }
-
-        var body = note?.Content ?? "";
-        var providerSupported = string.Equals(
-            paper.BodyProviderId,
-            MarkdownProviderId,
-            StringComparison.Ordinal);
-        var available = providerSupported && (note?.ContentAvailable ?? false);
-
-        string? warning = null;
-        if (!providerSupported)
-        {
-            warning = "正文由其他插件提供，无法通过逻辑 API 读取。";
-        }
-        else if (!available)
-        {
-            warning = "宿主未能读取这张笔记的正文。";
-        }
-
-        return new PreviewContent
-        {
-            Key = paperId,
-            Title = title,
-            TypeLabel = "笔记",
-            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
-            Warning = warning,
-            ContentAvailable = available,
-            Body = available ? body : ""
-        };
-    }
-
-    private PreviewContent? BuildImportPreview(string key)
-    {
-        if (_importPlan is null ||
-            !int.TryParse(key, NumberStyles.Integer, CultureInfo.InvariantCulture, out var index) ||
-            index < 0 ||
-            index >= _importPlan.Papers.Count)
-        {
-            return null;
-        }
-
-        var source = _importPlan.Papers[index].Source;
-        var isNote = string.Equals(source.Type, "note", StringComparison.OrdinalIgnoreCase);
-        var title = string.IsNullOrWhiteSpace(source.Title) ? "（无标题）" : source.Title;
-
-        if (!isNote)
-        {
-            var items = (source.Todos ?? [])
-                .OrderBy(t => t.Order)
-                .Select(t => new PreviewTodoItem(t.Text, t.Done, DescribeImportTodo(t)))
-                .ToList();
-            var done = items.Count(t => t.Done);
-
-            return new PreviewContent
-            {
-                Key = key,
-                Title = title,
-                TypeLabel = "待办",
-                Meta = items.Count == 0
-                    ? "暂无待办"
-                    : $"{items.Count} 项待办 · {done} 项已完成",
-                Todos = items
-            };
-        }
-
-        var body = source.Content ?? "";
-        var available = source.ContentAvailable != false;
-
-        string? warning = null;
-        if (!available)
-        {
-            warning = "文件未包含笔记正文，导入后将是空白笔记。";
-        }
-        else if (body.Length == 0)
-        {
-            warning = "这张笔记在文件中是空白的。";
-        }
-
-        return new PreviewContent
-        {
-            Key = key,
-            Title = title,
-            TypeLabel = "笔记",
-            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
-            Warning = warning,
-            ContentAvailable = available,
-            Body = available ? body : ""
-        };
-    }
-
-    private static string DescribeHostTodo(TodoSnapshot todo)
-    {
-        var parts = new List<string>(3);
-        if (todo.ReminderAt is { } reminder)
-        {
-            parts.Add($"提醒 {reminder.ToLocalTime():M-d HH:mm}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(todo.LinkedPaperId))
-        {
-            parts.Add("关联纸片");
-        }
-
-        if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
-        {
-            parts.Add(todo.LinkedPathIsDirectory == true ? "关联文件夹" : "关联文件");
-        }
-
-        return string.Join(" · ", parts);
-    }
-
-    private static string DescribeImportTodo(ExportTodo todo)
-    {
-        var parts = new List<string>(3);
-        if (todo.ReminderAt is { } reminder)
-        {
-            parts.Add($"提醒 {reminder.ToLocalTime():M-d HH:mm}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(todo.LinkedSourcePaperId))
-        {
-            parts.Add("文件内关联纸片");
-        }
-
-        if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
-        {
-            parts.Add(todo.LinkedPathIsDirectory == true ? "关联文件夹" : "关联文件");
-        }
-
-        return string.Join(" · ", parts);
+        var todos = _todosByPaper.TryGetValue(paperId, out var stored) ? stored : null;
+        return PreviewFactory.BuildExportAsync(_gateway, paper, todos);
     }
 
     private void UpdateExportSummary()
@@ -815,8 +823,13 @@ internal sealed class DataIoSession : IPaperBodySession
               "导出文件只保存正文文本，图片本体不在文件中；导入到其他设备或原图已清理后将无法显示。"
             : null);
 
-        var notes = GetImportCandidates("note").ToList();
-        var todos = GetImportCandidates("todo").ToList();
+        // 总数只统计当前可选择的条目，避免“已选 1 / 3”里混入根本无法导入的项。
+        var notes = GetImportCandidates("note")
+            .Where(c => IsImportSelectable(c.Paper))
+            .ToList();
+        var todos = GetImportCandidates("todo")
+            .Where(c => IsImportSelectable(c.Paper))
+            .ToList();
         var totalTodoItems = todos.Sum(c => c.Paper.Source.Todos?.Count ?? 0);
 
         var selected = GetImportSelectedPapers();
@@ -826,18 +839,25 @@ internal sealed class DataIoSession : IPaperBodySession
             .Where(p => string.Equals(p.Source.Type, "todo", StringComparison.OrdinalIgnoreCase))
             .Sum(p => p.Source.Todos?.Count ?? 0);
 
+        var updateCount = selected.Count(p => !string.IsNullOrWhiteSpace(p.UpdateTargetId));
+        var createCount = selected.Count - updateCount;
+
         _view.SetCounts(
             FormatCount(selectedNotes, notes.Count),
             FormatCount(selectedTodoItems, totalTodoItems));
-        _view.SetTypeAvailability(
-            _gateway.Can(PaperTodoPermissionNames.PapersCreate) && notes.Count > 0,
-            _gateway.Can(PaperTodoPermissionNames.PapersCreate) && todos.Count > 0);
+        _view.SetTypeAvailability(notes.Count > 0, todos.Count > 0);
+
+        // 文案必须如实反映本次是“新建”还是“更新”，不能永远宣称只追加。
+        var rule = updateCount > 0
+            ? (createCount > 0
+                ? $"将新建 {createCount} 张、更新 {updateCount} 张现有纸片"
+                : $"将更新 {updateCount} 张现有纸片，不新建")
+            : "只追加新纸片，不覆盖现有数据";
 
         _view.SetEstimate(
             $"{selectedNotes} 条笔记 · {selectedTodoItems} 条待办",
-            "只追加新纸片，不覆盖现有数据");
-        _view.SetPrimaryEnabled(
-            selected.Count > 0 && _gateway.Can(PaperTodoPermissionNames.PapersCreate));
+            rule);
+        _view.SetPrimaryEnabled(selected.Count > 0);
     }
 
     private static string FormatCount(int selected, int total)
@@ -878,8 +898,10 @@ internal sealed class DataIoSession : IPaperBodySession
     {
         if (_mode == DataIoMode.Export)
         {
+            // 只合并当前可见（搜索命中）的条目；初始化时保留全部候选，
+            // 避免搜索过滤后切换勾选把未显示的条目误判为取消。
             var typeIds = GetExportCandidates(type).Select(p => p.Id).ToHashSet(StringComparer.Ordinal);
-            _exportSelection ??= GetExportCandidates(null)
+            _exportSelection ??= GetExportCandidates(null, ignoreSearch: true)
                 .Select(p => p.Id)
                 .ToHashSet(StringComparer.Ordinal);
             _exportSelection.ExceptWith(typeIds);
@@ -890,7 +912,7 @@ internal sealed class DataIoSession : IPaperBodySession
             var typeKeys = GetImportCandidates(type)
                 .Select(c => ImportKey(c.Index))
                 .ToHashSet(StringComparer.Ordinal);
-            _importSelection ??= GetImportCandidates(null)
+            _importSelection ??= GetImportCandidates(null, ignoreSearch: true)
                 .Select(c => ImportKey(c.Index))
                 .ToHashSet(StringComparer.Ordinal);
             _importSelection.ExceptWith(typeKeys);
@@ -965,11 +987,16 @@ internal sealed class DataIoSession : IPaperBodySession
 
         var formatLabel = markdown ? "Markdown" : "JSON";
 
+        // 关闭纸片时取消导出，避免在已销毁的会话上继续弹结果框。
+        using var cts = new CancellationTokenSource();
+        _operation = cts;
+
         SetStatus("正在读取数据…");
         var document = await _exportService.CaptureAsync(
             selected.Select(p => p.Id).ToList(),
             _context.PaperId,
-            CancellationToken.None);
+            cts.Token);
+        cts.Token.ThrowIfCancellationRequested();
 
         SetStatus("正在写入文件…");
         await Task.Run(() =>
@@ -982,7 +1009,12 @@ internal sealed class DataIoSession : IPaperBodySession
             {
                 DataFileService.Write(dialog.FileName, document);
             }
-        });
+        }, cts.Token);
+
+        if (_disposed)
+        {
+            return;
+        }
 
         var imageSummary = ImageReferenceSummary.FromNotes(
             document.Papers
@@ -1054,19 +1086,14 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private async Task ChooseImportFileAsync()
     {
-        if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
-        {
-            SetStatus("缺少 papers.create 权限，无法导入。");
-            return;
-        }
-
+        // 选择文件本身不需要 papers.create；纯更新导入也应允许继续。
         var dialog = new OpenFileDialog
         {
             Title = "选择导入文件",
             // 默认过滤器同时列出 JSON 与 Markdown，避免打开对话框后只能看到其中一种。
-            Filter = "PaperTodo 数据 (*.json;*.md)|*.json;*.md|"
+            Filter = "PaperTodo 数据 (*.json;*.md;*.markdown)|*.json;*.md;*.markdown|"
                 + "JSON 文件 (*.json)|*.json|"
-                + "Markdown 文档 (*.md)|*.md|"
+                + "Markdown 文档 (*.md;*.markdown)|*.md;*.markdown|"
                 + "所有文件 (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false
@@ -1128,6 +1155,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _importPlan = plan;
         _importFilePath = dialog.FileName;
         _importSelection = null;
+        InvalidatePreviewCache();
         RefreshImportView();
 
         var updateCount = plan.Papers.Count(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId));
@@ -1145,16 +1173,18 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
-        if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
-        {
-            SetStatus("缺少 papers.create 权限，无法导入。");
-            return;
-        }
-
         var selected = GetImportSelectedPapers();
         if (selected.Count == 0)
         {
             SetStatus("请选择要导入的内容。");
+            return;
+        }
+
+        // 纯更新不依赖 papers.create；只有确实要新建时才检查该权限。
+        if (selected.Any(paper => string.IsNullOrWhiteSpace(paper.UpdateTargetId)) &&
+            !_gateway.Can(PaperTodoPermissionNames.PapersCreate))
+        {
+            SetStatus("缺少 papers.create 权限，无法新建纸片；可只勾选“将更新”的纸片。");
             return;
         }
 
@@ -1168,7 +1198,8 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             var choices = _view.ShowUpdatePreviewDialog(
                 updateCandidates,
-                BuildUnrecoverableSummary(selected, _importPlan));
+                ImportSummaryBuilder.BuildUnrecoverable(selected, _importPlan),
+                _gateway.Can(PaperTodoPermissionNames.PapersCreate));
             if (choices == null)
             {
                 SetStatus("已取消导入。");
@@ -1224,7 +1255,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (_settings.ConfirmBeforeImport && !updatePreviewShown)
         {
-            var confirmation = BuildConfirmation(selected, _importPlan);
+            var confirmation = ImportSummaryBuilder.BuildConfirmation(selected, _importPlan);
             if (!_view.ShowConfirmDialog("确认导入", confirmation, "继续导入", "取消"))
             {
                 SetStatus("已取消导入。");
@@ -1254,23 +1285,6 @@ internal sealed class DataIoSession : IPaperBodySession
             var result = await new ImportService(_gateway, progress)
                 .ImportAsync(filtered, _settings, cts.Token);
 
-            try
-            {
-                // 导入（含顺序/关联/提醒修复）完成后登记身份映射，供下次导入更新同一批纸片。
-                await _identity.RecordAsync(selected, result.SourceIdToPaperId, CancellationToken.None);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // 映射登记失败不影响已完成的导入，但要让用户知道下次可能产生重复纸片。
-                result.Warnings.Add(
-                    "导入已完成，但未能登记更新映射；下次导入同一文件可能会新建重复纸片。");
-            }
-
-            if (_identity.ConsumeChanges())
-            {
-                SaveState();
-            }
-
             result.SkippedPapers = skippedTitles.Count;
             result.SkippedTitles.AddRange(skippedTitles);
 
@@ -1281,7 +1295,29 @@ internal sealed class DataIoSession : IPaperBodySession
                     "图片本体未随文件导入，跨设备或原图已清理时可能无法显示。");
             }
 
-            ShowImportResult(result);
+            // 会话已关闭（导入被取消）时不再登记映射或弹窗：此时保存状态与展示界面都没有意义。
+            if (!_disposed)
+            {
+                try
+                {
+                    // 导入（含顺序/关联/提醒修复）完成后登记身份映射，供下次导入更新同一批纸片。
+                    await _identity.RecordAsync(selected, result.SourceIdToPaperId, CancellationToken.None);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // 映射登记失败不影响已完成的导入，但要让用户知道下次可能产生重复纸片。
+                    result.Warnings.Add(
+                        "导入已完成，但未能登记更新映射；下次导入同一文件可能会新建重复纸片。");
+                }
+
+                if (_identity.ConsumeChanges())
+                {
+                    SaveState();
+                }
+
+                ShowImportResult(result);
+            }
+
             summary = result.FatalError ??
                 (result.Cancelled
                     ? $"导入已中断：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
@@ -1294,10 +1330,16 @@ internal sealed class DataIoSession : IPaperBodySession
             _operation = null;
         }
 
+        if (_disposed)
+        {
+            return;
+        }
+
         // 导入完成后清空文件选择，避免误触重复导入。
         _importPlan = null;
         _importFilePath = null;
         _importSelection = null;
+        InvalidatePreviewCache();
         await RefreshAsync(force: true);
         SetStatus(summary);
     }
@@ -1337,6 +1379,12 @@ internal sealed class DataIoSession : IPaperBodySession
                 new PaperTodoEventFilter { Kinds = kinds, ExcludeOwnOperations = true },
                 evt =>
                 {
+                    // 笔记正文不在纸片/待办指纹里，单独标记以便下次刷新失效笔记预览。
+                    if (evt is NoteChangedEvent)
+                    {
+                        _noteContentDirty = true;
+                    }
+
                     if (evt is PaperDeletedEvent deleted)
                     {
                         _identity.RemoveByLocalPaperId(deleted.Paper.Id);
@@ -1406,108 +1454,6 @@ internal sealed class DataIoSession : IPaperBodySession
         }
     }
 
-    private static string BuildConfirmation(
-        IReadOnlyList<ImportPaper> selected,
-        ImportPlan sourcePlan)
-    {
-        var todoPapers = selected.Count(
-            p => string.Equals(p.Source.Type, "todo", StringComparison.OrdinalIgnoreCase));
-        var notePapers = selected.Count - todoPapers;
-        var todoItems = selected.Sum(p => p.Source.Todos?.Count ?? 0);
-        var updatePapers = selected.Count(p => !string.IsNullOrWhiteSpace(p.UpdateTargetId));
-        var createPapers = selected.Count - updatePapers;
-        var localModified = selected.Count(
-            p => p.UpdateTargetId != null && p.TargetLocallyModified);
-
-        var lines = new List<string>
-        {
-            $"将处理 {selected.Count} 张纸片：",
-            $"- 新建 {createPapers} 张，更新已有 {updatePapers} 张",
-            $"- 待办纸片 {todoPapers} 张（共 {todoItems} 条待办）",
-            $"- 笔记纸片 {notePapers} 张",
-            ""
-        };
-
-        if (updatePapers == 0)
-        {
-            lines.Add("导入不会覆盖或删除任何现有纸片，宿主会生成新 ID。");
-        }
-        else
-        {
-            lines.Add(
-                "更新会替换匹配纸片的笔记正文和待办集合，并删除文件中已不存在的本地待办；" +
-                "标题和类型保持不变。");
-            if (localModified > 0)
-            {
-                lines.Add($"注意：{localModified} 张匹配到的纸片在本地有修改，更新会覆盖这些修改。");
-            }
-        }
-
-        var problems = BuildUnrecoverableSummary(selected, sourcePlan);
-        if (problems.Count > 0)
-        {
-            lines.Add("");
-            lines.Add("以下内容无法完整还原：");
-            lines.AddRange(problems.Select(p => "- " + p));
-        }
-
-        if (sourcePlan.Warnings.Count > 0)
-        {
-            lines.Add("");
-            lines.Add($"另有 {sourcePlan.Warnings.Count} 条预检提示，详见导入结果。");
-        }
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    /// <summary>
-    /// 汇总文件层面无法完整还原的内容。导入前确认与更新预览共用同一份说明，
-    /// 保证走更新路径时用户同样能看到图片、关联、提醒等损失提示。
-    /// </summary>
-    private static List<string> BuildUnrecoverableSummary(
-        IReadOnlyList<ImportPaper> selected,
-        ImportPlan sourcePlan)
-    {
-        var problems = new List<string>();
-        var imageSummary = ImageReferenceSummary.FromNotes(
-            selected
-                .Where(p => string.Equals(p.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
-                .Select(p => p.Source.Content));
-        if (imageSummary.HasAny)
-        {
-            problems.Add(
-                $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用（图片本体不在文件中）");
-        }
-
-        if (sourcePlan.LossyImageNotes > 0)
-        {
-            problems.Add(
-                $"{sourcePlan.LossyImageNotes} 张笔记含旧版“图片缺失”标记，更新会破坏图片引用（已强制跳过更新）");
-        }
-
-        if (sourcePlan.UnresolvedLinks > 0)
-        {
-            problems.Add($"{sourcePlan.UnresolvedLinks} 条待办关联的纸片不在本文件中，导入后会取消关联");
-        }
-
-        if (sourcePlan.PathLinkCount > 0)
-        {
-            problems.Add($"{sourcePlan.PathLinkCount} 条待办关联的文件或文件夹（导入后无法保留）");
-        }
-
-        if (sourcePlan.DroppedReminders > 0)
-        {
-            problems.Add($"{sourcePlan.DroppedReminders} 条已过期提醒");
-        }
-
-        if (sourcePlan.TruncatedTitles > 0)
-        {
-            problems.Add($"{sourcePlan.TruncatedTitles} 个超长标题将被截断");
-        }
-
-        return problems;
-    }
-
     private void ShowImportResult(ImportResult result)
     {
         var stats = new List<(string Label, string Value)>
@@ -1550,10 +1496,13 @@ internal sealed class DataIoSession : IPaperBodySession
         lines.AddRange(result.Failures
             .Select(failure => $"· 失败：{failure.Title}（{failure.Code}）：{failure.Message}"));
 
-        if (lines.Count > 12)
+        // 结果对话框本身可滚动；只有在极端情况下才截断，并明确告知省略了多少条。
+        const int maxDetailLines = 300;
+        if (lines.Count > maxDetailLines)
         {
-            lines = lines.Take(12).ToList();
-            lines.Add("· …更多详情已省略。");
+            var omitted = lines.Count - maxDetailLines;
+            lines = lines.Take(maxDetailLines).ToList();
+            lines.Add($"· …另有 {omitted} 条详情未显示（可缩小选择范围后重试以查看）。");
         }
 
         var title = result.Cancelled
@@ -1574,6 +1523,32 @@ internal sealed class DataIoSession : IPaperBodySession
         string.Equals(value, "markdown", StringComparison.OrdinalIgnoreCase)
             ? DataIoExportFormat.Markdown
             : DataIoExportFormat.Json;
+
+    /// <summary>
+    /// 插件状态损坏时把原始 JSON 备份到本机，并返回给用户看的提示。
+    /// 状态里只有 UI 偏好与导入映射，不包含笔记正文，备份不涉及敏感内容。
+    /// </summary>
+    private static string BackupCorruptState(string? rawState)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "PaperTodo",
+                "DataIO",
+                "state-backup");
+            Directory.CreateDirectory(directory);
+            var path = Path.Combine(
+                directory,
+                $"state-corrupt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(path, rawState ?? "", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            return $"插件状态已损坏并重置，原状态备份在 {path}；此前的导入关联可能丢失。";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return "插件状态已损坏并重置；此前的导入关联可能丢失。";
+        }
+    }
 
     private static string? ResolveDirectory(string? path)
     {

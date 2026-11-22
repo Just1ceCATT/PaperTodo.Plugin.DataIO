@@ -14,7 +14,8 @@ internal sealed class DataIoState
     public string LastExportDirectory { get; set; } = "";
     public string LastImportDirectory { get; set; } = "";
     public string ExportFormat { get; set; } = "json";
-    public string Filter { get; set; } = "all";
+
+    /// <summary>列表搜索关键字；只保留字符串，过滤在会话内完成。</summary>
     public string Search { get; set; } = "";
 
     /// <summary>
@@ -37,8 +38,15 @@ internal sealed class DataIoState
     };
 
     /// <summary>容错解析；损坏的旧状态回退为默认值，绝不阻止会话创建。</summary>
-    public static DataIoState Parse(string? json)
+    public static DataIoState Parse(string? json) => Parse(json, out _);
+
+    /// <summary>
+    /// 容错解析。recovered 为 true 表示状态 JSON 损坏、已回退默认值，
+    /// 调用方应备份原始状态并提示用户（导入身份映射可能丢失）。
+    /// </summary>
+    public static DataIoState Parse(string? json, out bool recovered)
     {
+        recovered = false;
         if (string.IsNullOrWhiteSpace(json))
         {
             return new DataIoState();
@@ -52,6 +60,12 @@ internal sealed class DataIoState
         }
         catch (JsonException)
         {
+            recovered = true;
+            return new DataIoState();
+        }
+        catch (NotSupportedException)
+        {
+            recovered = true;
             return new DataIoState();
         }
     }
@@ -61,7 +75,6 @@ internal sealed class DataIoState
     {
         var state = Parse(stateJson);
         state.Version = CurrentVersion;
-        state.Filter = NormalizeFilter(state.Filter);
         state.LastExportDirectory ??= "";
         state.LastImportDirectory ??= "";
         state.ExportFormat = NormalizeExportFormat(state.ExportFormat);
@@ -72,9 +85,6 @@ internal sealed class DataIoState
 
     public static string Serialize(DataIoState state) =>
         JsonSerializer.Serialize(state, Options);
-
-    public static string NormalizeFilter(string? value) =>
-        value is "todo" or "note" ? value : "all";
 
     public static string NormalizeExportFormat(string? value) =>
         value is "markdown" ? "markdown" : "json";
