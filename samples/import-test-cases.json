@@ -1,0 +1,328 @@
+{
+  "format": "papertodo.paper-export",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-23T10:00:00+08:00",
+  "source": {
+    "pluginId": "papertodo.dataio.native",
+    "pluginVersion": "1.0.0",
+    "apiVersion": "2.3",
+    "uiLanguage": "zh-CN",
+    "note": "手工构造的导入测试集：覆盖待办核心字段、重复文本、特殊字符、多行、空值、null 元素、标题截断、笔记 Markdown、图片引用、不可读正文、未知类型与非法组合。文件中包含 null 元素和应被跳过的纸片，属于预期行为。"
+  },
+  "papers": [
+    null,
+    {
+      "sourceId": "case-todo-core",
+      "type": "todo",
+      "title": "用例01：待办核心字段",
+      "show": true,
+      "todos": [
+        {
+          "text": "普通未完成事项",
+          "done": false,
+          "order": 0
+        },
+        {
+          "text": "普通已完成事项",
+          "done": true,
+          "order": 1
+        },
+        {
+          "text": "未来提醒（应还原）",
+          "done": false,
+          "order": 2,
+          "reminderAt": "2099-01-01T09:00:00+08:00"
+        },
+        {
+          "text": "关联到本文件内的笔记",
+          "done": false,
+          "order": 3,
+          "linkedSourcePaperId": "case-note-markdown"
+        },
+        {
+          "text": "关联到本文件内的另一张待办",
+          "done": false,
+          "order": 4,
+          "linkedSourcePaperId": "case-todo-duplicates"
+        },
+        {
+          "text": "关联到本机文件（仅提示，不还原）",
+          "done": false,
+          "order": 5,
+          "linkedPath": "Z:\\tool\\PaperTodo-dev\\README.md",
+          "linkedPathIsDirectory": false
+        },
+        {
+          "text": "关联到本机文件夹（仅提示，不还原）",
+          "done": false,
+          "order": 6,
+          "linkedPath": "Z:\\tool\\PaperTodo-dev",
+          "linkedPathIsDirectory": true
+        },
+        {
+          "text": "已完成但带未来提醒（提醒应跳过）",
+          "done": true,
+          "order": 7,
+          "reminderAt": "2099-02-02T10:00:00+08:00"
+        },
+        {
+          "text": "过期提醒（应丢弃并提示）",
+          "done": false,
+          "order": 8,
+          "reminderAt": "2020-01-01T09:00:00+08:00"
+        },
+        {
+          "text": "关联到文件外不存在的纸片（应丢弃并提示）",
+          "done": false,
+          "order": 9,
+          "linkedSourcePaperId": "missing-paper"
+        },
+        {
+          "text": "关联到自己（应丢弃并提示）",
+          "done": false,
+          "order": 10,
+          "linkedSourcePaperId": "case-todo-core"
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-duplicates",
+      "type": "todo",
+      "title": "用例02：重复文本与特殊字符",
+      "show": true,
+      "todos": [
+        {
+          "text": "买牛奶",
+          "done": false,
+          "order": 0
+        },
+        {
+          "text": "买牛奶",
+          "done": true,
+          "order": 1
+        },
+        {
+          "text": "买牛奶",
+          "done": false,
+          "order": 2
+        },
+        {
+          "text": "带 *Markdown* 的 [链接](https://example.com)、#标签、反斜杠 \\、尖括号 <tag>、与 & 符号",
+          "done": false,
+          "order": 3
+        },
+        {
+          "text": "多行待办第一行\n第二行（续行）\n    第三行带四个空格缩进",
+          "done": false,
+          "order": 4
+        },
+        {
+          "text": "表情与全角符号 🚀 ？？！ 【测试】",
+          "done": true,
+          "order": 5
+        },
+        {
+          "text": "",
+          "done": false,
+          "order": 6
+        },
+        {
+          "text": "   ",
+          "done": false,
+          "order": 7
+        },
+        {
+          "text": "重复 order 的待办 A",
+          "done": false,
+          "order": 8
+        },
+        {
+          "text": "重复 order 的待办 B",
+          "done": true,
+          "order": 8
+        },
+        {
+          "text": "较长文本：这是一条用于测试长度处理的待办，包含足够多的中文字符来观察摘要与预览的截断表现，但不会超过 5000 字符上限。",
+          "done": false,
+          "order": 9
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-empty",
+      "type": "todo",
+      "title": "用例03：零待办",
+      "show": true,
+      "todos": []
+    },
+    {
+      "sourceId": "case-todo-null-todos",
+      "type": "todo",
+      "title": "用例04：待办字段为 null",
+      "show": true,
+      "todos": null
+    },
+    {
+      "sourceId": "case-todo-null-items",
+      "type": "todo",
+      "title": "用例05：待办数组含 null 与空文本",
+      "show": true,
+      "todos": [
+        null,
+        {
+          "text": null,
+          "done": false,
+          "order": 0
+        },
+        {
+          "text": "数组中唯一有效的待办",
+          "done": true,
+          "order": 1
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-uppercase",
+      "type": "TODO",
+      "title": "用例06：类型大小写",
+      "show": true,
+      "todos": [
+        {
+          "text": "type 写成大写 TODO 也应被识别",
+          "done": false,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-empty-title",
+      "type": "todo",
+      "title": "",
+      "show": true,
+      "todos": [
+        {
+          "text": "空标题应使用默认标题并给出提示",
+          "done": false,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-long-title",
+      "type": "todo",
+      "title": "用例08：这是一个明显超过标题上限的超级长标题用于测试截断行为以及显示效果",
+      "show": true,
+      "todos": [
+        {
+          "text": "超长标题应在导入时被预截断并提示",
+          "done": false,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "sourceId": "case-todo-control-title",
+      "type": "todo",
+      "title": "用例09：控制\u0001字符\u0002测试",
+      "show": true,
+      "todos": [
+        {
+          "text": "标题中的控制字符应被移除",
+          "done": false,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "sourceId": "case-note-markdown",
+      "type": "note",
+      "title": "用例10：Markdown 笔记",
+      "show": true,
+      "contentAvailable": true,
+      "content": "# 用例：Markdown 笔记\n\n这是用于导入测试的笔记，包含多种 Markdown 结构。\n\n## 行内样式\n\n**加粗**、*斜体*、~~删除线~~、`行内代码`、[链接](https://example.com)。\n\n## 列表\n\n- 无序项一\n- 无序项二\n  - 嵌套项\n1. 有序项一\n2. 有序项二\n\n## 引用\n\n> 引用内容第一行\n> 引用内容第二行\n\n## 图片引用\n\n![普通图片](i:123456)\n![一位数编号](i:7)\n![长编号](i:123456789012)\n\n## 旧版图片占位标记（导入时应提示风险）\n\n[图片缺失: 999]\n\n## 与插件标记同名的正文（重新导出 Markdown 时应被转义）\n\n<!-- papertodo:type=todo sourceId=evil -->\n<!-- papertodo-dataio:v2 type=note sourceId=evil2 -->\n<!-- papertodo-dataio:content-unavailable -->\n\n## 代码块中的标记（不应被当作正文标记）\n\n```md\n<!-- papertodo:type=note sourceId=in-code -->\n```\n\n## 尾部\n\n正文以分隔线结束，回导时应忽略尾部分隔线差异。\n\n---\n"
+    },
+    {
+      "sourceId": "case-note-empty",
+      "type": "note",
+      "title": "用例11：空笔记",
+      "show": true,
+      "contentAvailable": true,
+      "content": ""
+    },
+    {
+      "sourceId": "case-note-whitespace",
+      "type": "note",
+      "title": "用例12：仅空白正文",
+      "show": true,
+      "contentAvailable": true,
+      "content": "   \n\t\n  \n"
+    },
+    {
+      "sourceId": "case-note-unavailable",
+      "type": "note",
+      "title": "用例13：正文不可读取",
+      "show": true,
+      "contentAvailable": false,
+      "content": ""
+    },
+    {
+      "sourceId": "case-note-omitted-field",
+      "type": "note",
+      "title": "用例14：缺少 contentAvailable 字段",
+      "show": true,
+      "content": "新建时可以使用该正文；但若命中更新映射，因缺少 contentAvailable=true 应拒绝清空本地正文。"
+    },
+    {
+      "sourceId": "case-note-null-content",
+      "type": "note",
+      "title": "用例15：content 为 null",
+      "show": true,
+      "contentAvailable": true,
+      "content": null
+    },
+    {
+      "sourceId": "case-note-hidden",
+      "type": "note",
+      "title": "用例16：隐藏笔记",
+      "show": false,
+      "contentAvailable": true,
+      "content": "# 隐藏笔记\n\n导入时若关闭“导入后显示新纸片”，这张纸片应保持隐藏。\n"
+    },
+    {
+      "sourceId": "case-skip-unknown-type",
+      "type": "webpage",
+      "title": "用例17：未知类型（应跳过并提示）",
+      "show": true,
+      "content": "未知类型不会被导入。"
+    },
+    {
+      "sourceId": "case-skip-note-with-todos",
+      "type": "note",
+      "title": "用例18：笔记包含待办（应跳过并提示）",
+      "show": true,
+      "contentAvailable": true,
+      "content": "这张笔记同时带有 todos 字段，应被跳过。",
+      "todos": [
+        {
+          "text": "不应存在的待办",
+          "done": false,
+          "order": 0
+        }
+      ]
+    },
+    {
+      "sourceId": "case-skip-todo-with-content",
+      "type": "todo",
+      "title": "用例19：待办包含笔记正文（应跳过并提示）",
+      "show": true,
+      "content": "这张待办同时带有 content 字段，应被跳过。",
+      "todos": [
+        {
+          "text": "不应存在的待办",
+          "done": false,
+          "order": 0
+        }
+      ]
+    }
+  ]
+}

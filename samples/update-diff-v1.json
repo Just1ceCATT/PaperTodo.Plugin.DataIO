@@ -1,0 +1,88 @@
+{
+  "format": "papertodo.paper-export",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-23T10:00:00+08:00",
+  "source": {
+    "pluginId": "papertodo.dataio.native",
+    "pluginVersion": "1.0.0",
+    "apiVersion": "2.3",
+    "uiLanguage": "zh-CN",
+    "note": "更新 diff 测试第一版：先导入本文件，再导入 update-diff-v2.json。三张纸片使用相同 sourceId。"
+  },
+  "papers": [
+    {
+      "sourceId": "diff-todo-weekly",
+      "type": "todo",
+      "title": "更新测试：周计划",
+      "show": true,
+      "todos": [
+        {
+          "text": "写周报",
+          "done": false,
+          "order": 0
+        },
+        {
+          "text": "整理需求",
+          "done": false,
+          "order": 1
+        },
+        {
+          "text": "代码评审",
+          "done": true,
+          "order": 2
+        },
+        {
+          "text": "归档旧任务",
+          "done": false,
+          "order": 3
+        },
+        {
+          "text": "联系客户",
+          "done": false,
+          "order": 4
+        }
+      ]
+    },
+    {
+      "sourceId": "diff-todo-dup",
+      "type": "todo",
+      "title": "更新测试：购物清单",
+      "show": true,
+      "todos": [
+        {
+          "text": "买牛奶",
+          "done": false,
+          "order": 0
+        },
+        {
+          "text": "买牛奶",
+          "done": true,
+          "order": 1
+        },
+        {
+          "text": "买鸡蛋",
+          "done": false,
+          "order": 2
+        },
+        {
+          "text": "买面包",
+          "done": true,
+          "order": 3
+        },
+        {
+          "text": "买咖啡",
+          "done": false,
+          "order": 4
+        }
+      ]
+    },
+    {
+      "sourceId": "diff-note-plan",
+      "type": "note",
+      "title": "更新测试：方案笔记",
+      "show": true,
+      "contentAvailable": true,
+      "content": "# 更新测试：方案笔记\n\n## 目标\n- 保持现有数据不被误删\n- 覆盖更新时能看到差异\n\n## 步骤\n1. 导入第一版\n2. 编辑第二版并再次导入\n3. 在更新预览中确认差异\n\n## 图片\n![示意图](i:123456)\n\n## 结尾\n这是两个版本都相同的结尾，用于验证差异的上下文显示。\n"
+    }
+  ]
+}
