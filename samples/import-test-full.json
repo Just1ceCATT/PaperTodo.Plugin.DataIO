@@ -1,0 +1,129 @@
+{
+  "format": "papertodo.paper-export",
+  "schemaVersion": 1,
+  "exportedAt": "2026-11-22T10:00:00+08:00",
+  "source": {
+    "pluginId": "papertodo.dataio.native",
+    "pluginVersion": "1.0.0",
+    "apiVersion": "2.3",
+    "uiLanguage": "zh-CN",
+    "note": "手工构造的全功能导入测试文件：提醒、待办关联纸片、待办关联文件/文件夹、图片引用、隐藏纸片。"
+  },
+  "papers": [
+    {
+      "sourceId": "paper-todo-weekly",
+      "type": "todo",
+      "title": "测试：周计划",
+      "show": true,
+      "todos": [
+        {
+          "text": "查看资料笔记（关联纸片 + 未来提醒）",
+          "done": false,
+          "order": 0,
+          "reminderAt": "2026-12-01T09:00:00+08:00",
+          "linkedSourcePaperId": "paper-note-resources"
+        },
+        {
+          "text": "关联到另一张待办纸片",
+          "done": false,
+          "order": 1,
+          "linkedSourcePaperId": "paper-todo-target"
+        },
+        {
+          "text": "打开项目目录（关联文件夹，仅提示不还原）",
+          "done": false,
+          "order": 2,
+          "linkedPath": "Z:\\tool\\PaperTodo-dev",
+          "linkedPathIsDirectory": true
+        },
+        {
+          "text": "已完成事项（带提醒，导入时跳过）",
+          "done": true,
+          "order": 3,
+          "reminderAt": "2026-12-02T10:00:00+08:00"
+        },
+        {
+          "text": "过期提醒（导入时丢弃并提示）",
+          "done": false,
+          "order": 4,
+          "reminderAt": "2026-01-01T09:00:00+08:00"
+        },
+        {
+          "text": "链接到文件外目标（导入时丢弃并提示）",
+          "done": false,
+          "order": 5,
+          "linkedSourcePaperId": "paper-does-not-exist"
+        },
+        {
+          "text": "普通待办（已完成）",
+          "done": true,
+          "order": 6
+        }
+      ]
+    },
+    {
+      "sourceId": "paper-todo-target",
+      "type": "todo",
+      "title": "测试：链接目标纸片",
+      "show": true,
+      "todos": [
+        {
+          "text": "反向链接回周计划",
+          "done": false,
+          "order": 0,
+          "linkedSourcePaperId": "paper-todo-weekly"
+        },
+        {
+          "text": "无链接事项",
+          "done": false,
+          "order": 1
+        }
+      ]
+    },
+    {
+      "sourceId": "paper-todo-filelink",
+      "type": "todo",
+      "title": "测试：关联文件/文件夹（目标存在）",
+      "show": true,
+      "todos": [
+        {
+          "text": "打开 README 文件（文件真实存在）",
+          "done": false,
+          "order": 0,
+          "linkedPath": "Z:\\tool\\PaperTodo.Plugin.DATAIO\\README.md",
+          "linkedPathIsDirectory": false
+        },
+        {
+          "text": "打开示例目录（文件夹真实存在）",
+          "done": false,
+          "order": 1,
+          "linkedPath": "Z:\\tool\\PaperTodo.Plugin.DATAIO\\samples",
+          "linkedPathIsDirectory": true
+        },
+        {
+          "text": "打开不存在的文件（用于对比）",
+          "done": false,
+          "order": 2,
+          "linkedPath": "Z:\\tool\\PaperTodo.Plugin.DATAIO\\不存在的文件.txt",
+          "linkedPathIsDirectory": false
+        }
+      ]
+    },
+    {
+      "sourceId": "paper-note-resources",
+      "type": "note",
+      "title": "测试：资料笔记（含图片）",
+      "show": true,
+      "contentAvailable": true,
+      "content": "# 参考资料\n\n这是一个用于导入测试的 Markdown 笔记。\n\n## 图片引用\n\n![image|100%](i:123456)\n\n![示意图](i:654321)\n\n## 列表\n\n- 第一项\n- 第二项\n\n> 引用块\n\n```csharp\nConsole.WriteLine(\"Hello PaperTodo\");\n```\n"
+    },
+    {
+      "sourceId": "paper-note-hidden",
+      "type": "note",
+      "title": "测试：隐藏笔记",
+      "show": false,
+      "contentAvailable": true,
+      "content": "# 隐藏笔记\n\n这张纸片在文件中标记为不可见。\n\n导入时若关闭“导入后显示新纸片”，它应保持隐藏。\n"
+    }
+  ]
+}
