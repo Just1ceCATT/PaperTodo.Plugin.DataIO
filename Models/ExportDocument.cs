@@ -28,7 +28,7 @@ internal sealed class ExportSource
 
 internal sealed class ExportPaper
 {
-    /// <summary>导出时的宿主纸片 ID，仅用于溯源与同一文件内链接还原。</summary>
+    /// <summary>导出时的宿主纸片 ID，仅用于溯源与同一文件内关联纸片还原。</summary>
     public string SourceId { get; set; } = "";
     public string Type { get; set; } = "todo";
     public string Title { get; set; } = "";
@@ -45,7 +45,7 @@ internal sealed class ExportTodo
     public int Order { get; set; }
     public DateTimeOffset? ReminderAt { get; set; }
     public string? LinkedSourcePaperId { get; set; }
-    /// <summary>文件/文件夹路径链接仅作参考，宿主无写入 API。</summary>
+    /// <summary>待办关联的文件/文件夹仅作参考，宿主无写入 API。</summary>
     public string? LinkedPath { get; set; }
     public bool? LinkedPathIsDirectory { get; set; }
 }

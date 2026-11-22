@@ -51,7 +51,7 @@ internal sealed class ExportService
                 PluginVersion = typeof(ExportService).Assembly.GetName().Version?.ToString(3) ?? "1.0.0",
                 ApiVersion = _gateway.Context.ApiVersion,
                 UiLanguage = _gateway.Context.UiLanguage,
-                Note = "sourceId 仅供溯源与同文件内链接还原；导入时宿主生成新 ID，不覆盖现有纸片。"
+                Note = "sourceId 仅供溯源与同文件内关联纸片还原；导入时宿主生成新 ID，不覆盖现有纸片。"
             }
         };
 

@@ -303,16 +303,6 @@ internal sealed class DataIoSession : IPaperBodySession
     private bool IsSelf(PaperSnapshot paper) =>
         string.Equals(paper.Id, _context.PaperId, StringComparison.Ordinal);
 
-    private bool IsNoteProviderAllowed(PaperSnapshot paper)
-    {
-        if (string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        return _settings.IncludePluginPapers;
-    }
-
     private int TodoCount(string paperId) =>
         _todosByPaper.TryGetValue(paperId, out var todos) ? todos.Length : 0;
 
@@ -344,7 +334,7 @@ internal sealed class DataIoSession : IPaperBodySession
             else if (string.Equals(paper.Type, "note", StringComparison.Ordinal))
             {
                 if (!_settings.IncludeNotePapers ||
-                    !IsNoteProviderAllowed(paper) ||
+                    !string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal) ||
                     !_gateway.Can(PaperTodoPermissionNames.NotesRead))
                 {
                     continue;
@@ -440,8 +430,6 @@ internal sealed class DataIoSession : IPaperBodySession
         foreach (var paper in GetExportCandidates(null))
         {
             var isNote = string.Equals(paper.Type, "note", StringComparison.Ordinal);
-            var isPluginProvider =
-                !string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal);
 
             rows.Add(new PaperRowItem
             {
@@ -450,13 +438,10 @@ internal sealed class DataIoSession : IPaperBodySession
                 Type = isNote ? "note" : "todo",
                 TypeLabel = isNote ? "笔记" : "待办",
                 Summary = isNote
-                    ? (isPluginProvider ? "其他插件纸片" : "内置 Markdown 笔记")
+                    ? "内置 Markdown 笔记"
                     : (TodoCount(paper.Id) == 0
                         ? "暂无待办"
                         : $"{TodoCount(paper.Id)} 项待办 · {DoneCount(paper.Id)} 项已完成"),
-                Warning = isNote && isPluginProvider
-                    ? "正文由其他插件提供，导入后为空笔记"
-                    : "",
                 CanSelect = true
             });
         }
@@ -669,7 +654,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
         {
-            parts.Add(todo.LinkedPathIsDirectory == true ? "文件夹链接" : "文件链接");
+            parts.Add(todo.LinkedPathIsDirectory == true ? "关联文件夹" : "关联文件");
         }
 
         return string.Join(" · ", parts);
@@ -690,7 +675,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (!string.IsNullOrWhiteSpace(todo.LinkedPath))
         {
-            parts.Add(todo.LinkedPathIsDirectory == true ? "文件夹链接" : "文件链接");
+            parts.Add(todo.LinkedPathIsDirectory == true ? "关联文件夹" : "关联文件");
         }
 
         return string.Join(" · ", parts);
@@ -1200,12 +1185,12 @@ internal sealed class DataIoSession : IPaperBodySession
 
         if (sourcePlan.UnresolvedLinks > 0)
         {
-            problems.Add($"{sourcePlan.UnresolvedLinks} 个纸片链接的目标不在本文件中");
+            problems.Add($"{sourcePlan.UnresolvedLinks} 条待办关联的纸片不在本文件中，导入后会取消关联");
         }
 
         if (sourcePlan.PathLinkCount > 0)
         {
-            problems.Add($"{sourcePlan.PathLinkCount} 条文件/文件夹路径链接");
+            problems.Add($"{sourcePlan.PathLinkCount} 条待办关联的文件或文件夹（导入后无法保留）");
         }
 
         if (sourcePlan.DroppedReminders > 0)
@@ -1241,7 +1226,7 @@ internal sealed class DataIoSession : IPaperBodySession
             ("新增纸片", $"{result.CreatedPapers} 张"),
             ("失败纸片", $"{result.FailedPapers} 张"),
             ("新增待办", $"{result.CreatedTodos} 条"),
-            ("还原链接", $"{result.RestoredLinks} 条"),
+            ("还原关联纸片", $"{result.RestoredLinks} 条"),
             ("还原提醒", $"{result.RestoredReminders} 条")
         };
 

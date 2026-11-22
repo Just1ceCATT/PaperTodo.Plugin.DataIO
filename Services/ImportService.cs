@@ -3,8 +3,8 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 执行导入：第一遍逐纸片创建，第二遍还原顺序、纸片链接与提醒。
-/// 第一遍不把链接和提醒放进初始待办，避免宿主校验失败导致整张纸片创建失败。
+/// 执行导入：第一遍逐纸片创建，第二遍还原顺序、待办关联纸片与提醒。
+/// 第一遍不把关联纸片和提醒放进初始待办，避免宿主校验失败导致整张纸片创建失败。
 /// </summary>
 internal sealed class ImportService
 {
@@ -99,7 +99,7 @@ internal sealed class ImportService
             await HostGateway.YieldAsync();
         }
 
-        // 第二遍：补顺序、链接、提醒。
+        // 第二遍：补顺序、关联纸片、提醒。
         if (!result.StoppedEarly)
         {
             for (var i = 0; i < created.Count; i++)
@@ -195,7 +195,7 @@ internal sealed class ImportService
 
         if (!_gateway.Can(PaperTodoPermissionNames.TodosUpdate))
         {
-            result.Warnings.Add("缺少 todos.update 权限，已跳过顺序、链接和提醒还原。");
+            result.Warnings.Add("缺少 todos.update 权限，已跳过顺序、关联纸片和提醒还原。");
             return;
         }
 
@@ -207,7 +207,7 @@ internal sealed class ImportService
         }
         catch (PaperTodoPluginException ex)
         {
-            result.Warnings.Add($"读取新纸片待办失败，未还原顺序/链接/提醒：{ex.Message}");
+            result.Warnings.Add($"读取新纸片待办失败，未还原顺序/关联纸片/提醒：{ex.Message}");
             return;
         }
 
@@ -274,7 +274,7 @@ internal sealed class ImportService
                 if (!idMap.TryGetValue(original.LinkedSourcePaperId, out var target) ||
                     string.Equals(target, newPaperId, StringComparison.Ordinal))
                 {
-                    result.Warnings.Add($"待办“{Shorten(original.Text)}”的链接目标不在导入文件中，链接已丢弃。");
+                    result.Warnings.Add($"待办“{Shorten(original.Text)}”要关联的纸片不在导入文件中，关联已丢弃。");
                     continue;
                 }
 
@@ -294,12 +294,12 @@ internal sealed class ImportService
                     if (!linksDisabled)
                     {
                         linksDisabled = true;
-                        result.Warnings.Add("宿主已关闭待办-纸片链接，所有链接未还原。");
+                        result.Warnings.Add("宿主已关闭“启用待办关联纸片”，所有关联未还原。");
                     }
                 }
                 catch (PaperTodoPluginException ex)
                 {
-                    result.Warnings.Add($"待办“{Shorten(original.Text)}”的链接未还原：{ex.Message}");
+                    result.Warnings.Add($"待办“{Shorten(original.Text)}”的关联纸片未还原：{ex.Message}");
                 }
             }
         }
@@ -332,12 +332,12 @@ internal sealed class ImportService
             }
         }
 
-        // 路径链接没有写入 API，按纸片汇总一次提示。
+        // 关联文件/文件夹没有写入 API，按纸片汇总一次提示。
         var pathLinks = source.Todos.Count(t => !string.IsNullOrWhiteSpace(t.LinkedPath));
         if (pathLinks > 0)
         {
             result.DroppedPathLinkNotes.Add(
-                $"纸片“{DisplayTitle(importPaper)}”中有 {pathLinks} 条文件/文件夹路径链接无法还原。");
+                $"纸片“{DisplayTitle(importPaper)}”中有 {pathLinks} 条待办关联的文件或文件夹，导入后未保留。");
         }
     }
 

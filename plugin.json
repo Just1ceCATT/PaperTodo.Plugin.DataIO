@@ -63,14 +63,6 @@
       "category": "导出"
     },
     {
-      "id": "includePluginPapers",
-      "type": "boolean",
-      "name": "显示其他插件纸片",
-      "description": "其他插件的正文无法通过逻辑 API 读取；勾选后只导出元数据，导入后会得到空笔记。",
-      "default": false,
-      "category": "导出"
-    },
-    {
       "id": "importShowCreated",
       "type": "boolean",
       "name": "导入后显示新纸片",
@@ -97,8 +89,8 @@
     {
       "id": "restoreLinks",
       "type": "boolean",
-      "name": "还原纸片链接",
-      "description": "只还原同一导入文件内存在的链接目标；文件外目标会被丢弃。",
+      "name": "还原待办关联纸片",
+      "description": "导入后恢复待办与纸片的关联；只还原同一导入文件内存在的关联纸片，文件外的关联会被丢弃。",
       "default": true,
       "category": "导入"
     },

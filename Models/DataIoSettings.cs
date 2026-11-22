@@ -10,7 +10,6 @@ internal sealed class DataIoSettings
     public bool AutoStart { get; init; } = true;
     public bool IncludeTodoPapers { get; init; } = true;
     public bool IncludeNotePapers { get; init; } = true;
-    public bool IncludePluginPapers { get; init; }
     public bool ImportShowCreated { get; init; } = true;
     public bool ConfirmBeforeImport { get; init; } = true;
     public bool RestoreOrder { get; init; } = true;
@@ -38,7 +37,6 @@ internal sealed class DataIoSettings
                 AutoStart = ReadBool(root, "autoStart", true),
                 IncludeTodoPapers = ReadBool(root, "includeTodoPapers", true),
                 IncludeNotePapers = ReadBool(root, "includeNotePapers", true),
-                IncludePluginPapers = ReadBool(root, "includePluginPapers", false),
                 ImportShowCreated = ReadBool(root, "importShowCreated", true),
                 ConfirmBeforeImport = ReadBool(root, "confirmBeforeImport", true),
                 RestoreOrder = ReadBool(root, "restoreOrder", true),
