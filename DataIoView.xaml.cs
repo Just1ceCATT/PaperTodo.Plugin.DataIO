@@ -94,7 +94,7 @@ public partial class DataIoView : UserControl
 
         WireEvents();
         ApplyModeVisuals(DataIoMode.Export);
-        ApplyExpansion();
+        ApplyExpansionImmediate();
     }
 
     // ---------- 模式 ----------
@@ -166,7 +166,7 @@ public partial class DataIoView : UserControl
         _notesExpanded = false;
         _todosExpanded = false;
         CancelHover();
-        ApplyExpansion();
+        ApplyExpansionImmediate();
     }
 
     // ---------- 展开 / 收起 ----------
@@ -174,29 +174,65 @@ public partial class DataIoView : UserControl
     private void OnNotesRowClick(object sender, MouseButtonEventArgs e)
     {
         _notesExpanded = !_notesExpanded;
-        ApplyExpansion();
+        // 只动画当前点击的面板，避免另一项被重复播放动画。
+        AnimateNotes();
     }
 
     private void OnTodosRowClick(object sender, MouseButtonEventArgs e)
     {
         _todosExpanded = !_todosExpanded;
-        ApplyExpansion();
+        AnimateTodos();
     }
 
-    private void ApplyExpansion()
-    {
+    private void AnimateNotes() =>
         AnimatePanel(
             NotesPanel,
             NotesContent,
             NotesChevronRotate,
             _notesExpanded,
             ++_notesAnimToken);
+
+    private void AnimateTodos() =>
         AnimatePanel(
             TodosPanel,
             TodosContent,
             TodosChevronRotate,
             _todosExpanded,
             ++_todosAnimToken);
+
+    /// <summary>无动画地同步两个面板状态，用于初始化与模式切换。</summary>
+    private void ApplyExpansionImmediate()
+    {
+        ApplyPanelState(NotesPanel, NotesChevronRotate, _notesExpanded, ref _notesAnimToken);
+        ApplyPanelState(TodosPanel, TodosChevronRotate, _todosExpanded, ref _todosAnimToken);
+    }
+
+    private static void ApplyPanelState(
+        Border panel,
+        RotateTransform rotate,
+        bool expand,
+        ref int token)
+    {
+        // 让仍在播放的旧动画失效，并清除动画对属性的占用。
+        token++;
+        panel.Tag = token;
+        panel.BeginAnimation(HeightProperty, null);
+        panel.BeginAnimation(OpacityProperty, null);
+        rotate.BeginAnimation(RotateTransform.AngleProperty, null);
+
+        panel.Opacity = 1;
+        if (expand)
+        {
+            panel.Height = double.NaN;
+            panel.Visibility = Visibility.Visible;
+            rotate.Angle = 90;
+        }
+        else
+        {
+            panel.Height = 0;
+            panel.Visibility = Visibility.Collapsed;
+            rotate.Angle = 0;
+        }
     }
 
     /// <summary>高度 + 透明度 + 箭头旋转的组合动画，展开和收起都平滑过渡。</summary>
@@ -294,11 +330,17 @@ public partial class DataIoView : UserControl
         TodosRow.IsEnabled = todosEnabled;
         TodosRow.Opacity = todosEnabled ? 1.0 : 0.45;
 
-        if ((!notesEnabled && _notesExpanded) || (!todosEnabled && _todosExpanded))
+        // 只在对应项被禁用且原本展开时收起它，不影响另一项。
+        if (!notesEnabled && _notesExpanded)
         {
-            _notesExpanded = _notesExpanded && notesEnabled;
-            _todosExpanded = _todosExpanded && todosEnabled;
-            ApplyExpansion();
+            _notesExpanded = false;
+            AnimateNotes();
+        }
+
+        if (!todosEnabled && _todosExpanded)
+        {
+            _todosExpanded = false;
+            AnimateTodos();
         }
     }
 
