@@ -73,12 +73,20 @@ internal sealed class ImportIdentityService
             }
 
             var sourceType = NormalizeType(paper.Source.Type);
-            if (!papersById.TryGetValue(link.LocalPaperId, out var target) ||
+            var target = papersById.GetValueOrDefault(link.LocalPaperId);
+            if (target is null ||
                 !string.Equals(target.Type, sourceType, StringComparison.Ordinal))
             {
-                _state.ImportLinks.Remove(sourceId);
+                // 当前目标已删除或类型不符：尝试回退到历史副本（例如“新增”后新副本被删除）。
+                target = FindFallback(link, papersById, sourceType);
+                if (target is null)
+                {
+                    _state.ImportLinks.Remove(sourceId);
+                    HasChanges = true;
+                    continue;
+                }
+
                 HasChanges = true;
-                continue;
             }
 
             string fingerprint;
@@ -169,29 +177,94 @@ internal sealed class ImportIdentityService
                 continue;
             }
 
+            _state.ImportLinks.TryGetValue(sourceId, out var previous);
             _state.ImportLinks[sourceId] = new ImportIdentityLink
             {
                 LocalPaperId = localId,
                 Type = type,
                 Title = paper.Source.Title,
                 LocalFingerprint = fingerprint,
-                LastImportedAt = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture)
+                LastImportedAt = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
+                PreviousLocalPaperIds = MergeHistory(
+                    previous?.LocalPaperId,
+                    previous?.PreviousLocalPaperIds,
+                    localId)
             };
             HasChanges = true;
         }
     }
 
-    /// <summary>宿主删除纸片后清理对应映射。</summary>
+    /// <summary>
+    /// 计算新的历史副本列表：目标从旧副本切换到新副本时，把旧副本压入历史；
+    /// 更新同一目标时保持历史不变。
+    /// </summary>
+    internal static List<string> MergeHistory(
+        string? previousTarget,
+        IEnumerable<string>? previousHistory,
+        string newTarget)
+    {
+        var history = previousHistory?.ToList() ?? [];
+
+        if (!string.IsNullOrWhiteSpace(previousTarget) &&
+            !string.Equals(previousTarget, newTarget, StringComparison.Ordinal))
+        {
+            history.RemoveAll(id =>
+                string.IsNullOrWhiteSpace(id) ||
+                string.Equals(id, newTarget, StringComparison.Ordinal) ||
+                string.Equals(id, previousTarget, StringComparison.Ordinal));
+            history.Insert(0, previousTarget);
+            if (history.Count > DataIoState.MaxImportLinkHistory)
+            {
+                history.RemoveRange(
+                    DataIoState.MaxImportLinkHistory,
+                    history.Count - DataIoState.MaxImportLinkHistory);
+            }
+        }
+
+        return history;
+    }
+
+    /// <summary>
+    /// 宿主删除纸片后清理对应映射。若删除的是当前目标，则回退到最近的历史副本，
+    /// 这样“选择新增后删除新副本，再导入同一文件”仍能匹配到原副本并显示差异。
+    /// </summary>
     public void RemoveByLocalPaperId(string paperId)
     {
-        var stale = _state.ImportLinks
-            .Where(pair => string.Equals(pair.Value.LocalPaperId, paperId, StringComparison.Ordinal))
-            .Select(pair => pair.Key)
-            .ToArray();
-        foreach (var sourceId in stale)
+        var staleSources = new List<string>();
+
+        foreach (var (sourceId, link) in _state.ImportLinks)
+        {
+            var history = link.PreviousLocalPaperIds ?? [];
+            if (history.RemoveAll(id => string.Equals(id, paperId, StringComparison.Ordinal)) > 0)
+            {
+                HasChanges = true;
+            }
+
+            if (!string.Equals(link.LocalPaperId, paperId, StringComparison.Ordinal))
+            {
+                link.PreviousLocalPaperIds = history;
+                continue;
+            }
+
+            HasChanges = true;
+            if (history.Count > 0)
+            {
+                // 当前目标被删除：回退到最近一个仍存在的历史副本。
+                link.LocalPaperId = history[0];
+                history.RemoveAt(0);
+                link.PreviousLocalPaperIds = history;
+                // 历史副本的旧指纹未知，留空以避免误报“本地已修改”；下次导入后重新登记。
+                link.LocalFingerprint = "";
+            }
+            else
+            {
+                staleSources.Add(sourceId);
+            }
+        }
+
+        foreach (var sourceId in staleSources)
         {
             _state.ImportLinks.Remove(sourceId);
-            HasChanges = true;
         }
     }
 
@@ -224,6 +297,34 @@ internal sealed class ImportIdentityService
         return note is { ContentAvailable: true }
             ? ComputeNoteFingerprint(note.Content)
             : null;
+    }
+
+    /// <summary>
+    /// 从历史副本中找出最近一个仍存在且类型一致的纸片；命中后把它提升为当前目标。
+    /// 历史副本的旧指纹未知，清空以避免误报“本地已修改”。
+    /// </summary>
+    internal static PaperSnapshot? FindFallback(
+        ImportIdentityLink link,
+        IReadOnlyDictionary<string, PaperSnapshot> papersById,
+        string type)
+    {
+        var history = link.PreviousLocalPaperIds ?? [];
+        while (history.Count > 0)
+        {
+            var candidateId = history[0];
+            history.RemoveAt(0);
+            if (papersById.TryGetValue(candidateId, out var candidate) &&
+                string.Equals(candidate.Type, type, StringComparison.Ordinal))
+            {
+                link.LocalPaperId = candidateId;
+                link.LocalFingerprint = "";
+                link.PreviousLocalPaperIds = history;
+                return candidate;
+            }
+        }
+
+        link.PreviousLocalPaperIds = history;
+        return null;
     }
 
     public static string ComputeNoteFingerprint(string? content) =>

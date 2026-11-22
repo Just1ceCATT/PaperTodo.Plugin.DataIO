@@ -91,6 +91,9 @@ internal sealed class DataIoState
 
     private const int MaxImportLinks = 4096;
 
+    /// <summary>每个 sourceId 保留的历史本地纸片数量上限（用于当前目标被删除后的回退）。</summary>
+    internal const int MaxImportLinkHistory = 8;
+
     public static Dictionary<string, ImportIdentityLink> NormalizeImportLinks(
         Dictionary<string, ImportIdentityLink>? links)
     {
@@ -118,6 +121,12 @@ internal sealed class DataIoState
             link.LocalFingerprint ??= "";
             link.Title ??= "";
             link.LastImportedAt ??= "";
+            link.PreviousLocalPaperIds = (link.PreviousLocalPaperIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id) &&
+                             !string.Equals(id, link.LocalPaperId, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .Take(MaxImportLinkHistory)
+                .ToList();
             normalized[sourceId] = link;
         }
 
@@ -135,4 +144,10 @@ internal sealed class ImportIdentityLink
     /// <summary>上次导入完成后，本地纸片内容的指纹；用于检测用户之后的本地修改。</summary>
     public string LocalFingerprint { get; set; } = "";
     public string LastImportedAt { get; set; } = "";
+
+    /// <summary>
+    /// 同一 sourceId 之前指向过的本地纸片 ID（最近优先）。
+    /// 选择“新增”后映射会改指向新副本；若新副本被删除，可回退到这些历史副本继续显示差异。
+    /// </summary>
+    public List<string> PreviousLocalPaperIds { get; set; } = [];
 }
