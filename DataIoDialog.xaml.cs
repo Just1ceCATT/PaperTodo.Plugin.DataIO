@@ -185,7 +185,7 @@ public partial class DataIoDialog : Window
         {
             card.Children.Add(new TextBlock
             {
-                Text = "本地内容自上次导入后被修改，更新会覆盖这些修改。",
+                Text = "该纸片在导入后被修改过；更新会覆盖本地修改。",
                 FontSize = 11.5 * _scale,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)Resources["DialogWarningBrush"],
