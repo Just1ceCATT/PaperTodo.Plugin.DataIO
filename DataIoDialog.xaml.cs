@@ -266,10 +266,12 @@ public partial class DataIoDialog : Window
                     Width = new GridLength(1, GridUnitType.Star)
                 });
 
+                var isGap = line.Kind == '…';
                 var foreground = (Brush)Resources[line.Kind switch
                 {
                     '+' => "DialogAddedBrush",
                     '-' => "DialogRemovedBrush",
+                    '…' => "DialogGapBrush",
                     _ => "DialogWeakBrush"
                 }];
                 AddCell(row, 0, line.OldLine, mono, foreground);
@@ -281,6 +283,7 @@ public partial class DataIoDialog : Window
                     Text = string.IsNullOrEmpty(line.Text) ? " " : line.Text,
                     FontFamily = mono,
                     FontSize = 11.5 * _scale,
+                    FontStyle = isGap ? FontStyles.Italic : FontStyles.Normal,
                     Foreground = foreground,
                     TextWrapping = TextWrapping.Wrap,
                     VerticalAlignment = VerticalAlignment.Top
@@ -437,6 +440,10 @@ public partial class DataIoDialog : Window
         Resources["DialogAddedBackgroundBrush"] = AlphaBrush(22, addedColor);
         Resources["DialogRemovedBackgroundBrush"] = AlphaBrush(22, removedColor);
         Resources["DialogTransparentBrush"] = Brushes.Transparent;
+        // 省略行提示使用中性灰，避免被误认为警告。
+        Resources["DialogGapBrush"] = MakeBrush(
+            theme.IsDark ? "#8C8C8C" : "#6B6B6B",
+            Color.FromRgb(0x8C, 0x8C, 0x8C));
 
         FontFamily = new FontFamily(string.IsNullOrWhiteSpace(theme.FontFamily)
             ? "Microsoft YaHei UI"
