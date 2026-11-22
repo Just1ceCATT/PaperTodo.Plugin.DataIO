@@ -5,6 +5,7 @@ internal sealed class ImportResult
 {
     public int CreatedPapers { get; set; }
     public int UpdatedPapers { get; set; }
+    public int SkippedPapers { get; set; }
     public int FailedPapers { get; set; }
     public int CreatedTodos { get; set; }
     public int UpdatedTodos { get; set; }
@@ -19,6 +20,7 @@ internal sealed class ImportResult
     public List<string> Warnings { get; } = [];
     public List<ImportFailure> Failures { get; } = [];
     public List<string> DroppedPathLinkNotes { get; } = [];
+    public List<string> SkippedTitles { get; } = [];
 
     /// <summary>非空表示整次导入被中止。</summary>
     public string? FatalError { get; set; }

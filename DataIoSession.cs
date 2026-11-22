@@ -1091,6 +1091,7 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         // 有更新目标时先展示差异，并让用户逐张选择跳过/更新/新增。
+        var skippedTitles = new List<string>();
         var updateCandidates = selected
             .Where(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId))
             .ToList();
@@ -1119,6 +1120,9 @@ internal sealed class DataIoSession : IPaperBodySession
                 switch (action)
                 {
                     case ImportUpdateAction.Skip:
+                        skippedTitles.Add(string.IsNullOrWhiteSpace(paper.Source.Title)
+                            ? "（无标题）"
+                            : paper.Source.Title);
                         break;
                     case ImportUpdateAction.CreateNew:
                         paper.UpdateTargetId = null;
@@ -1135,7 +1139,14 @@ internal sealed class DataIoSession : IPaperBodySession
             selected = kept;
             if (selected.Count == 0)
             {
-                SetStatus("已跳过全部待导入内容。");
+                _view.ShowResultDialog(
+                    "已跳过更新",
+                    new List<(string Label, string Value)>
+                    {
+                        ("跳过纸片", $"{skippedTitles.Count} 张")
+                    },
+                    skippedTitles.Select(title => "· " + title).ToList());
+                SetStatus($"已跳过 {skippedTitles.Count} 张纸片，未导入任何内容。");
                 return;
             }
         }
@@ -1179,6 +1190,9 @@ internal sealed class DataIoSession : IPaperBodySession
                 SaveState();
             }
 
+            result.SkippedPapers = skippedTitles.Count;
+            result.SkippedTitles.AddRange(skippedTitles);
+
             if (imageSummary.HasAny)
             {
                 result.Warnings.Insert(0,
@@ -1188,7 +1202,8 @@ internal sealed class DataIoSession : IPaperBodySession
 
             ShowImportResult(result);
             summary = result.FatalError ??
-                $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，失败 {result.FailedPapers} 张。";
+                $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
+                $"跳过 {result.SkippedPapers} 张，失败 {result.FailedPapers} 张。";
         }
         finally
         {
@@ -1406,6 +1421,11 @@ internal sealed class DataIoSession : IPaperBodySession
             stats.Insert(1, ("更新纸片", $"{result.UpdatedPapers} 张"));
         }
 
+        if (result.SkippedPapers > 0)
+        {
+            stats.Insert(result.UpdatedPapers > 0 ? 2 : 1, ("跳过纸片", $"{result.SkippedPapers} 张"));
+        }
+
         if (result.DeletedTodos > 0)
         {
             stats.Add(("删除待办", $"{result.DeletedTodos} 条"));
@@ -1417,6 +1437,7 @@ internal sealed class DataIoSession : IPaperBodySession
             lines.Add(result.FatalError);
         }
 
+        lines.AddRange(result.SkippedTitles.Select(title => "· 已跳过：" + title));
         lines.AddRange(result.DroppedPathLinkNotes.Select(note => "· " + note));
         lines.AddRange(result.Warnings.Select(warning => "· " + warning));
         lines.AddRange(result.Failures
