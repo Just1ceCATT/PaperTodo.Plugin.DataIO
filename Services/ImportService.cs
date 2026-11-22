@@ -26,31 +26,35 @@ internal sealed class ImportService
     {
         var result = new ImportResult();
 
-        if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
-        {
-            result.FatalError = "缺少 papers.create 权限，无法创建纸片。";
-            return result;
-        }
-
-        int existingCount;
-        try
-        {
-            var existing = await _gateway.OnUiAsync(() => _gateway.Context.Workspace.ListPapers());
-            existingCount = existing.Count;
-        }
-        catch (PaperTodoPluginException ex)
-        {
-            result.FatalError = $"读取现有纸片失败：{ex.Message}";
-            return result;
-        }
-
+        // 纯更新不需要 papers.create；只有确实要新建纸片时才要求该权限并做数量预检。
         var newPaperCount = plan.Papers.Count(
             paper => string.IsNullOrWhiteSpace(paper.UpdateTargetId));
-        if (existingCount + newPaperCount > MaxPapers)
+        if (newPaperCount > 0)
         {
-            result.FatalError =
-                $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过宿主 {MaxPapers} 张上限。";
-            return result;
+            if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
+            {
+                result.FatalError = "缺少 papers.create 权限，无法新建纸片；如需仅更新已导入纸片，请取消勾选新纸片。";
+                return result;
+            }
+
+            int existingCount;
+            try
+            {
+                var existing = await _gateway.OnUiAsync(() => _gateway.Context.Workspace.ListPapers());
+                existingCount = existing.Count;
+            }
+            catch (PaperTodoPluginException ex)
+            {
+                result.FatalError = $"读取现有纸片失败：{ex.Message}";
+                return result;
+            }
+
+            if (existingCount + newPaperCount > MaxPapers)
+            {
+                result.FatalError =
+                    $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过宿主 {MaxPapers} 张上限。";
+                return result;
+            }
         }
 
         var idMap = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -218,7 +222,7 @@ internal sealed class ImportService
 
         var current = await TryGetNoteAsync(targetId);
         if (current is { ContentAvailable: true } &&
-            ContentEquivalent(current.Content, source.Content))
+            MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
         {
             // 正文等价（忽略行尾空行与末尾分隔线）时不写回，
             // 避免 Markdown 往返产生的规范化差异被持久化。
@@ -359,46 +363,6 @@ internal sealed class ImportService
         {
             return null;
         }
-    }
-
-    /// <summary>
-    /// 忽略行尾空行与末尾分隔线的正文等价比较。
-    /// Markdown 往返会剥离末尾的 --- 分隔线，等价内容不应再写回本地。
-    /// </summary>
-    private static bool ContentEquivalent(string? local, string? incoming)
-    {
-        static string Normalize(string? text)
-        {
-            var lines = (text ?? "")
-                .Replace("\r\n", "\n", StringComparison.Ordinal)
-                .Replace('\r', '\n')
-                .Split('\n')
-                .ToList();
-
-            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-            {
-                lines.RemoveAt(lines.Count - 1);
-            }
-
-            if (lines.Count > 0 && IsSeparatorLine(lines[^1]))
-            {
-                lines.RemoveAt(lines.Count - 1);
-                while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-                {
-                    lines.RemoveAt(lines.Count - 1);
-                }
-            }
-
-            return string.Join("\n", lines);
-        }
-
-        return string.Equals(Normalize(local), Normalize(incoming), StringComparison.Ordinal);
-    }
-
-    private static bool IsSeparatorLine(string line)
-    {
-        var trimmed = line.Trim();
-        return trimmed.Length >= 3 && trimmed.All(character => character == '-');
     }
 
     private async Task<string> CreateOneAsync(ImportPaper importPaper, DataIoSettings settings, ImportResult result)

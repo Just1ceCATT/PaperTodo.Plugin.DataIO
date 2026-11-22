@@ -8,7 +8,7 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static partial class ImageReferenceScanner
 {
-    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{3,8}\s*\)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{1,12}\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferencePattern();
 
     [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:(\d{3,8})\s*\)", RegexOptions.CultureInvariant)]

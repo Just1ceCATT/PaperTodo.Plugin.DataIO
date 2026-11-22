@@ -32,8 +32,8 @@ internal static class ImportPlanParser
             return new ImportPlan { FatalError = "Markdown 文件为空。" };
         }
 
-        var document = MarkdownImportParser.Parse(markdown, path);
-        var plan = Parse(JsonSerializer.Serialize(document, ExportJson.Options));
+        // Markdown 解析结果直接走同一套校验，不再先序列化成 JSON 再解析。
+        var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path));
         if (plan.FatalError == null)
         {
             plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
@@ -44,8 +44,6 @@ internal static class ImportPlanParser
 
     public static ImportPlan Parse(string json)
     {
-        var plan = new ImportPlan();
-
         ExportDocument? document;
         try
         {
@@ -54,20 +52,29 @@ internal static class ImportPlanParser
         catch (JsonException)
         {
             // 不向用户暴露底层解析器的英文错误；直接说明可能原因与处理方式。
-            plan.FatalError =
-                "无法读取该文件：内容不是有效的 JSON。\n"
-                + "请选择由本插件导出的 .json 文件；如果是 Markdown 笔记，请确认文件扩展名为 .md 后重新导入。";
-            return plan;
+            return new ImportPlan
+            {
+                FatalError =
+                    "无法读取该文件：内容不是有效的 JSON。\n"
+                    + "请选择由本插件导出的 .json 文件；如果是 Markdown 笔记，请确认文件扩展名为 .md 后重新导入。"
+            };
         }
 
         if (document is null)
         {
-            plan.FatalError = "文件内容为空。";
-            return plan;
+            return new ImportPlan { FatalError = "文件内容为空。" };
         }
 
-        // 显式 null 的 papers 视为空列表，避免后续 NullReferenceException。
-        document.Papers ??= [];
+        return ParseDocument(document);
+    }
+
+    /// <summary>校验内存中的导出文档并生成导入计划（JSON 与 Markdown 共用）。</summary>
+    private static ImportPlan ParseDocument(ExportDocument document)
+    {
+        var plan = new ImportPlan();
+
+        // 显式 null 或数组内混入 null 都要过滤，避免后续访问元素时抛空引用。
+        document.Papers = document.Papers?.OfType<ExportPaper>().ToList() ?? [];
 
         if (!string.Equals(document.Format, ExportDocument.FormatName, StringComparison.OrdinalIgnoreCase))
         {
@@ -118,6 +125,13 @@ internal static class ImportPlanParser
         foreach (var source in document.Papers)
         {
             var type = (source.Type ?? "").Trim().ToLowerInvariant();
+
+            // 只保留结构完整的待办条目，并把显式 null 文本归一为空串。
+            source.Todos = source.Todos?.OfType<ExportTodo>().ToList();
+            foreach (var todo in source.Todos ?? [])
+            {
+                todo.Text ??= "";
+            }
 
             if (type is not ("todo" or "note"))
             {
@@ -223,10 +237,6 @@ internal static class ImportPlanParser
         if (plan.Papers.Count == 0)
         {
             plan.FatalError = "文件中没有可导入的纸片。";
-        }
-        else if (plan.Papers.Count + 0 > MaxPapers)
-        {
-            plan.FatalError = $"可导入纸片超过 {MaxPapers} 张上限。";
         }
 
         if (plan.LossyImageNotes > 0)
