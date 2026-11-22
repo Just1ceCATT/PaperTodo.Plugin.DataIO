@@ -97,7 +97,6 @@
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
-            <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <CheckBox Grid.Column="0"
                     Margin="0,0,10,0"
@@ -121,26 +120,29 @@
                        Foreground="{DynamicResource DataIoWarningBrush}"
                        Visibility="{Binding WarningVisibility}" />
           </StackPanel>
-          <Border Grid.Column="2"
-                  Margin="8,0,0,0"
-                  Padding="6,2"
-                  CornerRadius="4"
-                  VerticalAlignment="Top"
-                  Background="{DynamicResource DataIoAccentSurfaceBrush}">
-            <TextBlock Text="{Binding TypeLabel}"
-                       FontSize="{DynamicResource DataIoWeakFontSize}"
-                       Foreground="{DynamicResource DataIoAccentBrush}" />
-          </Border>
-          <Button Grid.Column="3"
-                  Margin="6,0,0,0"
-                  VerticalAlignment="Top"
-                  Style="{StaticResource RowIconButton}"
-                  Click="OnPreviewRowClick"
-                  ToolTip="预览正文">
-            <TextBlock Text="&#xE7B3;"
-                       FontFamily="{DynamicResource DataIoIconFontFamily}"
-                       FontSize="13" />
-          </Button>
+          <!-- 类型标签与预览按钮同处一个水平容器，标签在按钮高度内居中，避免错位 -->
+          <StackPanel Grid.Column="2"
+                      Orientation="Horizontal"
+                      VerticalAlignment="Top">
+            <Border Margin="8,0,0,0"
+                    Padding="7,2"
+                    CornerRadius="4"
+                    VerticalAlignment="Center"
+                    Background="{DynamicResource DataIoAccentSurfaceBrush}">
+              <TextBlock Text="{Binding TypeLabel}"
+                         FontSize="{DynamicResource DataIoWeakFontSize}"
+                         Foreground="{DynamicResource DataIoAccentBrush}" />
+            </Border>
+            <Button Margin="8,0,0,0"
+                    VerticalAlignment="Top"
+                    Style="{StaticResource RowIconButton}"
+                    Click="OnPreviewRowClick"
+                    ToolTip="预览正文">
+              <TextBlock Text="&#xE7B3;"
+                         FontFamily="{DynamicResource DataIoIconFontFamily}"
+                         FontSize="13" />
+            </Button>
+          </StackPanel>
         </Grid>
       </Border>
     </DataTemplate>
