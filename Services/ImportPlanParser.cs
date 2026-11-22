@@ -51,9 +51,12 @@ internal static class ImportPlanParser
         {
             document = JsonSerializer.Deserialize<ExportDocument>(json, ExportJson.Options);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            plan.FatalError = $"不是有效的 JSON 文件：{ex.Message}";
+            // 不向用户暴露底层解析器的英文错误；直接说明可能原因与处理方式。
+            plan.FatalError =
+                "无法读取该文件：内容不是有效的 JSON。\n"
+                + "请选择由本插件导出的 .json 文件；如果是 Markdown 笔记，请确认文件扩展名为 .md 后重新导入。";
             return plan;
         }
 
@@ -68,7 +71,9 @@ internal static class ImportPlanParser
 
         if (!string.Equals(document.Format, ExportDocument.FormatName, StringComparison.OrdinalIgnoreCase))
         {
-            plan.FatalError = "不是 PaperTodo 数据导入导出插件生成的文件（format 不匹配）。";
+            plan.FatalError =
+                "该文件不是本插件导出的数据。\n"
+                + "请确认选择的是通过“导出数据”生成的 JSON 文件，且文件内容未被其他程序改写。";
             return plan;
         }
 
@@ -198,6 +203,14 @@ internal static class ImportPlanParser
                     plan.NotesWithImages++;
                     plan.ImageReferenceCount += imageReferences;
                 }
+
+                // 旧版 Markdown 导出会把图片引用替换为缺失标记；识别出来以便在更新时拦截。
+                if (ImageReferenceScanner.ContainsMissingLabel(
+                        source.Content,
+                        MarkdownExportService.MissingImageLabel))
+                {
+                    plan.LossyImageNotes++;
+                }
             }
 
             plan.Papers.Add(new ImportPaper
@@ -214,6 +227,13 @@ internal static class ImportPlanParser
         else if (plan.Papers.Count + 0 > MaxPapers)
         {
             plan.FatalError = $"可导入纸片超过 {MaxPapers} 张上限。";
+        }
+
+        if (plan.LossyImageNotes > 0)
+        {
+            plan.Warnings.Add(
+                $"{plan.LossyImageNotes} 张笔记的正文含“图片缺失”标记（旧版 Markdown 导出的结果）。" +
+                "更新这些纸片会覆盖本地图片引用，已禁止更新，建议改用 JSON 文件或选择新建。");
         }
 
         return plan;

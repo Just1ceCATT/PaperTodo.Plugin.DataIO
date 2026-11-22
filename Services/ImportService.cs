@@ -56,86 +56,91 @@ internal sealed class ImportService
         var idMap = new Dictionary<string, string>(StringComparer.Ordinal);
         var processed = new List<(ImportPaper Paper, string LocalId, bool Created)>();
 
-        // 第一遍：逐张新建或更新纸片。
-        for (var i = 0; i < plan.Papers.Count; i++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var importPaper = plan.Papers[i];
-            _progress?.Report($"正在导入 {i + 1}/{plan.Papers.Count}：{DisplayTitle(importPaper)}");
-
-            try
-            {
-                var createdNow = string.IsNullOrWhiteSpace(importPaper.UpdateTargetId);
-                string localId;
-                if (createdNow)
-                {
-                    localId = await CreateOneAsync(importPaper, settings, result);
-                }
-                else
-                {
-                    (localId, createdNow) = await UpdateOneAsync(
-                        importPaper,
-                        importPaper.UpdateTargetId!,
-                        settings,
-                        result,
-                        cancellationToken);
-                }
-
-                processed.Add((importPaper, localId, createdNow));
-                if (createdNow)
-                {
-                    result.CreatedPapers++;
-                    result.CreatedTodos += importPaper.Source.Todos?.Count ?? 0;
-                }
-                else
-                {
-                    result.UpdatedPapers++;
-                    result.UpdatedTodos += importPaper.Source.Todos?.Count ?? 0;
-                }
-
-                if (!string.IsNullOrWhiteSpace(importPaper.Source.SourceId))
-                {
-                    idMap[importPaper.Source.SourceId] = localId;
-                    result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (PaperTodoPluginException ex) when (IsFatal(ex.Code))
-            {
-                result.FailedPapers++;
-                result.Failures.Add(Failure(i, importPaper, ex));
-                result.StoppedEarly = true;
-                result.FatalError = $"导入被宿主中止（{ex.Code}）：{ex.Message}";
-                break;
-            }
-            catch (PaperTodoPluginException ex)
-            {
-                result.FailedPapers++;
-                result.Failures.Add(Failure(i, importPaper, ex));
-            }
-            catch (Exception ex)
-            {
-                result.FailedPapers++;
-                result.Failures.Add(new ImportFailure(i + 1, DisplayTitle(importPaper), importPaper.Source.Type, "unknown", ex.Message));
-            }
-
-            await HostGateway.YieldAsync();
-        }
-
-        // 第二遍：补顺序、关联纸片、提醒。
-        if (!result.StoppedEarly)
-        {
-            for (var i = 0; i < processed.Count; i++)
+            // 第一遍：逐张新建或更新纸片。
+            for (var i = 0; i < plan.Papers.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var (paper, localId, _) = processed[i];
-                _progress?.Report($"正在还原 {i + 1}/{processed.Count}：{DisplayTitle(paper)}");
-                await RepairAsync(paper, localId, settings, idMap, result, cancellationToken);
+                var importPaper = plan.Papers[i];
+                _progress?.Report($"正在导入 {i + 1}/{plan.Papers.Count}：{DisplayTitle(importPaper)}");
+
+                try
+                {
+                    var createdNow = string.IsNullOrWhiteSpace(importPaper.UpdateTargetId);
+                    string localId;
+                    if (createdNow)
+                    {
+                        localId = await CreateOneAsync(importPaper, settings, result);
+                    }
+                    else
+                    {
+                        (localId, createdNow) = await UpdateOneAsync(
+                            importPaper,
+                            importPaper.UpdateTargetId!,
+                            settings,
+                            result,
+                            cancellationToken);
+                    }
+
+                    processed.Add((importPaper, localId, createdNow));
+                    if (createdNow)
+                    {
+                        result.CreatedPapers++;
+                        result.CreatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                    }
+                    else
+                    {
+                        result.UpdatedPapers++;
+                        result.UpdatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(importPaper.Source.SourceId))
+                    {
+                        idMap[importPaper.Source.SourceId] = localId;
+                        result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
+                    }
+                }
+                catch (PaperTodoPluginException ex) when (IsFatal(ex.Code))
+                {
+                    result.FailedPapers++;
+                    result.Failures.Add(Failure(i, importPaper, ex));
+                    result.StoppedEarly = true;
+                    result.FatalError = $"导入被宿主中止（{ex.Code}）：{ex.Message}";
+                    break;
+                }
+                catch (PaperTodoPluginException ex)
+                {
+                    result.FailedPapers++;
+                    result.Failures.Add(Failure(i, importPaper, ex));
+                }
+                catch (Exception ex)
+                {
+                    result.FailedPapers++;
+                    result.Failures.Add(new ImportFailure(i + 1, DisplayTitle(importPaper), importPaper.Source.Type, "unknown", ex.Message));
+                }
+
                 await HostGateway.YieldAsync();
             }
+
+            // 第二遍：补顺序、关联纸片、提醒。
+            if (!result.StoppedEarly)
+            {
+                for (var i = 0; i < processed.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (paper, localId, _) = processed[i];
+                    _progress?.Report($"正在还原 {i + 1}/{processed.Count}：{DisplayTitle(paper)}");
+                    await RepairAsync(paper, localId, settings, idMap, result, cancellationToken);
+                    await HostGateway.YieldAsync();
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 宿主没有事务回滚能力：已完成的部分已经写入，必须如实标记为“部分完成”，
+            // 由调用方提示用户，而不是让取消看起来像什么都没发生。
+            result.Cancelled = true;
         }
 
         return result;
@@ -144,6 +149,7 @@ internal sealed class ImportService
     /// <summary>
     /// 更新身份映射命中的本地纸片：笔记整体替换，待办按文本做增删改。
     /// 标题、类型等宿主不支持的字段保持不变，并在标题不一致时提示。
+    /// 所有可预见的失败（权限、内容不可用、破坏性差异）都在写入前判定，避免部分生效。
     /// </summary>
     private async Task<(string Id, bool Created)> UpdateOneAsync(
         ImportPaper importPaper,
@@ -175,30 +181,73 @@ internal sealed class ImportService
 
         if (type == "note")
         {
-            if (source.ContentAvailable == false)
-            {
-                throw new PaperTodoPluginException("content_unavailable", "文件未包含笔记正文，已跳过更新。");
-            }
+            return await UpdateNoteAsync(importPaper, targetId);
+        }
 
-            if (!_gateway.Can(PaperTodoPermissionNames.NotesReplace))
-            {
-                throw new PaperTodoPluginException("permission_denied", "缺少 notes.replace 权限，无法更新笔记。");
-            }
+        return await UpdateTodoPaperAsync(importPaper, targetId, result, cancellationToken);
+    }
 
-            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
-            {
-                PaperId = targetId,
-                Content = source.Content ?? "",
-                Mode = NoteWriteMode.Replace
-            }));
-            await HostGateway.YieldAsync();
+    /// <summary>更新笔记纸片：整体替换正文，但绝不接受会把本地图片引用写坏的来源。</summary>
+    private async Task<(string Id, bool Created)> UpdateNoteAsync(
+        ImportPaper importPaper,
+        string targetId)
+    {
+        var source = importPaper.Source;
+
+        // 只信任明确标记为“正文可读”的笔记；缺失该字段的文件不能用来清空本地正文。
+        if (source.ContentAvailable != true)
+        {
+            throw new PaperTodoPluginException("content_unavailable", "文件未包含可用的笔记正文，已跳过更新。");
+        }
+
+        if (!_gateway.Can(PaperTodoPermissionNames.NotesReplace))
+        {
+            throw new PaperTodoPluginException("permission_denied", "缺少 notes.replace 权限，无法更新笔记。");
+        }
+
+        // 旧版 Markdown 导出会把图片引用替换为缺失标记，回导更新会永久破坏本地图片引用。
+        if (ImageReferenceScanner.ContainsMissingLabel(
+                source.Content,
+                MarkdownExportService.MissingImageLabel))
+        {
+            throw new PaperTodoPluginException(
+                "lossy_update_blocked",
+                "导入文件中的图片引用已被替换为“图片缺失”标记，更新会破坏本地图片引用，已跳过该纸片；" +
+                "请改用 JSON 文件，或在更新预览中为它选择“新增”。");
+        }
+
+        var current = await TryGetNoteAsync(targetId);
+        if (current is { ContentAvailable: true } &&
+            ContentEquivalent(current.Content, source.Content))
+        {
+            // 正文等价（忽略行尾空行与末尾分隔线）时不写回，
+            // 避免 Markdown 往返产生的规范化差异被持久化。
             return (targetId, false);
         }
 
+        await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
+        {
+            PaperId = targetId,
+            Content = source.Content ?? "",
+            Mode = NoteWriteMode.Replace
+        }));
+        await HostGateway.YieldAsync();
+        return (targetId, false);
+    }
+
+    /// <summary>更新待办纸片：先完整匹配并校验权限，再统一写入，避免“改一半才报失败”。</summary>
+    private async Task<(string Id, bool Created)> UpdateTodoPaperAsync(
+        ImportPaper importPaper,
+        string targetId,
+        ImportResult result,
+        CancellationToken cancellationToken)
+    {
         if (!_gateway.Can(PaperTodoPermissionNames.TodosUpdate))
         {
             throw new PaperTodoPluginException("permission_denied", "缺少 todos.update 权限，无法更新待办纸片。");
         }
+
+        var source = importPaper.Source;
 
         var existing = await _gateway.OnUiAsync(
             () => _gateway.Context.Workspace.ListTodos(targetId, includeBlank: true));
@@ -210,6 +259,8 @@ internal sealed class ImportService
                 group => group.OrderBy(todo => todo.Order).ToList(),
                 StringComparer.Ordinal);
 
+        // 第一阶段只在内存中完成匹配，任何可预见的权限缺失都在写入前抛出。
+        var doneChanges = new List<(string TodoId, bool Done)>();
         var toAppend = new List<ExportTodo>();
         foreach (var original in (source.Todos ?? []).OrderBy(todo => todo.Order))
         {
@@ -235,22 +286,34 @@ internal sealed class ImportService
             candidates.RemoveAt(index);
             if (match.Done != original.Done)
             {
-                await _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
-                {
-                    PaperId = targetId,
-                    TodoId = match.Id,
-                    Done = original.Done
-                }));
+                doneChanges.Add((match.Id, original.Done));
             }
+        }
+
+        var removed = remaining.Values
+            .SelectMany(todos => todos)
+            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+            .ToList();
+
+        if (toAppend.Count > 0 && !_gateway.Can(PaperTodoPermissionNames.TodosAppend))
+        {
+            throw new PaperTodoPluginException("permission_denied", "缺少 todos.append 权限，无法追加待办。");
+        }
+
+        // 第二阶段：权限确认后统一写入。
+        foreach (var (todoId, done) in doneChanges)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
+            {
+                PaperId = targetId,
+                TodoId = todoId,
+                Done = done
+            }));
         }
 
         if (toAppend.Count > 0)
         {
-            if (!_gateway.Can(PaperTodoPermissionNames.TodosAppend))
-            {
-                throw new PaperTodoPluginException("permission_denied", "缺少 todos.append 权限，无法追加待办。");
-            }
-
             await _gateway.OnUiAsync(() => _gateway.Context.Workspace.AppendTodos(new AppendTodosRequest
             {
                 PaperId = targetId,
@@ -260,10 +323,6 @@ internal sealed class ImportService
             }));
         }
 
-        var removed = remaining.Values
-            .SelectMany(todos => todos)
-            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
-            .ToList();
         if (removed.Count > 0)
         {
             if (_gateway.Can(PaperTodoPermissionNames.TodosDelete))
@@ -286,6 +345,60 @@ internal sealed class ImportService
 
         await HostGateway.YieldAsync();
         return (targetId, false);
+    }
+
+    /// <summary>读取本地笔记正文；读取失败时返回 null，后续按普通更新处理。</summary>
+    private async Task<NoteSnapshot?> TryGetNoteAsync(string paperId)
+    {
+        try
+        {
+            return await _gateway.OnUiAsync(
+                () => _gateway.Context.Workspace.GetNote(paperId));
+        }
+        catch (PaperTodoPluginException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 忽略行尾空行与末尾分隔线的正文等价比较。
+    /// Markdown 往返会剥离末尾的 --- 分隔线，等价内容不应再写回本地。
+    /// </summary>
+    private static bool ContentEquivalent(string? local, string? incoming)
+    {
+        static string Normalize(string? text)
+        {
+            var lines = (text ?? "")
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n')
+                .Split('\n')
+                .ToList();
+
+            while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+            {
+                lines.RemoveAt(lines.Count - 1);
+            }
+
+            if (lines.Count > 0 && IsSeparatorLine(lines[^1]))
+            {
+                lines.RemoveAt(lines.Count - 1);
+                while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+                {
+                    lines.RemoveAt(lines.Count - 1);
+                }
+            }
+
+            return string.Join("\n", lines);
+        }
+
+        return string.Equals(Normalize(local), Normalize(incoming), StringComparison.Ordinal);
+    }
+
+    private static bool IsSeparatorLine(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.Length >= 3 && trimmed.All(character => character == '-');
     }
 
     private async Task<string> CreateOneAsync(ImportPaper importPaper, DataIoSettings settings, ImportResult result)

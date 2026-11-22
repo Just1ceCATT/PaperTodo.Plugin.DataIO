@@ -9,7 +9,8 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static class MarkdownExportService
 {
-    private const string MissingImageLabel = "图片缺失";
+    /// <summary>旧版导出使用的图片缺失标记；仍用于识别旧文件，避免更新时破坏图片引用。</summary>
+    public const string MissingImageLabel = "图片缺失";
     private const string AlwaysEscapedMarkdownCharacters = "\\`*_{}[]<>~|&";
 
     public static void Write(string path, ExportDocument document)
@@ -105,9 +106,9 @@ internal static class MarkdownExportService
             return;
         }
 
-        builder.AppendLine(ImageReferenceScanner.ReplaceWithMissingLabel(
-            paper.Content,
-            MissingImageLabel));
+        // 图片引用原样保留：图片本体虽然不在文件中，但引用文本必须完整写入，
+        // 否则把导出的 Markdown 再导入（更新同一纸片）时会用“图片缺失”标记覆盖原正文。
+        builder.AppendLine(paper.Content);
     }
 
     /// <summary>按宿主原生导出规则转义会改变 Markdown 结构的字符。</summary>

@@ -119,6 +119,13 @@ internal sealed class ImportIdentityService
 
                 fingerprint = ComputeNoteFingerprint(note.Content);
                 paper.UpdateDiff = TextDiff.Compute(note.Content, paper.Source.Content ?? "");
+
+                // 本地仍有图片引用、而导入正文已是旧版“图片缺失”标记时，更新会破坏图片引用。
+                paper.TargetImagesAtRisk =
+                    ImageReferenceScanner.Count(note.Content) > 0 &&
+                    ImageReferenceScanner.ContainsMissingLabel(
+                        paper.Source.Content,
+                        MarkdownExportService.MissingImageLabel);
             }
 
             paper.UpdateTargetId = target.Id;
@@ -146,7 +153,17 @@ internal sealed class ImportIdentityService
             }
 
             var type = NormalizeType(paper.Source.Type);
-            var fingerprint = await ComputeLocalFingerprintAsync(localId, type, cancellationToken);
+            string? fingerprint;
+            try
+            {
+                fingerprint = await ComputeLocalFingerprintAsync(localId, type, cancellationToken);
+            }
+            catch (PaperTodoPluginException)
+            {
+                // 单张纸片读取失败不能影响其余映射的登记。
+                continue;
+            }
+
             if (fingerprint == null)
             {
                 continue;

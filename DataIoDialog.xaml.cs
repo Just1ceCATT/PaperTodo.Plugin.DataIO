@@ -127,8 +127,13 @@ public partial class DataIoDialog : Window
 
     internal IReadOnlyDictionary<ImportPaper, ImportUpdateAction> UpdateChoices => _updateChoices;
 
-    /// <summary>更新预览：逐张展示本地内容与导入内容的差异，并让用户选择跳过/更新/新增。</summary>
-    internal void SetUpdatePreview(IReadOnlyList<ImportPaper> papers)
+    /// <summary>
+    /// 更新预览：逐张展示本地内容与导入内容的差异，并让用户选择跳过/更新/新增。
+    /// 默认选择“跳过”，把覆盖本地数据变成必须显式确认的破坏性动作。
+    /// </summary>
+    internal void SetUpdatePreview(
+        IReadOnlyList<ImportPaper> papers,
+        IReadOnlyList<string>? unrecoverable)
     {
         // 固定宽度，差异文本在剩余空间内自动换行。
         Width = 660;
@@ -137,17 +142,57 @@ public partial class DataIoDialog : Window
 
         BodyPanel.Children.Add(new TextBlock
         {
-            Text = "以下纸片将更新本地已有内容，请为每张纸片选择处理方式：",
+            Text = "以下纸片匹配到本地已有内容。默认全部“跳过”，只有显式选择“更新”的纸片才会被覆盖：",
             TextWrapping = TextWrapping.Wrap,
             FontSize = 12.5 * _scale,
             Foreground = (Brush)Resources["DialogWeakBrush"],
             Margin = new Thickness(0, 0, 0, 8)
         });
 
+        if (unrecoverable is { Count: > 0 })
+        {
+            BodyPanel.Children.Add(BuildUnrecoverablePanel(unrecoverable));
+        }
+
         for (var index = 0; index < papers.Count; index++)
         {
             BodyPanel.Children.Add(BuildUpdateCard(papers[index], index));
         }
+    }
+
+    /// <summary>文件层面无法完整还原的内容汇总，与更新卡片一起展示，避免用户只看逐条差异。</summary>
+    private FrameworkElement BuildUnrecoverablePanel(IReadOnlyList<string> lines)
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
+        {
+            Text = "以下内容无法完整还原：",
+            FontSize = 12.0 * _scale,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Resources["DialogWarningBrush"],
+            Margin = new Thickness(0, 0, 0, 3)
+        });
+
+        foreach (var line in lines)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "· " + line,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11.5 * _scale,
+                Foreground = (Brush)Resources["DialogWeakBrush"],
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+        }
+
+        return new Border
+        {
+            Background = TintBrush(16),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 7, 10, 7),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = panel
+        };
     }
 
     private FrameworkElement BuildUpdateCard(ImportPaper paper, int index)
@@ -193,6 +238,18 @@ public partial class DataIoDialog : Window
             });
         }
 
+        if (paper.TargetImagesAtRisk)
+        {
+            card.Children.Add(new TextBlock
+            {
+                Text = "文件中的图片引用已被替换为“图片缺失”标记，更新会破坏本地图片引用；只能选择“跳过”或“新增”。",
+                FontSize = 11.5 * _scale,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Resources["DialogWarningBrush"],
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+        }
+
         var choices = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -220,9 +277,10 @@ public partial class DataIoDialog : Window
             GroupName = $"DataIoUpdateChoice{index}",
             Style = (Style)FindResource("UpdateChoice"),
             FontSize = 12.0 * _scale,
-            IsChecked = action == ImportUpdateAction.Update
+            // 默认“跳过”：覆盖本地数据必须是显式选择。
+            IsChecked = action == ImportUpdateAction.Skip
         };
-        _updateChoices[paper] = ImportUpdateAction.Update;
+        _updateChoices[paper] = ImportUpdateAction.Skip;
         radio.Checked += (_, _) => _updateChoices[paper] = action;
         host.Children.Add(radio);
     }

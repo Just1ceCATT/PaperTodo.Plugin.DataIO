@@ -61,11 +61,15 @@ internal sealed class DataIoSession : IPaperBodySession
         _settings = DataIoSettings.Parse(context.SettingsJson);
 
         // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时自动命名；
-        // 标记持久化后不再覆盖用户手动修改的标题。
+        // 只在原标题为空时改名，绝不覆盖用户已有的标题。标记持久化后不再尝试。
         if (!_state.TitleInitialized)
         {
             _state.TitleInitialized = true;
-            _context.SetTitle(DefaultPaperTitle);
+            if (string.IsNullOrWhiteSpace(TryReadOwnTitle()))
+            {
+                _context.SetTitle(DefaultPaperTitle);
+            }
+
             _context.SaveStateJson(DataIoState.Serialize(_state));
         }
 
@@ -346,6 +350,27 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private bool IsSelf(PaperSnapshot paper) =>
         string.Equals(paper.Id, _context.PaperId, StringComparison.Ordinal);
+
+    /// <summary>
+    /// 读取本纸片当前标题；缺少读取权限或读取失败时返回 null。
+    /// 调用方据此决定是否自动命名——读不到时保持标题不变，避免误覆盖。
+    /// </summary>
+    private string? TryReadOwnTitle()
+    {
+        if (!_context.GrantedPermissions.Contains(PaperTodoPermissionNames.PapersRead))
+        {
+            return null;
+        }
+
+        try
+        {
+            return _context.Workspace.GetPaper(_context.PaperId)?.Title;
+        }
+        catch (PaperTodoPluginException)
+        {
+            return null;
+        }
+    }
 
     private int TodoCount(string paperId) =>
         _todosByPaper.TryGetValue(paperId, out var todos) ? todos.Length : 0;
@@ -984,37 +1009,45 @@ internal sealed class DataIoSession : IPaperBodySession
 
         SetStatus(status);
 
-        if (imageSummary.HasAny || markdown)
+        var stats = new List<(string Label, string Value)>
         {
-            var stats = new List<(string Label, string Value)>
-            {
-                ("导出纸片", $"{document.Papers.Count} 张"),
-                ("导出格式", formatLabel)
-            };
-            if (imageSummary.HasAny)
-            {
-                stats.Add(("含图片笔记", $"{imageSummary.NoteCount} 张"));
-                stats.Add(("图片引用", $"{imageSummary.ReferenceCount} 处"));
-            }
-
-            var details = new List<string> { $"文件：{dialog.FileName}" };
-            if (markdown)
-            {
-                details.Add(
-                    "Markdown 只保留标题、待办勾选状态和笔记正文；" +
-                    "提醒、关联纸片、可见性等 PaperTodo 专有数据不会保留。");
-            }
-
-            if (imageSummary.HasAny)
-            {
-                details.Add(markdown
-                    ? "图片本体未包含在文件中，图片引用已替换为“图片缺失”标记。"
-                    : "图片本体未包含在文件中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
-                      "如果图片 ID 被复用，还可能显示成其他图片。");
-            }
-
-            _view.ShowResultDialog("导出完成", stats, details);
+            ("导出纸片", $"{document.Papers.Count} 张"),
+            ("导出格式", formatLabel)
+        };
+        if (unavailableNotes > 0)
+        {
+            stats.Add(("正文不可读", $"{unavailableNotes} 张"));
         }
+
+        if (imageSummary.HasAny)
+        {
+            stats.Add(("含图片笔记", $"{imageSummary.NoteCount} 张"));
+            stats.Add(("图片引用", $"{imageSummary.ReferenceCount} 处"));
+        }
+
+        // 每次都明确说明导出文件不是完整备份，避免用户把它当作唯一的数据保全手段。
+        var details = new List<string>
+        {
+            $"文件：{dialog.FileName}",
+            "注意：导出文件不是完整备份——图片本体、由其他插件提供正文的笔记、" +
+            "以及待办关联的文件/文件夹路径不会随文件保存。"
+        };
+        if (markdown)
+        {
+            details.Add(
+                "Markdown 只保留标题、待办勾选状态和笔记正文；" +
+                "提醒、关联纸片、可见性等 PaperTodo 专有数据不会保留。");
+        }
+
+        if (imageSummary.HasAny)
+        {
+            details.Add(markdown
+                ? "图片本体未包含在文件中；正文中的图片引用已原样保留，但换设备或原图被清理后将无法显示。"
+                : "图片本体未包含在文件中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
+                  "如果图片 ID 被复用，还可能显示成其他图片。");
+        }
+
+        _view.ShowResultDialog("导出完成", stats, details);
     }
 
     // ---------- 导入 ----------
@@ -1030,7 +1063,11 @@ internal sealed class DataIoSession : IPaperBodySession
         var dialog = new OpenFileDialog
         {
             Title = "选择导入文件",
-            Filter = "PaperTodo 数据 (*.json)|*.json|Markdown 文档 (*.md)|*.md|所有文件 (*.*)|*.*",
+            // 默认过滤器同时列出 JSON 与 Markdown，避免打开对话框后只能看到其中一种。
+            Filter = "PaperTodo 数据 (*.json;*.md)|*.json;*.md|"
+                + "JSON 文件 (*.json)|*.json|"
+                + "Markdown 文档 (*.md)|*.md|"
+                + "所有文件 (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
@@ -1129,7 +1166,9 @@ internal sealed class DataIoSession : IPaperBodySession
         var updatePreviewShown = updateCandidates.Count > 0;
         if (updatePreviewShown)
         {
-            var choices = _view.ShowUpdatePreviewDialog(updateCandidates);
+            var choices = _view.ShowUpdatePreviewDialog(
+                updateCandidates,
+                BuildUnrecoverableSummary(selected, _importPlan));
             if (choices == null)
             {
                 SetStatus("已取消导入。");
@@ -1145,9 +1184,10 @@ internal sealed class DataIoSession : IPaperBodySession
                     continue;
                 }
 
+                // 兜底也按“跳过”处理：覆盖本地数据只能是用户显式选择。
                 var action = choices.TryGetValue(paper, out var chosen)
                     ? chosen
-                    : ImportUpdateAction.Update;
+                    : ImportUpdateAction.Skip;
                 switch (action)
                 {
                     case ImportUpdateAction.Skip:
@@ -1214,8 +1254,18 @@ internal sealed class DataIoSession : IPaperBodySession
             var result = await new ImportService(_gateway, progress)
                 .ImportAsync(filtered, _settings, cts.Token);
 
-            // 导入（含顺序/关联/提醒修复）完成后登记身份映射，供下次导入更新同一批纸片。
-            await _identity.RecordAsync(selected, result.SourceIdToPaperId, CancellationToken.None);
+            try
+            {
+                // 导入（含顺序/关联/提醒修复）完成后登记身份映射，供下次导入更新同一批纸片。
+                await _identity.RecordAsync(selected, result.SourceIdToPaperId, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 映射登记失败不影响已完成的导入，但要让用户知道下次可能产生重复纸片。
+                result.Warnings.Add(
+                    "导入已完成，但未能登记更新映射；下次导入同一文件可能会新建重复纸片。");
+            }
+
             if (_identity.ConsumeChanges())
             {
                 SaveState();
@@ -1233,8 +1283,11 @@ internal sealed class DataIoSession : IPaperBodySession
 
             ShowImportResult(result);
             summary = result.FatalError ??
-                $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
-                $"跳过 {result.SkippedPapers} 张，失败 {result.FailedPapers} 张。";
+                (result.Cancelled
+                    ? $"导入已中断：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
+                      $"失败 {result.FailedPapers} 张；已完成的部分已写入宿主。"
+                    : $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，" +
+                      $"跳过 {result.SkippedPapers} 张，失败 {result.FailedPapers} 张。");
         }
         finally
         {
@@ -1390,6 +1443,31 @@ internal sealed class DataIoSession : IPaperBodySession
             }
         }
 
+        var problems = BuildUnrecoverableSummary(selected, sourcePlan);
+        if (problems.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("以下内容无法完整还原：");
+            lines.AddRange(problems.Select(p => "- " + p));
+        }
+
+        if (sourcePlan.Warnings.Count > 0)
+        {
+            lines.Add("");
+            lines.Add($"另有 {sourcePlan.Warnings.Count} 条预检提示，详见导入结果。");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// 汇总文件层面无法完整还原的内容。导入前确认与更新预览共用同一份说明，
+    /// 保证走更新路径时用户同样能看到图片、关联、提醒等损失提示。
+    /// </summary>
+    private static List<string> BuildUnrecoverableSummary(
+        IReadOnlyList<ImportPaper> selected,
+        ImportPlan sourcePlan)
+    {
         var problems = new List<string>();
         var imageSummary = ImageReferenceSummary.FromNotes(
             selected
@@ -1399,6 +1477,12 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             problems.Add(
                 $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用（图片本体不在文件中）");
+        }
+
+        if (sourcePlan.LossyImageNotes > 0)
+        {
+            problems.Add(
+                $"{sourcePlan.LossyImageNotes} 张笔记含旧版“图片缺失”标记，更新会破坏图片引用（已强制跳过更新）");
         }
 
         if (sourcePlan.UnresolvedLinks > 0)
@@ -1421,20 +1505,7 @@ internal sealed class DataIoSession : IPaperBodySession
             problems.Add($"{sourcePlan.TruncatedTitles} 个超长标题将被截断");
         }
 
-        if (problems.Count > 0)
-        {
-            lines.Add("");
-            lines.Add("以下内容无法完整还原：");
-            lines.AddRange(problems.Select(p => "- " + p));
-        }
-
-        if (sourcePlan.Warnings.Count > 0)
-        {
-            lines.Add("");
-            lines.Add($"另有 {sourcePlan.Warnings.Count} 条预检提示，详见导入结果。");
-        }
-
-        return string.Join(Environment.NewLine, lines);
+        return problems;
     }
 
     private void ShowImportResult(ImportResult result)
@@ -1463,6 +1534,11 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         var lines = new List<string>();
+        if (result.Cancelled)
+        {
+            lines.Add("导入被中断：已完成的部分已写入宿主且不会回滚，请检查纸片内容后再继续。");
+        }
+
         if (result.StoppedEarly && result.FatalError != null)
         {
             lines.Add(result.FatalError);
@@ -1480,11 +1556,13 @@ internal sealed class DataIoSession : IPaperBodySession
             lines.Add("· …更多详情已省略。");
         }
 
-        var title = result.StoppedEarly
-            ? "部分导入完成"
-            : result.FailedPapers > 0
-                ? "导入完成，有失败项"
-                : "导入完成";
+        var title = result.Cancelled
+            ? "导入已中断（部分完成）"
+            : result.StoppedEarly
+                ? "部分导入完成"
+                : result.FailedPapers > 0
+                    ? "导入完成，有失败项"
+                    : "导入完成";
 
         _view.ShowResultDialog(
             title,

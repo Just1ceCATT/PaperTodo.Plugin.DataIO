@@ -28,6 +28,9 @@ internal sealed class ImportResult
     /// <summary>是否因为会话失效、容量上限等严重错误提前停止。</summary>
     public bool StoppedEarly { get; set; }
 
+    /// <summary>导入被取消（例如会话关闭）；已完成的部分已写入宿主，不会回滚。</summary>
+    public bool Cancelled { get; set; }
+
     public bool HasProblems =>
         FailedPapers > 0 || Warnings.Count > 0 || FatalError is not null;
 }

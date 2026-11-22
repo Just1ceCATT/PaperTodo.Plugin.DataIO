@@ -17,7 +17,15 @@ internal static partial class ImageReferenceScanner
     public static int Count(string? markdown) =>
         string.IsNullOrEmpty(markdown) ? 0 : ReferencePattern().Matches(markdown).Count;
 
-    /// <summary>把图片引用替换为缺失标记，供无法携带图片的 Markdown 导出使用。</summary>
+    /// <summary>
+    /// 正文中是否含有“图片缺失”标记。旧版 Markdown 导出会把图片引用替换成该标记，
+    /// 更新这类文件会破坏本地图片引用，导入时需要单独识别并拦截。
+    /// </summary>
+    public static bool ContainsMissingLabel(string? markdown, string label) =>
+        !string.IsNullOrEmpty(markdown) &&
+        markdown.Contains($"[{label}:", StringComparison.Ordinal);
+
+    /// <summary>把图片引用替换为缺失标记（保留给旧版兼容与测试使用）。</summary>
     public static string ReplaceWithMissingLabel(string? markdown, string label) =>
         string.IsNullOrEmpty(markdown)
             ? markdown ?? ""

@@ -1027,9 +1027,13 @@ public partial class DataIoView : UserControl
         return dialog.ShowModal(Window.GetWindow(this)) == true;
     }
 
-    /// <summary>展示更新差异并收集每张纸片的处理方式；返回 null 表示取消导入。</summary>
+    /// <summary>
+    /// 展示更新差异并收集每张纸片的处理方式；unrecoverable 为文件层面无法完整还原的内容。
+    /// 返回 null 表示取消导入。
+    /// </summary>
     internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
-        IReadOnlyList<ImportPaper> papers)
+        IReadOnlyList<ImportPaper> papers,
+        IReadOnlyList<string>? unrecoverable)
     {
         var dialog = new DataIoDialog(
             CurrentTheme,
@@ -1037,7 +1041,7 @@ public partial class DataIoView : UserControl
             "更新预览",
             "继续导入",
             "取消");
-        dialog.SetUpdatePreview(papers);
+        dialog.SetUpdatePreview(papers, unrecoverable);
         if (dialog.ShowModal(Window.GetWindow(this)) != true)
         {
             return null;

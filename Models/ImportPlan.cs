@@ -15,6 +15,9 @@ internal sealed class ImportPlan
     public int NotesWithImages { get; set; }
     public int ImageReferenceCount { get; set; }
 
+    /// <summary>正文含“图片缺失”标记的笔记张数（通常来自旧版 Markdown 导出）。</summary>
+    public int LossyImageNotes { get; set; }
+
     /// <summary>非空表示文件整体不可导入。</summary>
     public string? FatalError { get; set; }
 
@@ -34,6 +37,12 @@ internal sealed class ImportPaper
 
     /// <summary>命中的本地纸片自上次导入后被修改过。</summary>
     public bool TargetLocallyModified { get; set; }
+
+    /// <summary>
+    /// 导入正文含旧版“图片缺失”标记，而本地纸片仍含有图片引用。
+    /// 此时更新会用标记文本覆盖本地图片引用，必须阻止。
+    /// </summary>
+    public bool TargetImagesAtRisk { get; set; }
 
     /// <summary>本地现有内容与导入内容的差异，供更新预览展示。</summary>
     public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
