@@ -4,10 +4,17 @@ namespace PaperTodo.Plugin.DataIo;
 internal sealed class ImportResult
 {
     public int CreatedPapers { get; set; }
+    public int UpdatedPapers { get; set; }
     public int FailedPapers { get; set; }
     public int CreatedTodos { get; set; }
+    public int UpdatedTodos { get; set; }
+    public int DeletedTodos { get; set; }
     public int RestoredLinks { get; set; }
     public int RestoredReminders { get; set; }
+
+    /// <summary>成功处理的 sourceId → 本地纸片 ID，用于导入后更新身份映射。</summary>
+    public Dictionary<string, string> SourceIdToPaperId { get; } =
+        new(StringComparer.Ordinal);
 
     public List<string> Warnings { get; } = [];
     public List<ImportFailure> Failures { get; } = [];

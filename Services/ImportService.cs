@@ -44,17 +44,19 @@ internal sealed class ImportService
             return result;
         }
 
-        if (existingCount + plan.Papers.Count > MaxPapers)
+        var newPaperCount = plan.Papers.Count(
+            paper => string.IsNullOrWhiteSpace(paper.UpdateTargetId));
+        if (existingCount + newPaperCount > MaxPapers)
         {
             result.FatalError =
-                $"当前已有 {existingCount} 张纸片，再导入 {plan.Papers.Count} 张将超过宿主 {MaxPapers} 张上限。";
+                $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过宿主 {MaxPapers} 张上限。";
             return result;
         }
 
         var idMap = new Dictionary<string, string>(StringComparer.Ordinal);
-        var created = new List<(ImportPaper Paper, string NewId)>();
+        var processed = new List<(ImportPaper Paper, string LocalId, bool Created)>();
 
-        // 第一遍：逐张创建纸片。
+        // 第一遍：逐张新建或更新纸片。
         for (var i = 0; i < plan.Papers.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -63,14 +65,38 @@ internal sealed class ImportService
 
             try
             {
-                var newId = await CreateOneAsync(importPaper, settings, result);
-                created.Add((importPaper, newId));
-                result.CreatedPapers++;
-                result.CreatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                var createdNow = string.IsNullOrWhiteSpace(importPaper.UpdateTargetId);
+                string localId;
+                if (createdNow)
+                {
+                    localId = await CreateOneAsync(importPaper, settings, result);
+                }
+                else
+                {
+                    (localId, createdNow) = await UpdateOneAsync(
+                        importPaper,
+                        importPaper.UpdateTargetId!,
+                        settings,
+                        result,
+                        cancellationToken);
+                }
+
+                processed.Add((importPaper, localId, createdNow));
+                if (createdNow)
+                {
+                    result.CreatedPapers++;
+                    result.CreatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                }
+                else
+                {
+                    result.UpdatedPapers++;
+                    result.UpdatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                }
 
                 if (!string.IsNullOrWhiteSpace(importPaper.Source.SourceId))
                 {
-                    idMap[importPaper.Source.SourceId] = newId;
+                    idMap[importPaper.Source.SourceId] = localId;
+                    result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
                 }
             }
             catch (OperationCanceledException)
@@ -102,17 +128,164 @@ internal sealed class ImportService
         // 第二遍：补顺序、关联纸片、提醒。
         if (!result.StoppedEarly)
         {
-            for (var i = 0; i < created.Count; i++)
+            for (var i = 0; i < processed.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var (paper, newId) = created[i];
-                _progress?.Report($"正在还原 {i + 1}/{created.Count}：{DisplayTitle(paper)}");
-                await RepairAsync(paper, newId, settings, idMap, result, cancellationToken);
+                var (paper, localId, _) = processed[i];
+                _progress?.Report($"正在还原 {i + 1}/{processed.Count}：{DisplayTitle(paper)}");
+                await RepairAsync(paper, localId, settings, idMap, result, cancellationToken);
                 await HostGateway.YieldAsync();
             }
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 更新身份映射命中的本地纸片：笔记整体替换，待办按文本做增删改。
+    /// 标题、类型等宿主不支持的字段保持不变，并在标题不一致时提示。
+    /// </summary>
+    private async Task<(string Id, bool Created)> UpdateOneAsync(
+        ImportPaper importPaper,
+        string targetId,
+        DataIoSettings settings,
+        ImportResult result,
+        CancellationToken cancellationToken)
+    {
+        var source = importPaper.Source;
+        var type = (source.Type ?? "").Trim().ToLowerInvariant();
+
+        var target = await _gateway.OnUiAsync(
+            () => _gateway.Context.Workspace.GetPaper(targetId));
+        if (target == null ||
+            !string.Equals(target.Type, type, StringComparison.Ordinal))
+        {
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”的更新目标已失效，已改为新建。");
+            var fallbackId = await CreateOneAsync(importPaper, settings, result);
+            return (fallbackId, true);
+        }
+
+        if (!string.IsNullOrWhiteSpace(importPaper.SafeTitle) &&
+            !string.Equals(target.Title, importPaper.SafeTitle, StringComparison.Ordinal))
+        {
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”的标题与本地不一致，宿主不支持重命名，已保留本地标题。");
+        }
+
+        if (type == "note")
+        {
+            if (source.ContentAvailable == false)
+            {
+                throw new PaperTodoPluginException("content_unavailable", "文件未包含笔记正文，已跳过更新。");
+            }
+
+            if (!_gateway.Can(PaperTodoPermissionNames.NotesReplace))
+            {
+                throw new PaperTodoPluginException("permission_denied", "缺少 notes.replace 权限，无法更新笔记。");
+            }
+
+            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
+            {
+                PaperId = targetId,
+                Content = source.Content ?? "",
+                Mode = NoteWriteMode.Replace
+            }));
+            await HostGateway.YieldAsync();
+            return (targetId, false);
+        }
+
+        if (!_gateway.Can(PaperTodoPermissionNames.TodosUpdate))
+        {
+            throw new PaperTodoPluginException("permission_denied", "缺少 todos.update 权限，无法更新待办纸片。");
+        }
+
+        var existing = await _gateway.OnUiAsync(
+            () => _gateway.Context.Workspace.ListTodos(targetId, includeBlank: true));
+        var remaining = existing
+            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+            .GroupBy(todo => todo.Text, StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(todo => todo.Order).ToList(),
+                StringComparer.Ordinal);
+
+        var toAppend = new List<ExportTodo>();
+        foreach (var original in (source.Todos ?? []).OrderBy(todo => todo.Order))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(original.Text))
+            {
+                continue;
+            }
+
+            if (!remaining.TryGetValue(original.Text, out var candidates) || candidates.Count == 0)
+            {
+                toAppend.Add(original);
+                continue;
+            }
+
+            var index = candidates.FindIndex(todo => todo.Done == original.Done);
+            if (index < 0)
+            {
+                index = 0;
+            }
+
+            var match = candidates[index];
+            candidates.RemoveAt(index);
+            if (match.Done != original.Done)
+            {
+                await _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
+                {
+                    PaperId = targetId,
+                    TodoId = match.Id,
+                    Done = original.Done
+                }));
+            }
+        }
+
+        if (toAppend.Count > 0)
+        {
+            if (!_gateway.Can(PaperTodoPermissionNames.TodosAppend))
+            {
+                throw new PaperTodoPluginException("permission_denied", "缺少 todos.append 权限，无法追加待办。");
+            }
+
+            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.AppendTodos(new AppendTodosRequest
+            {
+                PaperId = targetId,
+                Todos = toAppend
+                    .Select(todo => new TodoCreateItem { Text = todo.Text, Done = todo.Done })
+                    .ToArray()
+            }));
+        }
+
+        var removed = remaining.Values
+            .SelectMany(todos => todos)
+            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+            .ToList();
+        if (removed.Count > 0)
+        {
+            if (_gateway.Can(PaperTodoPermissionNames.TodosDelete))
+            {
+                foreach (var todo in removed)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await _gateway.OnUiAsync(() => _gateway.Context.Workspace.DeleteTodo(
+                        new DeleteTodoRequest { PaperId = targetId, TodoId = todo.Id }));
+                    result.DeletedTodos++;
+                }
+            }
+            else
+            {
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”中有 {removed.Count} 条本地待办已不在文件中，" +
+                    "缺少 todos.delete 权限，未删除。");
+            }
+        }
+
+        await HostGateway.YieldAsync();
+        return (targetId, false);
     }
 
     private async Task<string> CreateOneAsync(ImportPaper importPaper, DataIoSettings settings, ImportResult result)

@@ -17,6 +17,13 @@ internal sealed class DataIoState
     public string Filter { get; set; } = "all";
     public string Search { get; set; } = "";
 
+    /// <summary>
+    /// 导入身份映射：导出文件中的 sourceId → 本工作区纸片 ID。
+    /// 首次导入时登记，后续导入同一来源时用于更新原纸片。
+    /// </summary>
+    public Dictionary<string, ImportIdentityLink> ImportLinks { get; set; } =
+        new(StringComparer.Ordinal);
+
     private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -33,7 +40,9 @@ internal sealed class DataIoState
 
         try
         {
-            return JsonSerializer.Deserialize<DataIoState>(json, Options) ?? new DataIoState();
+            var state = JsonSerializer.Deserialize<DataIoState>(json, Options) ?? new DataIoState();
+            state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
+            return state;
         }
         catch (JsonException)
         {
@@ -51,6 +60,7 @@ internal sealed class DataIoState
         state.LastImportDirectory ??= "";
         state.ExportFormat = NormalizeExportFormat(state.ExportFormat);
         state.Search ??= "";
+        state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
         return Serialize(state);
     }
 
@@ -62,4 +72,51 @@ internal sealed class DataIoState
 
     public static string NormalizeExportFormat(string? value) =>
         value is "markdown" ? "markdown" : "json";
+
+    private const int MaxImportLinks = 4096;
+
+    public static Dictionary<string, ImportIdentityLink> NormalizeImportLinks(
+        Dictionary<string, ImportIdentityLink>? links)
+    {
+        var normalized = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
+        if (links == null)
+        {
+            return normalized;
+        }
+
+        foreach (var (sourceId, link) in links)
+        {
+            if (normalized.Count >= MaxImportLinks)
+            {
+                break;
+            }
+
+            if (string.IsNullOrWhiteSpace(sourceId) ||
+                link == null ||
+                string.IsNullOrWhiteSpace(link.LocalPaperId) ||
+                link.Type is not ("todo" or "note"))
+            {
+                continue;
+            }
+
+            link.LocalFingerprint ??= "";
+            link.Title ??= "";
+            link.LastImportedAt ??= "";
+            normalized[sourceId] = link;
+        }
+
+        return normalized;
+    }
+}
+
+/// <summary>一条导入身份映射，附带用于识别本地修改的指纹。</summary>
+internal sealed class ImportIdentityLink
+{
+    public string LocalPaperId { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string Title { get; set; } = "";
+
+    /// <summary>上次导入完成后，本地纸片内容的指纹；用于检测用户之后的本地修改。</summary>
+    public string LocalFingerprint { get; set; } = "";
+    public string LastImportedAt { get; set; } = "";
 }

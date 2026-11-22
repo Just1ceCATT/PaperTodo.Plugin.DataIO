@@ -11,7 +11,7 @@ namespace PaperTodo.Plugin.DataIo;
 internal static partial class MarkdownImportParser
 {
     [GeneratedRegex(
-        @"^<!--\s*papertodo:type=(todo|note)\s*-->\s*$",
+        @"^<!--\s*papertodo:type=(todo|note)(?:\s+sourceId=(\S+))?\s*-->\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex TypeMarkerPattern();
 
@@ -27,20 +27,23 @@ internal static partial class MarkdownImportParser
             .Replace('\r', '\n')
             .Split('\n');
 
-        var markers = new List<(int Line, string Type)>();
+        var markers = new List<(int Line, string Type, string SourceId)>();
         for (var index = 0; index < lines.Length; index++)
         {
             var match = TypeMarkerPattern().Match(lines[index]);
             if (match.Success)
             {
-                markers.Add((index, match.Groups[1].Value.ToLowerInvariant()));
+                markers.Add((
+                    index,
+                    match.Groups[1].Value.ToLowerInvariant(),
+                    match.Groups[2].Success ? match.Groups[2].Value : ""));
             }
         }
 
         var papers = new List<ExportPaper>();
         if (markers.Count == 0)
         {
-            papers.Add(ParseSection(lines, 0, lines.Length, null, filePath, papers.Count));
+            papers.Add(ParseSection(lines, 0, lines.Length, null, "", filePath, papers.Count));
         }
         else
         {
@@ -53,6 +56,7 @@ internal static partial class MarkdownImportParser
                     start,
                     end,
                     markers[index].Type,
+                    markers[index].SourceId,
                     filePath,
                     papers.Count));
             }
@@ -78,6 +82,7 @@ internal static partial class MarkdownImportParser
         int start,
         int end,
         string? markedType,
+        string sourceId,
         string filePath,
         int paperIndex)
     {
@@ -97,7 +102,8 @@ internal static partial class MarkdownImportParser
         var type = markedType ?? InferType(lines, bodyStart, end);
         var paper = new ExportPaper
         {
-            SourceId = $"md-{paperIndex + 1}",
+            // 只有带来源标记的 Markdown 才参与后续“更新原纸片”的身份匹配。
+            SourceId = sourceId,
             Type = type,
             // Markdown 不保存标题时用文件名兜底，避免导入为无标题纸片。
             Title = string.IsNullOrWhiteSpace(title)

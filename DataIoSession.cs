@@ -20,6 +20,7 @@ internal sealed class DataIoSession : IPaperBodySession
     private readonly DataIoView _view;
     private readonly HostGateway _gateway;
     private readonly ExportService _exportService;
+    private readonly ImportIdentityService _identity;
     private readonly DispatcherTimer _debounce;
     private readonly IDisposable? _subscription;
 
@@ -59,6 +60,7 @@ internal sealed class DataIoSession : IPaperBodySession
         _view = new DataIoView();
         _gateway = new HostGateway(context, _view.Dispatcher);
         _exportService = new ExportService(_gateway);
+        _identity = new ImportIdentityService(_gateway, _state);
         _view.PreviewLoader = LoadPreviewAsync;
 
         _view.ModeChanged += OnModeChanged;
@@ -469,6 +471,18 @@ internal sealed class DataIoSession : IPaperBodySession
             var isNote = string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase);
             var contentLength = paper.Source.Content?.Length ?? 0;
             var todoCount = paper.Source.Todos?.Count ?? 0;
+            var isUpdate = !string.IsNullOrWhiteSpace(paper.UpdateTargetId);
+
+            var warnings = new List<string>();
+            if (isNote && contentLength == 0)
+            {
+                warnings.Add("文件未包含笔记正文");
+            }
+
+            if (paper.TargetLocallyModified)
+            {
+                warnings.Add("本地已修改，更新会覆盖");
+            }
 
             rows.Add(new PaperRowItem
             {
@@ -476,10 +490,11 @@ internal sealed class DataIoSession : IPaperBodySession
                 Title = string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title,
                 Type = isNote ? "note" : "todo",
                 TypeLabel = isNote ? "笔记" : "待办",
-                Summary = isNote
-                    ? (contentLength > 0 ? $"{contentLength} 字" : "空笔记")
-                    : $"{todoCount} 项待办",
-                Warning = isNote && contentLength == 0 ? "文件未包含笔记正文" : "",
+                Summary = (isNote
+                        ? (contentLength > 0 ? $"{contentLength} 字" : "空笔记")
+                        : $"{todoCount} 项待办") +
+                    (isUpdate ? " · 将更新" : ""),
+                Warning = string.Join("；", warnings),
                 CanSelect = true
             });
         }
@@ -1024,14 +1039,34 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
+        // 按首次导入记录解析可更新的本地纸片；解析失败不影响后续新建导入。
+        if (_settings.UpdateImportedPapers)
+        {
+            try
+            {
+                await _identity.ResolveAsync(plan, CancellationToken.None);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 缺少读取权限或宿主暂不可用时，按全部新建处理。
+            }
+        }
+
+        if (_identity.ConsumeChanges())
+        {
+            SaveState();
+        }
+
         _importPlan = plan;
         _importFilePath = dialog.FileName;
         _importSelection = null;
         RefreshImportView();
 
+        var updateCount = plan.Papers.Count(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId));
+        var updateNote = updateCount > 0 ? $"（其中 {updateCount} 张将更新已有纸片）" : "";
         SetStatus(plan.Warnings.Count > 0
-            ? $"已读取 {plan.Papers.Count} 张纸片；{plan.Warnings.Count} 条预检提示将在导入结果中显示。"
-            : $"已读取 {plan.Papers.Count} 张纸片。");
+            ? $"已读取 {plan.Papers.Count} 张纸片{updateNote}；{plan.Warnings.Count} 条预检提示将在导入结果中显示。"
+            : $"已读取 {plan.Papers.Count} 张纸片{updateNote}。");
     }
 
     private async Task ImportAsync()
@@ -1087,6 +1122,13 @@ internal sealed class DataIoSession : IPaperBodySession
             var result = await new ImportService(_gateway, progress)
                 .ImportAsync(filtered, _settings, cts.Token);
 
+            // 导入（含顺序/关联/提醒修复）完成后登记身份映射，供下次导入更新同一批纸片。
+            await _identity.RecordAsync(selected, result.SourceIdToPaperId, CancellationToken.None);
+            if (_identity.ConsumeChanges())
+            {
+                SaveState();
+            }
+
             if (imageSummary.HasAny)
             {
                 result.Warnings.Insert(0,
@@ -1096,7 +1138,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
             ShowImportResult(result);
             summary = result.FatalError ??
-                $"导入完成：新增 {result.CreatedPapers} 张纸片，失败 {result.FailedPapers} 张。";
+                $"导入完成：新增 {result.CreatedPapers} 张，更新 {result.UpdatedPapers} 张，失败 {result.FailedPapers} 张。";
         }
         finally
         {
@@ -1144,7 +1186,19 @@ internal sealed class DataIoSession : IPaperBodySession
         {
             return _context.Workspace.Subscribe(
                 new PaperTodoEventFilter { Kinds = kinds, ExcludeOwnOperations = true },
-                _ => ScheduleRefresh());
+                evt =>
+                {
+                    if (evt is PaperDeletedEvent deleted)
+                    {
+                        _identity.RemoveByLocalPaperId(deleted.Paper.Id);
+                        if (_identity.ConsumeChanges())
+                        {
+                            SaveState();
+                        }
+                    }
+
+                    ScheduleRefresh();
+                });
         }
         catch (PaperTodoPluginException)
         {
@@ -1211,15 +1265,34 @@ internal sealed class DataIoSession : IPaperBodySession
             p => string.Equals(p.Source.Type, "todo", StringComparison.OrdinalIgnoreCase));
         var notePapers = selected.Count - todoPapers;
         var todoItems = selected.Sum(p => p.Source.Todos?.Count ?? 0);
+        var updatePapers = selected.Count(p => !string.IsNullOrWhiteSpace(p.UpdateTargetId));
+        var createPapers = selected.Count - updatePapers;
+        var localModified = selected.Count(
+            p => p.UpdateTargetId != null && p.TargetLocallyModified);
 
         var lines = new List<string>
         {
-            $"将向当前工作区追加导入 {selected.Count} 张纸片：",
+            $"将处理 {selected.Count} 张纸片：",
+            $"- 新建 {createPapers} 张，更新已有 {updatePapers} 张",
             $"- 待办纸片 {todoPapers} 张（共 {todoItems} 条待办）",
             $"- 笔记纸片 {notePapers} 张",
-            "",
-            "导入不会覆盖或删除任何现有纸片，宿主会生成新 ID。"
+            ""
         };
+
+        if (updatePapers == 0)
+        {
+            lines.Add("导入不会覆盖或删除任何现有纸片，宿主会生成新 ID。");
+        }
+        else
+        {
+            lines.Add(
+                "更新会替换匹配纸片的笔记正文和待办集合，并删除文件中已不存在的本地待办；" +
+                "标题和类型保持不变。");
+            if (localModified > 0)
+            {
+                lines.Add($"注意：{localModified} 张匹配到的纸片在本地有修改，更新会覆盖这些修改。");
+            }
+        }
 
         var problems = new List<string>();
         var imageSummary = ImageReferenceSummary.FromNotes(
@@ -1278,6 +1351,15 @@ internal sealed class DataIoSession : IPaperBodySession
             ("还原关联纸片", $"{result.RestoredLinks} 条"),
             ("还原提醒", $"{result.RestoredReminders} 条")
         };
+        if (result.UpdatedPapers > 0)
+        {
+            stats.Insert(1, ("更新纸片", $"{result.UpdatedPapers} 张"));
+        }
+
+        if (result.DeletedTodos > 0)
+        {
+            stats.Add(("删除待办", $"{result.DeletedTodos} 条"));
+        }
 
         var lines = new List<string>();
         if (result.StoppedEarly && result.FatalError != null)

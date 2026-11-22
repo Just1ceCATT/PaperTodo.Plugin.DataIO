@@ -15,6 +15,7 @@ internal sealed class DataIoSettings
     public bool RestoreOrder { get; init; } = true;
     public bool RestoreLinks { get; init; } = true;
     public bool RestoreReminders { get; init; } = true;
+    public bool UpdateImportedPapers { get; init; } = true;
 
     public static DataIoSettings Parse(string? json)
     {
@@ -41,7 +42,8 @@ internal sealed class DataIoSettings
                 ConfirmBeforeImport = ReadBool(root, "confirmBeforeImport", true),
                 RestoreOrder = ReadBool(root, "restoreOrder", true),
                 RestoreLinks = ReadBool(root, "restoreLinks", true),
-                RestoreReminders = ReadBool(root, "restoreReminders", true)
+                RestoreReminders = ReadBool(root, "restoreReminders", true),
+                UpdateImportedPapers = ReadBool(root, "updateImportedPapers", true)
             };
         }
         catch (JsonException)

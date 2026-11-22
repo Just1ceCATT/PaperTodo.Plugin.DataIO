@@ -27,10 +27,16 @@ internal static class MarkdownExportService
 
             var isTodo = string.Equals(paper.Type, "todo", StringComparison.OrdinalIgnoreCase);
 
-            // 不可见的 HTML 注释标记纸片类型，供本插件重新导入时可靠区分待办与笔记。
+            // 不可见的 HTML 注释标记纸片类型与来源 ID，供本插件重新导入时区分类型并更新原纸片。
             builder.Append("<!-- papertodo:type=")
-                .Append(isTodo ? "todo" : "note")
-                .AppendLine(" -->");
+                .Append(isTodo ? "todo" : "note");
+            if (!string.IsNullOrWhiteSpace(paper.SourceId) &&
+                paper.SourceId.All(character => !char.IsWhiteSpace(character)))
+            {
+                builder.Append(" sourceId=").Append(paper.SourceId);
+            }
+
+            builder.AppendLine(" -->");
             AppendTitle(builder, paper.Title);
             if (isTodo)
             {

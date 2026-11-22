@@ -27,4 +27,11 @@ internal sealed class ImportPaper
 
     /// <summary>已清洗并预截断的标题；null 表示交给宿主生成默认标题。</summary>
     public string? SafeTitle { get; init; }
+
+    /// <summary>命中身份映射时的本地更新目标；null 表示新建。</summary>
+    public string? UpdateTargetId { get; set; }
+    public string? UpdateTargetTitle { get; set; }
+
+    /// <summary>命中的本地纸片自上次导入后被修改过。</summary>
+    public bool TargetLocallyModified { get; set; }
 }
