@@ -86,23 +86,22 @@ internal sealed class DataIoSession : IPaperBodySession
         _searchQuery = _state.Search ?? "";
         _settings = DataIoSettings.Parse(context.SettingsJson);
 
-        // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时自动命名；
-        // 只在原标题为空时改名，绝不覆盖用户已有的标题。标记持久化后不再尝试。
+        // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时统一命名为“DataIO”；
+        // 标记持久化后不再改名，避免覆盖用户之后手动修改的标题。
         if (!_state.TitleInitialized)
         {
             _state.TitleInitialized = true;
-            if (string.IsNullOrWhiteSpace(TryReadOwnTitle()))
-            {
-                _context.SetTitle(DefaultPaperTitle);
-            }
-
+            _context.SetTitle(DefaultPaperTitle);
             _context.SaveStateJson(DataIoState.Serialize(_state));
         }
 
         _view = new DataIoView();
         _gateway = new HostGateway(context, _view.Dispatcher);
         _exportService = new ExportService(_gateway);
-        _identity = new ImportIdentityService(_gateway, _state);
+        _identity = new ImportIdentityService(
+            _gateway,
+            _state,
+            id => _context.Workspace.GetPaper(id));
         _view.PreviewLoader = LoadPreviewAsync;
 
         _view.ModeChanged += OnModeChanged;
@@ -151,10 +150,15 @@ internal sealed class DataIoSession : IPaperBodySession
 
     public void OnVisibilityChanged(bool visible)
     {
-        if (visible)
+        if (!visible)
         {
-            ScheduleRefresh();
+            return;
         }
+
+        // 宿主只在工具纸片可见时投递变更事件，隐藏期间的笔记正文变化收不到 NoteChangedEvent；
+        // 恢复可见时强制失效预览缓存，避免悬停预览继续显示旧正文。
+        _noteContentDirty = true;
+        ScheduleRefresh();
     }
 
     public void OnPresentationChanged(bool visible)
@@ -370,6 +374,8 @@ internal sealed class DataIoSession : IPaperBodySession
                     g => g.OrderBy(t => t.Order).ToArray(),
                     StringComparer.Ordinal);
 
+            ReconcileImportLinks();
+
             // 只有数据真的变化时才丢弃预览缓存；否则勾选、搜索等操作会让悬停预览反复重读。
             var signature = ComputeDataSignature();
             if (_noteContentDirty || !string.Equals(signature, _dataSignature, StringComparison.Ordinal))
@@ -431,6 +437,32 @@ internal sealed class DataIoSession : IPaperBodySession
         }
     }
 
+    /// <summary>
+    /// 用刚拉取的纸片列表对账导入映射。宿主在工具纸片隐藏期间会丢弃变更事件，
+    /// 删除可能从未送达，因此每次刷新列表时主动校验一次映射目标。
+    /// </summary>
+    private void ReconcileImportLinks()
+    {
+        // 工具纸片自身也在列表中，列表为空只可能是宿主数据尚未就绪的瞬态。
+        // 此时绝不能把全部映射判定为失效，等待下次刷新再对账。
+        if (_papers.Count == 0)
+        {
+            return;
+        }
+
+        var papersById = new Dictionary<string, PaperSnapshot>(StringComparer.Ordinal);
+        foreach (var paper in _papers)
+        {
+            papersById[paper.Id] = paper;
+        }
+
+        _identity.Reconcile(papersById);
+        if (_identity.ConsumeChanges())
+        {
+            SaveState();
+        }
+    }
+
     /// <summary>首次展示状态栏时带上“状态已损坏并备份”的提示。</summary>
     private string StartupPrefix()
     {
@@ -463,27 +495,6 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private bool IsSelf(PaperSnapshot paper) =>
         string.Equals(paper.Id, _context.PaperId, StringComparison.Ordinal);
-
-    /// <summary>
-    /// 读取本纸片当前标题；缺少读取权限或读取失败时返回 null。
-    /// 调用方据此决定是否自动命名——读不到时保持标题不变，避免误覆盖。
-    /// </summary>
-    private string? TryReadOwnTitle()
-    {
-        if (!_context.GrantedPermissions.Contains(PaperTodoPermissionNames.PapersRead))
-        {
-            return null;
-        }
-
-        try
-        {
-            return _context.Workspace.GetPaper(_context.PaperId)?.Title;
-        }
-        catch (PaperTodoPluginException)
-        {
-            return null;
-        }
-    }
 
     private int TodoCount(string paperId) =>
         _todosByPaper.TryGetValue(paperId, out var todos) ? todos.Length : 0;
@@ -1333,11 +1344,21 @@ internal sealed class DataIoSession : IPaperBodySession
                 paper => paper,
                 paper => (paper.UpdateTargetId, paper.UpdateTargetFingerprint));
 
+            // 关闭删除时，更新预览里的删除行不会真正删除，需要明确告知，避免误读差异。
+            IReadOnlyList<string> previewWarnings = _importPlan.Warnings;
+            if (!_settings.DeleteMissingTodos &&
+                updateCandidates.Any(paper =>
+                    string.Equals(paper.Source.Type, "todo", StringComparison.OrdinalIgnoreCase)))
+            {
+                previewWarnings = [.. _importPlan.Warnings,
+                    "“更新时删除文件中不存在的待办”已关闭：更新不会删除本地多出的待办，只新增和修改。"];
+            }
+
             var choices = _view.ShowUpdatePreviewDialog(
                 updateCandidates,
                 ImportSummaryBuilder.BuildUnrecoverable(selected, _importPlan),
                 _gateway.Can(PaperTodoPermissionNames.PapersCreate),
-                _importPlan.Warnings);
+                previewWarnings);
             if (choices == null)
             {
                 SetStatus("已取消导入。");
@@ -1599,6 +1620,12 @@ internal sealed class DataIoSession : IPaperBodySession
         }
         catch (PaperTodoPluginException)
         {
+            // 订阅失败不影响导入正确性——每次刷新与导入前都会重新校验映射；
+            // 但映射不会随纸片变更事件及时同步，需要在状态栏告知用户这一降级。
+            var warning = "无法订阅纸片变更事件，导入映射将只在每次刷新与导入前重新校验。";
+            _startupWarning = string.IsNullOrEmpty(_startupWarning)
+                ? warning
+                : _startupWarning + " " + warning;
             return null;
         }
     }

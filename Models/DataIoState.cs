@@ -89,7 +89,8 @@ internal sealed class DataIoState
     public static string NormalizeExportFormat(string? value) =>
         value is "markdown" ? "markdown" : "json";
 
-    private const int MaxImportLinks = 4096;
+    /// <summary>映射条目上限；运行期登记时按最近导入时间淘汰最旧条目。</summary>
+    internal const int MaxImportLinks = 4096;
 
     /// <summary>每个 sourceId 保留的历史本地纸片数量上限（用于当前目标被删除后的回退）。</summary>
     internal const int MaxImportLinkHistory = 8;

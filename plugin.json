@@ -1,7 +1,7 @@
 {
   "kind": "native",
   "id": "papertodo.dataio.native",
-  "name": "纸片数据导入导出",
+  "name": "DataIO",
   "description": "按整张纸片导出为 JSON 或 Markdown 文件，并把文件内容导入为新纸片或更新此前导入的纸片。",
   "version": "1.0.0",
   "apiVersion": "2.3",
@@ -77,6 +77,14 @@
       "type": "boolean",
       "name": "更新已导入的纸片",
       "description": "再次导入同一来源的文件时，按首次导入记录更新原纸片，而不是新建副本。",
+      "default": true,
+      "category": "导入"
+    },
+    {
+      "id": "deleteMissingTodos",
+      "type": "boolean",
+      "name": "更新时删除文件中不存在的待办",
+      "description": "仅影响待办纸片的“更新”，不影响新建。\n开启时，再次导入同一来源文件并选择“更新”，本地存在但文件中没有的待办会被删除，使纸片与文件完全一致。\n关闭后只新增和修改，不删除本地待办；源文件中删除的待办也不会同步删除，需要手动处理。",
       "default": true,
       "category": "导入"
     },

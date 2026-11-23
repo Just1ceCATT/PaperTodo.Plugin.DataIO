@@ -188,7 +188,7 @@ internal sealed class ImportService
             return await UpdateNoteAsync(importPaper, targetId);
         }
 
-        return await UpdateTodoPaperAsync(importPaper, targetId, result, cancellationToken);
+        return await UpdateTodoPaperAsync(importPaper, targetId, settings, result, cancellationToken);
     }
 
     /// <summary>更新笔记纸片：整体替换正文，但绝不接受会把本地图片引用写坏的来源。</summary>
@@ -260,6 +260,7 @@ internal sealed class ImportService
     private async Task<(string Id, bool Created)> UpdateTodoPaperAsync(
         ImportPaper importPaper,
         string targetId,
+        DataIoSettings settings,
         ImportResult result,
         CancellationToken cancellationToken)
     {
@@ -357,7 +358,14 @@ internal sealed class ImportService
 
         if (removed.Count > 0)
         {
-            if (_gateway.Can(PaperTodoPermissionNames.TodosDelete))
+            if (!settings.DeleteMissingTodos)
+            {
+                // 用户关闭了“更新时删除文件中不存在的待办”：只合并新增与修改，绝不动本地数据。
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”中有 {removed.Count} 条本地待办不在文件中，" +
+                    "已按设置保留（“更新时删除文件中不存在的待办”已关闭）。");
+            }
+            else if (_gateway.Can(PaperTodoPermissionNames.TodosDelete))
             {
                 foreach (var todo in removed)
                 {

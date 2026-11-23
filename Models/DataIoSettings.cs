@@ -17,6 +17,9 @@ internal sealed class DataIoSettings
     public bool RestoreReminders { get; init; } = true;
     public bool UpdateImportedPapers { get; init; } = true;
 
+    /// <summary>待办纸片“更新”时是否删除文件中不存在的本地待办。</summary>
+    public bool DeleteMissingTodos { get; init; } = true;
+
     public static DataIoSettings Parse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
@@ -43,7 +46,8 @@ internal sealed class DataIoSettings
                 RestoreOrder = ReadBool(root, "restoreOrder", true),
                 RestoreLinks = ReadBool(root, "restoreLinks", true),
                 RestoreReminders = ReadBool(root, "restoreReminders", true),
-                UpdateImportedPapers = ReadBool(root, "updateImportedPapers", true)
+                UpdateImportedPapers = ReadBool(root, "updateImportedPapers", true),
+                DeleteMissingTodos = ReadBool(root, "deleteMissingTodos", true)
             };
         }
         catch (JsonException)

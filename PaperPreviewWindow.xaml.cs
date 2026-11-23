@@ -364,7 +364,7 @@ internal partial class PaperPreviewWindow : Window
     {
         for (var node = source;
              node != null && !ReferenceEquals(node, Shell);
-             node = VisualTreeHelper.GetParent(node))
+             node = DependencyTree.GetParent(node))
         {
             if (node is ButtonBase or TextBox or ScrollBar or RadioButton)
             {

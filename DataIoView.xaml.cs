@@ -612,7 +612,7 @@ public partial class DataIoView : UserControl
 
     private static bool IsInteractiveSource(DependencyObject source)
     {
-        for (var current = source; current is not null; current = VisualTreeHelper.GetParent(current))
+        for (var current = source; current is not null; current = DependencyTree.GetParent(current))
         {
             if (current is ButtonBase or TextBoxBase)
             {

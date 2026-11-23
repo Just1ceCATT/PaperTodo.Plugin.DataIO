@@ -16,10 +16,21 @@ internal sealed class ImportIdentityService
     private readonly HostGateway _gateway;
     private readonly DataIoState _state;
 
-    public ImportIdentityService(HostGateway gateway, DataIoState state)
+    /// <summary>
+    /// 按 ID 读取纸片快照，用于删除事件中的回退校验。
+    /// 返回 null 表示确认纸片不存在；抛 PaperTodoPluginException 表示暂时无法查询。
+    /// 为 null 时退化为不校验（仅测试这样构造）。
+    /// </summary>
+    private readonly Func<string, PaperSnapshot?>? _paperLookup;
+
+    public ImportIdentityService(
+        HostGateway gateway,
+        DataIoState state,
+        Func<string, PaperSnapshot?>? paperLookup = null)
     {
         _gateway = gateway;
         _state = state;
+        _paperLookup = paperLookup;
         _state.ImportLinks ??= new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
     }
 
@@ -221,7 +232,42 @@ internal sealed class ImportIdentityService
             };
             HasChanges = true;
         }
+
+        if (Trim(_state.ImportLinks))
+        {
+            HasChanges = true;
+        }
     }
+
+    /// <summary>
+    /// 映射条目超过上限时按最近导入时间淘汰最旧条目，返回是否发生了淘汰。
+    /// 上限若只在加载时截断，运行期超限的映射会在下次重启时被静默丢弃，这里提前收敛。
+    /// </summary>
+    internal static bool Trim(Dictionary<string, ImportIdentityLink> links)
+    {
+        var overflow = links.Count - DataIoState.MaxImportLinks;
+        if (overflow <= 0)
+        {
+            return false;
+        }
+
+        var oldest = links
+            .OrderBy(pair => ParseImportedAt(pair.Value.LastImportedAt))
+            .Take(overflow)
+            .Select(pair => pair.Key)
+            .ToArray();
+        foreach (var sourceId in oldest)
+        {
+            links.Remove(sourceId);
+        }
+
+        return oldest.Length > 0;
+    }
+
+    private static DateTimeOffset ParseImportedAt(string? value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
 
     /// <summary>
     /// 计算新的历史副本列表：目标从旧副本切换到新副本时，把旧副本压入历史；
@@ -254,7 +300,7 @@ internal sealed class ImportIdentityService
     }
 
     /// <summary>
-    /// 宿主删除纸片后清理对应映射。若删除的是当前目标，则回退到最近的历史副本，
+    /// 宿主删除纸片后清理对应映射。若删除的是当前目标，则回退到最近一个仍存在的历史副本，
     /// 这样“选择新增后删除新副本，再导入同一文件”仍能匹配到原副本并显示差异。
     /// </summary>
     public void RemoveByLocalPaperId(string paperId)
@@ -276,16 +322,88 @@ internal sealed class ImportIdentityService
             }
 
             HasChanges = true;
-            if (history.Count > 0)
+
+            // 当前目标被删除：回退到最近一个仍存在的历史副本。
+            // 历史副本可能在此前事件丢失的窗口（如工具纸片隐藏期间）里也被删除，
+            // 因此有查询能力时必须逐个确认，避免把映射指向已经不存在的纸片。
+            var promoted = false;
+            try
             {
-                // 当前目标被删除：回退到最近一个仍存在的历史副本。
-                link.LocalPaperId = history[0];
-                history.RemoveAt(0);
-                link.PreviousLocalPaperIds = history;
-                // 历史副本的旧指纹未知，留空以避免误报“本地已修改”；下次导入后重新登记。
-                link.LocalFingerprint = "";
+                while (history.Count > 0)
+                {
+                    var candidateId = history[0];
+                    if (_paperLookup is { } lookup)
+                    {
+                        var candidate = lookup(candidateId);
+                        if (candidate is null ||
+                            !string.Equals(candidate.Type, link.Type, StringComparison.Ordinal))
+                        {
+                            // 确认已不存在或类型不符：丢弃该候选继续找下一个。
+                            history.RemoveAt(0);
+                            continue;
+                        }
+                    }
+
+                    history.RemoveAt(0);
+                    link.LocalPaperId = candidateId;
+                    link.PreviousLocalPaperIds = history;
+                    // 历史副本的旧指纹未知，留空以避免误报“本地已修改”；下次导入后重新登记。
+                    link.LocalFingerprint = "";
+                    promoted = true;
+                    break;
+                }
             }
-            else
+            catch (PaperTodoPluginException)
+            {
+                // 暂时无法查询纸片：保留映射与剩余历史，下次导入时再校验，不能据此删除映射。
+                link.PreviousLocalPaperIds = history;
+                continue;
+            }
+
+            if (!promoted)
+            {
+                staleSources.Add(sourceId);
+            }
+        }
+
+        foreach (var sourceId in staleSources)
+        {
+            _state.ImportLinks.Remove(sourceId);
+        }
+    }
+
+    /// <summary>
+    /// 用当前纸片列表对账映射：目标或历史副本已被删除时回退或清理。
+    /// 宿主只在工具纸片可见时投递变更事件，纸片隐藏期间的删除可能从未送达，
+    /// 因此每次刷新列表时主动校验一次，而不是完全依赖删除事件。
+    /// 类型与正文 provider 的校验仍留给导入时的 <see cref="ResolveAsync"/>，那里能给出明确提示。
+    /// </summary>
+    public void Reconcile(IReadOnlyDictionary<string, PaperSnapshot> papersById)
+    {
+        if (_state.ImportLinks.Count == 0)
+        {
+            return;
+        }
+
+        var staleSources = new List<string>();
+        foreach (var (sourceId, link) in _state.ImportLinks)
+        {
+            if (papersById.ContainsKey(link.LocalPaperId))
+            {
+                // 目标仍存在：只清理历史中已不存在的条目，避免死 ID 长期占用回退名额。
+                var history = link.PreviousLocalPaperIds ?? [];
+                if (history.RemoveAll(id => !papersById.ContainsKey(id)) > 0)
+                {
+                    link.PreviousLocalPaperIds = history;
+                    HasChanges = true;
+                }
+
+                continue;
+            }
+
+            // 目标已删除：回退到最近仍存在的历史副本，找不到则清理映射。
+            HasChanges = true;
+            if (FindFallback(link, papersById, link.Type) is null)
             {
                 staleSources.Add(sourceId);
             }

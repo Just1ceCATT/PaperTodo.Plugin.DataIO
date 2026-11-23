@@ -1,3 +1,4 @@
+using System.Globalization;
 using PaperTodo.Plugin;
 using Xunit;
 
@@ -138,5 +139,173 @@ public sealed class ImportIdentityServiceTests
         var normalized = DataIoState.NormalizeImportLinks(links);
 
         Assert.Equal(["p1", "p3"], normalized["s"].PreviousLocalPaperIds);
+    }
+
+    [Fact]
+    public void Deleting_target_skips_history_candidates_that_no_longer_exist()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p3",
+            Type = "todo",
+            LocalFingerprint = "stale",
+            PreviousLocalPaperIds = ["p1-dead", "p2"]
+        };
+        var papers = new Dictionary<string, PaperSnapshot>
+        {
+            ["p2"] = new("p2", "todo", "待办", true, false, false, "builtin.todo")
+        };
+
+        var service = new ImportIdentityService(
+            null!,
+            state,
+            id => papers.GetValueOrDefault(id));
+        service.RemoveByLocalPaperId("p3");
+
+        var link = state.ImportLinks["s"];
+        Assert.Equal("p2", link.LocalPaperId);
+        Assert.Equal("", link.LocalFingerprint);
+        Assert.Empty(link.PreviousLocalPaperIds);
+    }
+
+    [Fact]
+    public void Deleting_target_keeps_mapping_when_lookup_is_temporarily_unavailable()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p3",
+            Type = "todo",
+            PreviousLocalPaperIds = ["p1"]
+        };
+
+        var service = new ImportIdentityService(
+            null!,
+            state,
+            _ => throw new PaperTodoPluginException("data_reload_in_progress", "正在重载数据"));
+        service.RemoveByLocalPaperId("p3");
+
+        // 无法确认历史副本是否存在时不能删除映射，留给下次导入校验。
+        var link = state.ImportLinks["s"];
+        Assert.Equal("p3", link.LocalPaperId);
+        Assert.Equal(["p1"], link.PreviousLocalPaperIds);
+    }
+
+    [Fact]
+    public void Reconcile_falls_back_when_target_was_deleted_while_events_were_lost()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p2",
+            Type = "todo",
+            LocalFingerprint = "stale",
+            PreviousLocalPaperIds = ["p1"]
+        };
+        var papers = new Dictionary<string, PaperSnapshot>
+        {
+            ["p1"] = new("p1", "todo", "待办", true, false, false, "builtin.todo")
+        };
+
+        var service = new ImportIdentityService(null!, state);
+        service.Reconcile(papers);
+
+        var link = state.ImportLinks["s"];
+        Assert.Equal("p1", link.LocalPaperId);
+        Assert.Equal("", link.LocalFingerprint);
+        Assert.Empty(link.PreviousLocalPaperIds);
+        Assert.True(service.HasChanges);
+    }
+
+    [Fact]
+    public void Reconcile_removes_links_without_any_existing_copy()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p2",
+            Type = "todo",
+            PreviousLocalPaperIds = ["p1"]
+        };
+
+        var service = new ImportIdentityService(null!, state);
+        service.Reconcile(new Dictionary<string, PaperSnapshot>());
+
+        Assert.Empty(state.ImportLinks);
+        Assert.True(service.HasChanges);
+    }
+
+    [Fact]
+    public void Reconcile_prunes_deleted_history_entries_and_keeps_fingerprint()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p3",
+            Type = "todo",
+            LocalFingerprint = "fp",
+            PreviousLocalPaperIds = ["p1", "p2"]
+        };
+        var papers = new Dictionary<string, PaperSnapshot>
+        {
+            ["p3"] = new("p3", "todo", "待办", true, false, false, "builtin.todo"),
+            ["p2"] = new("p2", "todo", "旧副本", true, false, false, "builtin.todo")
+        };
+
+        var service = new ImportIdentityService(null!, state);
+        service.Reconcile(papers);
+
+        var link = state.ImportLinks["s"];
+        Assert.Equal("p3", link.LocalPaperId);
+        Assert.Equal("fp", link.LocalFingerprint);
+        Assert.Equal(["p2"], link.PreviousLocalPaperIds);
+        Assert.True(service.HasChanges);
+    }
+
+    [Fact]
+    public void Reconcile_keeps_state_untouched_when_everything_is_valid()
+    {
+        var state = new DataIoState();
+        state.ImportLinks["s"] = new ImportIdentityLink
+        {
+            LocalPaperId = "p1",
+            Type = "note",
+            LocalFingerprint = "fp",
+            PreviousLocalPaperIds = ["p0"]
+        };
+        var papers = new Dictionary<string, PaperSnapshot>
+        {
+            ["p1"] = new("p1", "note", "笔记", true, false, false, "builtin.markdown"),
+            ["p0"] = new("p0", "note", "旧副本", true, false, false, "builtin.markdown")
+        };
+
+        var service = new ImportIdentityService(null!, state);
+        service.Reconcile(papers);
+
+        Assert.False(service.HasChanges);
+        Assert.Equal(["p0"], state.ImportLinks["s"].PreviousLocalPaperIds);
+    }
+
+    [Fact]
+    public void Trim_drops_oldest_links_beyond_cap()
+    {
+        var links = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
+        var start = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        for (var i = 0; i < DataIoState.MaxImportLinks + 2; i++)
+        {
+            links[$"s{i}"] = new ImportIdentityLink
+            {
+                LocalPaperId = $"p{i}",
+                Type = "todo",
+                LastImportedAt = start.AddSeconds(i).ToString("O", CultureInfo.InvariantCulture)
+            };
+        }
+
+        Assert.True(ImportIdentityService.Trim(links));
+        Assert.Equal(DataIoState.MaxImportLinks, links.Count);
+        Assert.False(links.ContainsKey("s0"));
+        Assert.False(links.ContainsKey("s1"));
+        Assert.True(links.ContainsKey("s2"));
     }
 }
