@@ -198,8 +198,8 @@ internal sealed class ImportService
     {
         var source = importPaper.Source;
 
-        // 只信任明确标记为“正文可读”的笔记；缺失该字段的文件不能用来清空本地正文。
-        if (source.ContentAvailable != true)
+        // 只信任明确标记为“正文可读”且确实带有正文的笔记；否则不能用来清空本地正文。
+        if (source.ContentAvailable != true || source.Content is null)
         {
             throw new PaperTodoPluginException("content_unavailable", "文件未包含可用的笔记正文，已跳过更新。");
         }
@@ -221,12 +221,29 @@ internal sealed class ImportService
         }
 
         var current = await TryGetNoteAsync(targetId);
-        if (current is { ContentAvailable: true } &&
-            MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
+        if (current is not { ContentAvailable: true })
+        {
+            // 读不到本地正文时不贸然覆盖，避免在未知状态下清空笔记。
+            throw new PaperTodoPluginException(
+                "local_unavailable",
+                "无法读取本地笔记正文，已跳过更新。");
+        }
+
+        if (MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
         {
             // 正文等价（忽略行尾空行与末尾分隔线）时不写回，
             // 避免 Markdown 往返产生的规范化差异被持久化。
             return (targetId, false);
+        }
+
+        // 确认期间本地内容被修改过：放弃覆盖，让用户重新导入并确认。
+        if (!FingerprintMatches(
+                importPaper.UpdateTargetFingerprint,
+                ImportIdentityService.ComputeNoteFingerprint(current.Content)))
+        {
+            throw new PaperTodoPluginException(
+                "local_changed",
+                "本地笔记在确认后已被修改，已跳过更新，请重新导入后确认。");
         }
 
         await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
@@ -255,6 +272,17 @@ internal sealed class ImportService
 
         var existing = await _gateway.OnUiAsync(
             () => _gateway.Context.Workspace.ListTodos(targetId, includeBlank: true));
+
+        // 确认期间本地待办被修改过：放弃覆盖/删除，让用户重新导入并确认。
+        if (!FingerprintMatches(
+                importPaper.UpdateTargetFingerprint,
+                ImportIdentityService.ComputeTodoFingerprint(existing)))
+        {
+            throw new PaperTodoPluginException(
+                "local_changed",
+                "本地待办在确认后已被修改，已跳过更新，请重新导入后确认。");
+        }
+
         var remaining = existing
             .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
             .GroupBy(todo => todo.Text, StringComparer.Ordinal)
@@ -364,6 +392,11 @@ internal sealed class ImportService
             return null;
         }
     }
+
+    /// <summary>没有记录指纹（旧映射/回退副本）时无法比对，视为通过。</summary>
+    internal static bool FingerprintMatches(string? expected, string current) =>
+        string.IsNullOrEmpty(expected) ||
+        string.Equals(expected, current, StringComparison.Ordinal);
 
     private async Task<string> CreateOneAsync(ImportPaper importPaper, DataIoSettings settings, ImportResult result)
     {
