@@ -1,0 +1,42 @@
+using Xunit;
+
+namespace PaperTodo.Plugin.DataIo.Tests;
+
+/// <summary>导出文件默认命名的紧凑格式。</summary>
+public sealed class ExportFileNameTests
+{
+    private static readonly DateTimeOffset At = new(2026, 11, 23, 14, 35, 0, TimeSpan.FromHours(8));
+
+    [Fact]
+    public void Json_name_contains_short_time_and_paper_count()
+    {
+        var name = ExportFileName.Build(At, 3, markdown: false);
+
+        Assert.Equal("pt-261123-1435-3张.json", name);
+    }
+
+    [Fact]
+    public void Markdown_name_uses_md_extension()
+    {
+        var name = ExportFileName.Build(At, 2, markdown: true);
+
+        Assert.Equal("pt-261123-1435-2张.md", name);
+    }
+
+    [Fact]
+    public void Name_is_shorter_than_legacy_default()
+    {
+        var name = ExportFileName.Build(At, 3, markdown: false);
+        const string legacy = "papertodo-export-20261123-143500.json";
+
+        Assert.True(name.Length < legacy.Length - 8);
+    }
+
+    [Fact]
+    public void Negative_count_is_clamped()
+    {
+        var name = ExportFileName.Build(At, -1, markdown: false);
+
+        Assert.Equal("pt-261123-1435-0张.json", name);
+    }
+}

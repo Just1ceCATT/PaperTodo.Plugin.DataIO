@@ -415,6 +415,55 @@
         </Setter.Value>
       </Setter>
     </Style>
+
+    <!-- 历史记录行：图标 + 标题/明细 + 相对时间；明细里文件名在前，截断时优先保留 -->
+    <DataTemplate x:Key="HistoryRowTemplate">
+      <Border>
+        <Border.Style>
+          <Style TargetType="Border" BasedOn="{StaticResource PaperListRow}">
+            <!-- 首行不画分割线，其余行画在顶边 -->
+            <Setter Property="BorderThickness" Value="0" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding ShowTopSeparator}" Value="True">
+                <Setter Property="BorderThickness" Value="0,1,0,0" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <TextBlock Grid.Column="0"
+                     Text="{Binding Glyph}"
+                     FontFamily="{DynamicResource DataIoIconFontFamily}"
+                     FontSize="15"
+                     Margin="0,0,10,0"
+                     VerticalAlignment="Top"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+          <StackPanel Grid.Column="1" VerticalAlignment="Center">
+            <TextBlock Text="{Binding Title}"
+                       FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource DataIoTextBrush}" />
+            <TextBlock Text="{Binding Detail}"
+                       Margin="0,2,0,0"
+                       FontSize="{DynamicResource DataIoWeakFontSize}"
+                       TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource DataIoWeakBrush}"
+                       ToolTip="{Binding ToolTip}" />
+          </StackPanel>
+          <TextBlock Grid.Column="2"
+                     Text="{Binding TimeText}"
+                     Margin="12,0,0,0"
+                     VerticalAlignment="Center"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+        </Grid>
+      </Border>
+    </DataTemplate>
   </UserControl.Resources>
 
   <Grid x:Name="RootGrid" Margin="18,16,18,14">
@@ -451,18 +500,21 @@
       </Border>
     </Grid>
 
-    <!-- 导出 / 导入模式：窄纸片自动改为上下排列 -->
-    <UniformGrid x:Name="ModeCardsGrid"
-                 Grid.Row="1"
-                 Columns="2"
-                 Margin="0,14,0,0">
+    <!-- 导出 / 导入 / 历史记录：窄纸片自动改为上下排列 -->
+    <Border x:Name="ModeCardsContainer"
+            Grid.Row="1"
+            Margin="0,14,0,0"
+            Padding="3"
+            CornerRadius="10"
+            Background="{DynamicResource DataIoSurfaceBrush}">
+      <UniformGrid x:Name="ModeCardsGrid" Columns="3">
       <RadioButton x:Name="ExportModeButton"
-                   Margin="0,0,5,0"
+                   Margin="0,0,4,0"
                    GroupName="DataIoMode"
                    Style="{StaticResource ModeCard}"
                    IsChecked="True">
         <StackPanel>
-          <TextBlock Text="&#xE898;"
+          <TextBlock Text="&#xE72D;"
                      HorizontalAlignment="Center"
                      FontSize="18">
             <TextBlock.Style>
@@ -503,11 +555,11 @@
       </RadioButton>
 
       <RadioButton x:Name="ImportModeButton"
-                   Margin="5,0,0,0"
+                   Margin="4,0,4,0"
                    GroupName="DataIoMode"
                    Style="{StaticResource ModeCard}">
         <StackPanel>
-          <TextBlock Text="&#xE896;"
+          <TextBlock Text="&#xE8B5;"
                      HorizontalAlignment="Center"
                      FontSize="18">
             <TextBlock.Style>
@@ -546,7 +598,53 @@
                      Foreground="{DynamicResource DataIoWeakBrush}" />
         </StackPanel>
       </RadioButton>
-    </UniformGrid>
+
+      <RadioButton x:Name="HistoryModeButton"
+                   Margin="4,0,0,0"
+                   GroupName="DataIoMode"
+                   Style="{StaticResource ModeCard}">
+        <StackPanel>
+          <TextBlock Text="&#xE81C;"
+                     HorizontalAlignment="Center"
+                     FontSize="18">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock" BasedOn="{StaticResource Icon}">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=HistoryModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock Text="历史记录"
+                     Margin="0,5,0,0"
+                     HorizontalAlignment="Center"
+                     FontWeight="SemiBold">
+            <TextBlock.Style>
+              <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+                <Style.Triggers>
+                  <DataTrigger Binding="{Binding IsChecked, ElementName=HistoryModeButton}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
+                  </DataTrigger>
+                </Style.Triggers>
+              </Style>
+            </TextBlock.Style>
+          </TextBlock>
+          <TextBlock x:Name="HistoryModeSubtitle"
+                     Text="查看最近操作"
+                     Margin="0,3,0,0"
+                     HorizontalAlignment="Center"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
+                     FontSize="{DynamicResource DataIoWeakFontSize}"
+                     Foreground="{DynamicResource DataIoWeakBrush}" />
+        </StackPanel>
+      </RadioButton>
+      </UniformGrid>
+    </Border>
 
     <!-- 可滚动内容 -->
     <ScrollViewer x:Name="SummaryScroll"
@@ -555,6 +653,9 @@
                   VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled">
       <StackPanel x:Name="SummaryPanel" Margin="0,0,4,0">
+
+        <!-- 导出 / 导入页面内容；历史记录页单独放在下方 -->
+        <StackPanel x:Name="ExportImportSection">
 
         <!-- 导入文件（仅导入模式） -->
         <StackPanel x:Name="ImportFileSection" Visibility="Collapsed">
@@ -804,6 +905,30 @@
         <TextBlock x:Name="EstimateSub"
                    Text="包含标题、待办与笔记正文等必要元数据"
                    Style="{StaticResource SectionHint}" />
+        </StackPanel>
+
+        <!-- 历史记录页：通过顶部第三个 Tab 进入 -->
+        <StackPanel x:Name="HistorySection" Visibility="Collapsed">
+          <Grid Margin="0,0,0,2">
+            <TextBlock Text="历史记录"
+                       VerticalAlignment="Center"
+                       Style="{StaticResource SectionTitle}" />
+            <TextBlock x:Name="HistoryCountText"
+                       HorizontalAlignment="Right"
+                       VerticalAlignment="Center"
+                       FontSize="{DynamicResource DataIoWeakFontSize}"
+                       Foreground="{DynamicResource DataIoWeakBrush}" />
+          </Grid>
+          <TextBlock Text="本机保存的最近导入与导出操作，最多保留 20 条。"
+                     Style="{StaticResource SectionHint}" />
+          <ItemsControl x:Name="HistoryList"
+                        Margin="0,6,0,0"
+                        ItemTemplate="{StaticResource HistoryRowTemplate}" />
+          <TextBlock x:Name="HistoryEmptyHint"
+                     Text="还没有导入或导出记录"
+                     Style="{StaticResource SectionHint}"
+                     Visibility="Collapsed" />
+        </StackPanel>
       </StackPanel>
     </ScrollViewer>
 

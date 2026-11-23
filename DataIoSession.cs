@@ -13,7 +13,7 @@ namespace PaperTodo.Plugin.DataIo;
 /// 工具纸片会话：负责生命周期、事件订阅以及导出/导入双模式的编排。
 /// 内容类型行就地展开具体纸片并多选；所有宿主数据调用都经 HostGateway 切回 UI 线程。
 /// </summary>
-internal sealed class DataIoSession : IPaperBodySession
+internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 {
     private const string MarkdownProviderId = "builtin.markdown";
 
@@ -30,6 +30,12 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private readonly DataIoState _state;
     private DataIoSettings _settings;
+
+    /// <summary>最近一次宿主下发的主题；悬停面板重新可见时用它重绘。</summary>
+    private PaperBodyTheme _theme;
+
+    /// <summary>宿主缓存的悬停面板；为空表示尚未创建或创建失败。</summary>
+    private DataIoMiniView? _miniView;
 
     private List<PaperSnapshot> _papers = [];
     private Dictionary<string, TodoSnapshot[]> _todosByPaper = new(StringComparer.Ordinal);
@@ -85,6 +91,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         _searchQuery = _state.Search ?? "";
         _settings = DataIoSettings.Parse(context.SettingsJson);
+        _theme = context.Theme;
 
         // 首次把纸片转换为本插件（例如从 Markdown 笔记切换正文）时统一命名为“DataIO”；
         // 标记持久化后不再改名，避免覆盖用户之后手动修改的标题。
@@ -112,12 +119,13 @@ internal sealed class DataIoSession : IPaperBodySession
         _view.PrimaryActionRequested += OnPrimaryActionRequested;
         _view.ChooseImportFileRequested += OnChooseImportFileRequested;
 
-        _view.ApplyTheme(context.Theme, context.Body.Controls);
+        _view.ApplyTheme(_theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
         _view.SetExportFormat(ParseExportFormat(_state.ExportFormat));
         _view.SetSearch(_searchQuery);
         _view.SetImportFileInfo(null);
         _view.SetPrimaryEnabled(false);
+        _view.SetRecentOperations(_state.History);
 
         _debounce = new DispatcherTimer(DispatcherPriority.Background, _view.Dispatcher)
         {
@@ -165,11 +173,50 @@ internal sealed class DataIoSession : IPaperBodySession
     {
     }
 
-    public void OnThemeChanged(PaperBodyTheme theme) =>
-        _view.ApplyTheme(theme, _context.Body.Controls);
+    public void OnThemeChanged(PaperBodyTheme theme) => ApplyTheme(theme);
 
-    public void OnTypographyChanged(PaperBodyTheme theme) =>
+    public void OnTypographyChanged(PaperBodyTheme theme) => ApplyTheme(theme);
+
+    private void ApplyTheme(PaperBodyTheme theme)
+    {
+        _theme = theme;
         _view.ApplyTheme(theme, _context.Body.Controls);
+        _miniView?.Update(_state.History, theme);
+    }
+
+    // ---------- 贴边胶囊悬停面板 ----------
+
+    /// <summary>面板尺寸包含宿主外框与关闭区；与 plugin.json 声明的 miniMaxSize 保持一致。</summary>
+    public PaperMiniViewSize PreferredMiniViewSize => new(340, 260);
+
+    /// <summary>
+    /// 宿主在胶囊贴边时按需创建。返回值必须是全新、未挂载的纯 WPF 控件树；
+    /// 面板只读取插件状态里的历史记录，不访问宿主数据。
+    /// </summary>
+    public FrameworkElement? CreateMiniView(PaperMiniViewContext context)
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        _theme = context.Theme;
+        var view = new DataIoMiniView(context.Theme);
+        view.Update(_state.History, context.Theme);
+        _miniView = view;
+        return view;
+    }
+
+    /// <summary>面板重新可见时补一次数据，覆盖隐藏期间新增的导入/导出记录。</summary>
+    public void OnMiniViewVisibilityChanged(bool visible)
+    {
+        if (!visible || _disposed)
+        {
+            return;
+        }
+
+        _miniView?.Update(_state.History, _theme);
+    }
 
     public void OnDpiChanged()
     {
@@ -253,6 +300,12 @@ internal sealed class DataIoSession : IPaperBodySession
         // 导出用纸片 ID、导入用计划序号作为缓存键，切换模式必须清空。
         InvalidatePreviewCache();
 
+        if (_mode == DataIoMode.History)
+        {
+            _view.SetRecentOperations(_state.History);
+            return;
+        }
+
         if (_mode == DataIoMode.Export)
         {
             _ = RefreshAsync();
@@ -320,6 +373,12 @@ internal sealed class DataIoSession : IPaperBodySession
     {
         if (_disposed || (_busy && !force))
         {
+            return;
+        }
+
+        if (_mode == DataIoMode.History)
+        {
+            _view.SetRecentOperations(_state.History);
             return;
         }
 
@@ -670,6 +729,11 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private void RefreshRows()
     {
+        if (_mode == DataIoMode.History)
+        {
+            return;
+        }
+
         var rows = _mode == DataIoMode.Export ? BuildExportRows() : BuildImportRows();
         var selection = _mode == DataIoMode.Export ? _exportSelection : _importSelection;
 
@@ -1010,6 +1074,11 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private void UpdateSummary()
     {
+        if (_mode == DataIoMode.History)
+        {
+            return;
+        }
+
         if (_mode == DataIoMode.Export)
         {
             UpdateExportSummary();
@@ -1022,8 +1091,15 @@ internal sealed class DataIoSession : IPaperBodySession
 
     // ---------- 导出 ----------
 
-    private void OnPrimaryActionRequested(object? sender, EventArgs e) =>
+    private void OnPrimaryActionRequested(object? sender, EventArgs e)
+    {
+        if (_mode == DataIoMode.History)
+        {
+            return;
+        }
+
         _ = RunGuardedAsync(_mode == DataIoMode.Export ? ExportAsync : ImportAsync);
+    }
 
     private void OnChooseImportFileRequested(object? sender, EventArgs e)
     {
@@ -1056,7 +1132,7 @@ internal sealed class DataIoSession : IPaperBodySession
                 : "PaperTodo 数据 (*.json)|*.json",
             DefaultExt = extension,
             AddExtension = true,
-            FileName = $"papertodo-export-{DateTime.Now:yyyyMMdd-HHmmss}{extension}"
+            FileName = ExportFileName.Build(DateTimeOffset.Now, selected.Count, markdown)
         };
 
         var initial = ResolveDirectory(_state.LastExportDirectory);
@@ -1128,6 +1204,16 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         SetStatus(status);
+
+        RecordHistory(new DataIoHistoryEntry
+        {
+            Kind = DataIoHistoryKinds.Export,
+            At = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
+            FilePath = dialog.FileName,
+            Format = markdown ? "markdown" : "json",
+            Papers = document.Papers.Count,
+            Warnings = (unavailableNotes > 0 ? 1 : 0) + (imageSummary.HasAny ? 1 : 0)
+        });
 
         var stats = new List<(string Label, string Value)>
         {
@@ -1561,6 +1647,21 @@ internal sealed class DataIoSession : IPaperBodySession
                     SaveState();
                 }
 
+                RecordHistory(new DataIoHistoryEntry
+                {
+                    Kind = DataIoHistoryKinds.Import,
+                    At = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
+                    FilePath = _importFilePath ?? "",
+                    Format = FormatFromPath(_importFilePath),
+                    Created = result.CreatedPapers,
+                    Updated = result.UpdatedPapers,
+                    Skipped = result.SkippedPapers,
+                    Failed = result.FailedPapers,
+                    Warnings = result.Warnings.Count,
+                    Cancelled = result.Cancelled,
+                    StoppedEarly = result.StoppedEarly
+                });
+
                 ShowImportResult(result);
             }
 
@@ -1687,6 +1788,36 @@ internal sealed class DataIoSession : IPaperBodySession
             _operation = null;
         }
     }
+
+    /// <summary>
+    /// 写入一条导入/导出记录并立即持久化，同时刷新悬停面板。
+    /// 记录只保留最近若干条，避免插件状态随使用无限增长。
+    /// </summary>
+    private void RecordHistory(DataIoHistoryEntry entry)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _state.History ??= [];
+        _state.History.Insert(0, entry);
+        if (_state.History.Count > DataIoState.MaxHistory)
+        {
+            _state.History.RemoveRange(
+                DataIoState.MaxHistory,
+                _state.History.Count - DataIoState.MaxHistory);
+        }
+
+        SaveState();
+        _view.SetRecentOperations(_state.History);
+        _miniView?.Update(_state.History, _theme);
+    }
+
+    private static string FormatFromPath(string? path) =>
+        string.Equals(Path.GetExtension(path), ".md", StringComparison.OrdinalIgnoreCase)
+            ? "markdown"
+            : "json";
 
     private void SaveState()
     {

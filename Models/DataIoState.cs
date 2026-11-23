@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -31,6 +32,12 @@ internal sealed class DataIoState
     public Dictionary<string, ImportIdentityLink> ImportLinks { get; set; } =
         new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// 最近的导入/导出记录（新到旧），供贴边胶囊的悬停面板展示。
+    /// 只保留轻量元数据，条数有上限，避免状态无限增长。
+    /// </summary>
+    public List<DataIoHistoryEntry> History { get; set; } = [];
+
     private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -56,6 +63,7 @@ internal sealed class DataIoState
         {
             var state = JsonSerializer.Deserialize<DataIoState>(json, Options) ?? new DataIoState();
             state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
+            state.History = NormalizeHistory(state.History);
             return state;
         }
         catch (JsonException)
@@ -80,6 +88,7 @@ internal sealed class DataIoState
         state.ExportFormat = NormalizeExportFormat(state.ExportFormat);
         state.Search ??= "";
         state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
+        state.History = NormalizeHistory(state.History);
         return Serialize(state);
     }
 
@@ -88,6 +97,52 @@ internal sealed class DataIoState
 
     public static string NormalizeExportFormat(string? value) =>
         value is "markdown" ? "markdown" : "json";
+
+    /// <summary>历史记录条数上限；超出时保留最新的记录。</summary>
+    internal const int MaxHistory = 20;
+
+    /// <summary>
+    /// 归一化历史记录：丢弃类型或时间无效的条目、修正计数、按时间从新到旧排序并截断。
+    /// 损坏的单条记录不应影响其他记录，因此这里逐条跳过而不是整体回退。
+    /// </summary>
+    public static List<DataIoHistoryEntry> NormalizeHistory(List<DataIoHistoryEntry>? history)
+    {
+        var normalized = new List<(DataIoHistoryEntry Entry, DateTimeOffset At)>();
+        if (history == null)
+        {
+            return [];
+        }
+
+        foreach (var entry in history)
+        {
+            if (entry == null ||
+                entry.Kind is not (DataIoHistoryKinds.Export or DataIoHistoryKinds.Import) ||
+                !DateTimeOffset.TryParse(
+                    entry.At,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var at))
+            {
+                continue;
+            }
+
+            entry.FilePath ??= "";
+            entry.Format = entry.Format is "json" or "markdown" ? entry.Format : "";
+            entry.Papers = Math.Max(0, entry.Papers);
+            entry.Created = Math.Max(0, entry.Created);
+            entry.Updated = Math.Max(0, entry.Updated);
+            entry.Skipped = Math.Max(0, entry.Skipped);
+            entry.Failed = Math.Max(0, entry.Failed);
+            entry.Warnings = Math.Max(0, entry.Warnings);
+            normalized.Add((entry, at));
+        }
+
+        normalized.Sort((left, right) => right.At.CompareTo(left.At));
+        return normalized
+            .Take(MaxHistory)
+            .Select(pair => pair.Entry)
+            .ToList();
+    }
 
     /// <summary>映射条目上限；运行期登记时按最近导入时间淘汰最旧条目。</summary>
     internal const int MaxImportLinks = 4096;

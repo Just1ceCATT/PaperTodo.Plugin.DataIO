@@ -21,6 +21,8 @@ public partial class DataIoView : UserControl
     private readonly ObservableCollection<PaperRowItem> _noteRows = [];
     private readonly ObservableCollection<PaperRowItem> _todoRows = [];
     private readonly List<PaperRowItem> _allRows = [];
+    private readonly ObservableCollection<HistoryRowItem> _historyRows = [];
+    private List<DataIoHistoryEntry> _historyEntries = [];
     private readonly DispatcherTimer _hoverTimer;
     private PaperRowItem? _hoverRow;
     private int _hoverToken;
@@ -86,17 +88,9 @@ public partial class DataIoView : UserControl
         Resources["DataIoCheckCornerRadius"] = new CornerRadius(4);
         Resources["DataIoCheckScale"] = 1.0;
 
-        // 模式卡片移入滚动区域，使其随内容一起上下滚动，而不是固定在顶部。
-        if (ModeCardsGrid.Parent is Panel parent)
-        {
-            parent.Children.Remove(ModeCardsGrid);
-        }
-
-        ModeCardsGrid.Margin = new Thickness(0);
-        SummaryPanel.Children.Insert(0, ModeCardsGrid);
-
         NotesList.ItemsSource = _noteRows;
         TodosList.ItemsSource = _todoRows;
+        HistoryList.ItemsSource = _historyRows;
 
         _hoverTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
         {
@@ -183,7 +177,11 @@ public partial class DataIoView : UserControl
             return;
         }
 
-        var mode = ReferenceEquals(sender, ImportModeButton) ? DataIoMode.Import : DataIoMode.Export;
+        var mode = ReferenceEquals(sender, ImportModeButton)
+            ? DataIoMode.Import
+            : ReferenceEquals(sender, HistoryModeButton)
+                ? DataIoMode.History
+                : DataIoMode.Export;
         if (mode == Mode)
         {
             return;
@@ -191,6 +189,7 @@ public partial class DataIoView : UserControl
 
         ApplyModeVisuals(mode);
         PrimaryButton.IsEnabled = false;
+        SummaryScroll.ScrollToTop();
         ModeChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -200,7 +199,19 @@ public partial class DataIoView : UserControl
         _suppressModeEvents = true;
         ExportModeButton.IsChecked = mode == DataIoMode.Export;
         ImportModeButton.IsChecked = mode == DataIoMode.Import;
+        HistoryModeButton.IsChecked = mode == DataIoMode.History;
         _suppressModeEvents = false;
+
+        var isHistory = mode == DataIoMode.History;
+        ExportImportSection.Visibility = isHistory ? Visibility.Collapsed : Visibility.Visible;
+        HistorySection.Visibility = isHistory ? Visibility.Visible : Visibility.Collapsed;
+        PrimaryButton.Visibility = isHistory ? Visibility.Collapsed : Visibility.Visible;
+
+        if (isHistory)
+        {
+            CancelHover();
+            return;
+        }
 
         var isExport = mode == DataIoMode.Export;
         ImportFileSection.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
@@ -396,6 +407,41 @@ public partial class DataIoView : UserControl
     {
         EstimateMain.Text = main;
         EstimateSub.Text = sub;
+    }
+
+    // ---------- 最近操作 ----------
+
+    /// <summary>
+    /// 刷新历史记录页。记录由会话从插件状态读取后注入，视图不直接访问宿主或文件；
+    /// 列表最多 20 条，全部显示，不再做折叠。
+    /// </summary>
+    internal void SetRecentOperations(IReadOnlyList<DataIoHistoryEntry>? entries)
+    {
+        _historyEntries = (entries ?? [])
+            .Where(entry => entry is not null)
+            .ToList();
+        RebuildHistoryRows();
+    }
+
+    private void RebuildHistoryRows()
+    {
+        _historyRows.Clear();
+        var now = DateTimeOffset.Now;
+
+        for (var index = 0; index < _historyEntries.Count; index++)
+        {
+            _historyRows.Add(HistoryRowItem.From(
+                _historyEntries[index],
+                now,
+                showTopSeparator: index > 0));
+        }
+
+        HistoryCountText.Text = _historyEntries.Count == 0
+            ? ""
+            : $"共 {_historyEntries.Count} 条";
+        HistoryEmptyHint.Visibility = _historyEntries.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     public void SetPrimaryEnabled(bool enabled)
@@ -594,6 +640,7 @@ public partial class DataIoView : UserControl
     {
         ExportModeButton.Checked += OnModeChecked;
         ImportModeButton.Checked += OnModeChecked;
+        HistoryModeButton.Checked += OnModeChecked;
         JsonFormatButton.Checked += OnExportFormatChecked;
         MarkdownFormatButton.Checked += OnExportFormatChecked;
         SearchBox.TextChanged += OnSearchTextChanged;
@@ -1046,28 +1093,28 @@ public partial class DataIoView : UserControl
     {
         _theme = theme;
 
-        Resources["DataIoTextBrush"] = MakeBrush(theme.TextColor, Color.FromRgb(0x20, 0x20, 0x20));
-        Resources["DataIoWeakBrush"] = MakeBrush(theme.WeakTextColor, Color.FromRgb(0x70, 0x70, 0x70));
-        Resources["DataIoBorderBrush"] = MakeBrush(theme.BorderColor, Color.FromRgb(0x80, 0x70, 0x50));
-        Resources["DataIoAccentBrush"] = MakeBrush(theme.AccentColor, Color.FromRgb(0x2F, 0x6B, 0xFF));
-        Resources["DataIoAccentBorderBrush"] = MakeBrushWithAlpha(
+        Resources["DataIoTextBrush"] = ThemeBrushes.MakeBrush(theme.TextColor, Color.FromRgb(0x20, 0x20, 0x20));
+        Resources["DataIoWeakBrush"] = ThemeBrushes.MakeBrush(theme.WeakTextColor, Color.FromRgb(0x70, 0x70, 0x70));
+        Resources["DataIoBorderBrush"] = ThemeBrushes.MakeBrush(theme.BorderColor, Color.FromRgb(0x80, 0x70, 0x50));
+        Resources["DataIoAccentBrush"] = ThemeBrushes.MakeBrush(theme.AccentColor, Color.FromRgb(0x2F, 0x6B, 0xFF));
+        Resources["DataIoAccentBorderBrush"] = ThemeBrushes.MakeBrushWithAlpha(
             theme.AccentColor, 130, Color.FromRgb(0x2F, 0x6B, 0xFF));
-        Resources["DataIoOnAccentBrush"] = MakeBrush("#FFFFFFFF", Colors.White);
-        Resources["DataIoSurfaceBrush"] = MakeBrush(
+        Resources["DataIoOnAccentBrush"] = ThemeBrushes.MakeBrush("#FFFFFFFF", Colors.White);
+        Resources["DataIoSurfaceBrush"] = ThemeBrushes.MakeBrush(
             theme.IsDark ? "#18FFFFFF" : "#0C000000",
             Color.FromArgb(0x0C, 0x00, 0x00, 0x00));
         // 悬停卡片位于透明浮层上，需要不透明底色，否则会和纸片背景叠成一片。
-        Resources["DataIoCardBrush"] = MakeBrush(
+        Resources["DataIoCardBrush"] = ThemeBrushes.MakeBrush(
             theme.PaperColor,
             theme.IsDark ? Color.FromRgb(0x21, 0x1F, 0x1C) : Color.FromRgb(0xFF, 0xF9, 0xEA));
-        Resources["DataIoAccentSurfaceBrush"] = MakeBrushWithAlpha(
+        Resources["DataIoAccentSurfaceBrush"] = ThemeBrushes.MakeBrushWithAlpha(
             theme.AccentColor,
             theme.IsDark ? (byte)46 : (byte)26,
             Color.FromRgb(0x2F, 0x6B, 0xFF));
-        Resources["DataIoWarningBrush"] = MakeBrush(
+        Resources["DataIoWarningBrush"] = ThemeBrushes.MakeBrush(
             theme.IsDark ? "#FFD97B72" : "#FFC44B42",
             Color.FromRgb(0xC4, 0x4B, 0x42));
-        Resources["DataIoDividerBrush"] = MakeBrush(
+        Resources["DataIoDividerBrush"] = ThemeBrushes.MakeBrush(
             theme.IsDark ? "#1FFFFFFF" : "#14000000",
             Color.FromArgb(0x14, 0x00, 0x00, 0x00));
 
@@ -1150,16 +1197,19 @@ public partial class DataIoView : UserControl
         HeaderBadge.Visibility = tiny ? Visibility.Collapsed : Visibility.Visible;
         ExportModeSubtitle.Visibility = hideSubtitle ? Visibility.Collapsed : Visibility.Visible;
         ImportModeSubtitle.Visibility = hideSubtitle ? Visibility.Collapsed : Visibility.Visible;
+        HistoryModeSubtitle.Visibility = hideSubtitle ? Visibility.Collapsed : Visibility.Visible;
         SummaryPanel.Margin = compact ? new Thickness(0, 0, 10, 0) : new Thickness(0, 0, 4, 0);
 
-        ModeCardsGrid.Columns = stacked ? 1 : 2;
+        ModeCardsGrid.Columns = stacked ? 1 : 3;
         ModeCardsGrid.Margin = new Thickness(0);
         ExportModeButton.Padding = compact
             ? new Thickness(6, 8, 6, 8)
             : new Thickness(8, 10, 8, 10);
         ImportModeButton.Padding = ExportModeButton.Padding;
-        ExportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 5, 0);
-        ImportModeButton.Margin = stacked ? new Thickness(0) : new Thickness(5, 0, 0, 0);
+        HistoryModeButton.Padding = ExportModeButton.Padding;
+        ExportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(0, 0, 4, 0);
+        ImportModeButton.Margin = stacked ? new Thickness(0, 0, 0, 8) : new Thickness(4, 0, 4, 0);
+        HistoryModeButton.Margin = stacked ? new Thickness(0) : new Thickness(4, 0, 0, 0);
         ImportFileSection.Margin = new Thickness(0, compact ? 12 : 16, 0, 0);
     }
 
@@ -1273,42 +1323,4 @@ public partial class DataIoView : UserControl
         dialog.ShowModal(Window.GetWindow(this));
     }
 
-    private static SolidColorBrush MakeBrush(string? hex, Color fallback)
-    {
-        var brush = new SolidColorBrush(ParseColor(hex, fallback));
-        brush.Freeze();
-        return brush;
-    }
-
-    private static SolidColorBrush MakeBrushWithAlpha(string? hex, byte alpha, Color fallback)
-    {
-        var color = ParseColor(hex, fallback);
-        var brush = new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
-        brush.Freeze();
-        return brush;
-    }
-
-    private static Color ParseColor(string? hex, Color fallback)
-    {
-        if (!string.IsNullOrWhiteSpace(hex))
-        {
-            try
-            {
-                if (ColorConverter.ConvertFromString(hex) is Color color)
-                {
-                    return color;
-                }
-            }
-            catch (FormatException)
-            {
-                // 回退到默认颜色。
-            }
-            catch (NotSupportedException)
-            {
-                // 回退到默认颜色。
-            }
-        }
-
-        return fallback;
-    }
 }

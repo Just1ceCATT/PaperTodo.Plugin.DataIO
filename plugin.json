@@ -2,12 +2,16 @@
   "kind": "native",
   "id": "papertodo.dataio.native",
   "name": "DataIO",
-  "description": "按整张纸片导出为 JSON 或 Markdown 文件，并把文件内容导入为新纸片或更新此前导入的纸片。",
-  "version": "1.0.0",
+  "description": "按整张纸片导出为 JSON 或 Markdown 文件，并把文件内容导入为新纸片或更新此前导入的纸片；贴边悬停时展示最近的导入导出记录。",
+  "version": "1.1.0",
   "apiVersion": "2.3",
   "stateVersion": 1,
   "maxPaperInstances": 1,
   "entry": "PaperTodo.Plugin.DATAIO.dll",
+  "miniMaxSize": {
+    "width": 340,
+    "height": 260
+  },
   "capabilities": [
     "textZoom"
   ],

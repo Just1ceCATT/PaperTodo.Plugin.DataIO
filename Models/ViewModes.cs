@@ -4,7 +4,10 @@ namespace PaperTodo.Plugin.DataIo;
 public enum DataIoMode
 {
     Export,
-    Import
+    Import,
+
+    /// <summary>只读历史页：查看本机保存的最近导入/导出操作。</summary>
+    History
 }
 
 /// <summary>导出文件格式，由用户在纸片内选择。</summary>
