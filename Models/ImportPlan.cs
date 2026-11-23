@@ -48,6 +48,12 @@ internal sealed class ImportPaper
     public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
 
     /// <summary>
+    /// 解析更新目标时本地纸片的内容指纹。写入前会重新计算并比对，
+    /// 防止确认期间本地被修改后仍被静默覆盖。
+    /// </summary>
+    public string? UpdateTargetFingerprint { get; set; }
+
+    /// <summary>
     /// 命中更新目标时，内容是否与本地真正不同。笔记按“正文等价”判断（忽略尾部空行与分隔线）；
     /// 为 false 时无需出现在更新预览里，也不应计入更新。
     /// </summary>

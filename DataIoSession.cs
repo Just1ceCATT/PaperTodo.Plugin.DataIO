@@ -71,6 +71,9 @@ internal sealed class DataIoSession : IPaperBodySession
     private string? _startupWarning;
     private bool _startupWarningShown;
 
+    /// <summary>串行化身份解析，避免设置变化与导入同时重算更新目标。</summary>
+    private readonly SemaphoreSlim _resolveLock = new(1, 1);
+
     public DataIoSession(PaperBodyContext context)
     {
         _context = context;
@@ -173,7 +176,44 @@ internal sealed class DataIoSession : IPaperBodySession
     public void OnSettingsChanged(string settingsJson)
     {
         _settings = DataIoSettings.Parse(settingsJson);
+
+        // 设置会直接影响“是否更新已导入的纸片”：已选文件需要按新设置重新解析目标。
+        if (!_busy && _mode == DataIoMode.Import && _importPlan is not null)
+        {
+            _ = ReapplyImportTargetsAsync(_importPlan);
+        }
+
         ScheduleRefresh();
+    }
+
+    /// <summary>设置变化后重新解析已选文件的更新目标，避免沿用旧设置下的计划。</summary>
+    private async Task ReapplyImportTargetsAsync(ImportPlan plan)
+    {
+        try
+        {
+            var resolved = await RefreshUpdateTargetsAsync(plan, CancellationToken.None);
+            if (_disposed ||
+                _mode != DataIoMode.Import ||
+                !ReferenceEquals(_importPlan, plan))
+            {
+                return;
+            }
+
+            RefreshImportView();
+            if (!resolved)
+            {
+                _view.ShowAlertDialog(
+                    "无法更新导入计划",
+                    "无法校验本地纸片状态，请重新选择导入文件。");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!_disposed)
+            {
+                SetStatus($"重新校验导入计划失败：{ex.Message}");
+            }
+        }
     }
 
     public void Dispose()
@@ -1146,22 +1186,10 @@ internal sealed class DataIoSession : IPaperBodySession
             return;
         }
 
-        // 按首次导入记录解析可更新的本地纸片；解析失败不影响后续新建导入。
-        if (_settings.UpdateImportedPapers)
+        // 按当前设置解析可更新的本地纸片；解析失败时按全部新建处理并给出提示。
+        if (!await RefreshUpdateTargetsAsync(plan, CancellationToken.None))
         {
-            try
-            {
-                await _identity.ResolveAsync(plan, CancellationToken.None);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // 缺少读取权限或宿主暂不可用时，按全部新建处理。
-            }
-        }
-
-        if (_identity.ConsumeChanges())
-        {
-            SaveState();
+            plan.Warnings.Add("无法校验本地更新目标，本次将按新建处理。");
         }
 
         _importPlan = plan;
@@ -1177,6 +1205,69 @@ internal sealed class DataIoSession : IPaperBodySession
             : $"已读取 {plan.Papers.Count} 张纸片{updateNote}。");
     }
 
+    /// <summary>清空计划内的更新目标及所有派生状态。</summary>
+    internal static void ClearUpdateTargets(ImportPlan plan)
+    {
+        foreach (var paper in plan.Papers)
+        {
+            paper.UpdateTargetId = null;
+            paper.UpdateTargetTitle = null;
+            paper.UpdateTargetFingerprint = null;
+            paper.TargetLocallyModified = false;
+            paper.TargetImagesAtRisk = false;
+            paper.UpdateDiff = null;
+            paper.UpdateHasChanges = false;
+        }
+    }
+
+    /// <summary>
+    /// 按当前设置与当前纸片状态重新解析更新目标。
+    /// 返回 false 表示解析失败；调用方应中止导入，而不是继续使用陈旧计划。
+    /// </summary>
+    private async Task<bool> RefreshUpdateTargetsAsync(
+        ImportPlan plan,
+        CancellationToken cancellationToken)
+    {
+        await _resolveLock.WaitAsync(cancellationToken);
+        try
+        {
+            ClearUpdateTargets(plan);
+
+            if (!_settings.UpdateImportedPapers)
+            {
+                return true;
+            }
+
+            if (!_gateway.Can(PaperTodoPermissionNames.PapersRead))
+            {
+                // 没有读取权限时只能按新建处理。
+                return true;
+            }
+
+            try
+            {
+                await _identity.ResolveAsync(plan, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // 解析可能只完成了一部分；清空目标，避免把半成品计划当成有效结果。
+                ClearUpdateTargets(plan);
+                return false;
+            }
+
+            if (_identity.ConsumeChanges())
+            {
+                SaveState();
+            }
+
+            return true;
+        }
+        finally
+        {
+            _resolveLock.Release();
+        }
+    }
+
     private async Task ImportAsync()
     {
         if (_importPlan is null)
@@ -1184,6 +1275,15 @@ internal sealed class DataIoSession : IPaperBodySession
             SetStatus("请先选择导入文件。");
             return;
         }
+
+        // 选择文件到点击导入之间本地可能已变化；先按当前状态重新解析更新目标与指纹。
+        if (!await RefreshUpdateTargetsAsync(_importPlan, CancellationToken.None))
+        {
+            SetStatus("无法重新校验本地纸片状态，已中止导入，请稍后重试。");
+            return;
+        }
+
+        RefreshImportView();
 
         var selected = GetImportSelectedPapers();
         if (selected.Count == 0)
@@ -1228,6 +1328,11 @@ internal sealed class DataIoSession : IPaperBodySession
         var updatePreviewShown = updateCandidates.Count > 0;
         if (updatePreviewShown)
         {
+            // 记录预览时的目标与指纹；对话框关闭后若发生变化，取消本次导入。
+            var previewSnapshot = updateCandidates.ToDictionary(
+                paper => paper,
+                paper => (paper.UpdateTargetId, paper.UpdateTargetFingerprint));
+
             var choices = _view.ShowUpdatePreviewDialog(
                 updateCandidates,
                 ImportSummaryBuilder.BuildUnrecoverable(selected, _importPlan),
@@ -1239,11 +1344,41 @@ internal sealed class DataIoSession : IPaperBodySession
                 return;
             }
 
+            // 预览期间本地纸片可能被修改/删除，重新解析后再应用用户选择。
+            if (!await RefreshUpdateTargetsAsync(_importPlan, CancellationToken.None))
+            {
+                RefreshImportView();
+                SetStatus("无法重新校验本地纸片状态，已取消导入。");
+                _view.ShowAlertDialog(
+                    "无法继续导入",
+                    "无法重新校验本地纸片状态，请稍后重试。");
+                return;
+            }
+
+            var targetsChanged = false;
             var kept = new List<ImportPaper>(selected.Count);
             foreach (var paper in selected)
             {
                 if (string.IsNullOrWhiteSpace(paper.UpdateTargetId))
                 {
+                    // 原本有更新目标、却在预览期间消失：按用户当时的选择处理。
+                    if (previewSnapshot.ContainsKey(paper))
+                    {
+                        var lostChoice = choices.TryGetValue(paper, out var chosenOnLost)
+                            ? chosenOnLost
+                            : ImportUpdateAction.Skip;
+
+                        if (lostChoice == ImportUpdateAction.Update)
+                        {
+                            targetsChanged = true;
+                        }
+                        else if (lostChoice == ImportUpdateAction.Skip)
+                        {
+                            skippedTitles.Add(DisplayImportTitle(paper));
+                            continue;
+                        }
+                    }
+
                     kept.Add(paper);
                     continue;
                 }
@@ -1261,14 +1396,35 @@ internal sealed class DataIoSession : IPaperBodySession
                         break;
                     case ImportUpdateAction.CreateNew:
                         paper.UpdateTargetId = null;
+                        paper.UpdateTargetTitle = null;
+                        paper.UpdateTargetFingerprint = null;
                         paper.TargetLocallyModified = false;
+                        paper.TargetImagesAtRisk = false;
                         paper.UpdateDiff = null;
+                        paper.UpdateHasChanges = false;
                         kept.Add(paper);
                         break;
                     default:
+                        if (previewSnapshot.TryGetValue(paper, out var before) &&
+                            (!string.Equals(before.UpdateTargetId, paper.UpdateTargetId, StringComparison.Ordinal) ||
+                             !string.Equals(before.UpdateTargetFingerprint, paper.UpdateTargetFingerprint, StringComparison.Ordinal)))
+                        {
+                            targetsChanged = true;
+                        }
+
                         kept.Add(paper);
                         break;
                 }
+            }
+
+            if (targetsChanged)
+            {
+                RefreshImportView();
+                SetStatus("导入已取消：本地纸片在确认期间发生了变化。");
+                _view.ShowAlertDialog(
+                    "本地状态已变化",
+                    "本地纸片在确认期间被修改或删除，已取消本次导入。请重新导入文件并再次确认。");
+                return;
             }
 
             selected = kept;
