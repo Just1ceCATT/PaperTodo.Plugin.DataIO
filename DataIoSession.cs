@@ -334,7 +334,7 @@ internal sealed class DataIoSession : IPaperBodySession
             if (!_gateway.Can(PaperTodoPermissionNames.PapersRead))
             {
                 _view.SetAvailability(false, _gateway.Can(PaperTodoPermissionNames.PapersCreate));
-                _view.SetCounts("0 条", "0 条");
+                _view.SetCounts("0 张", "0 条");
                 _view.SetPrimaryEnabled(false);
                 SetStatus("缺少 papers.read 权限，无法读取纸片列表。请在插件设置中重新授权后重启 PaperTodo。");
                 return;
@@ -759,26 +759,7 @@ internal sealed class DataIoSession : IPaperBodySession
             var isUpdate = !string.IsNullOrWhiteSpace(paper.UpdateTargetId);
 
             var selectable = IsImportSelectable(paper);
-            var warnings = new List<string>();
-            if (isNote && contentLength == 0)
-            {
-                warnings.Add("文件未包含笔记正文");
-            }
-
-            if (paper.TargetLocallyModified)
-            {
-                warnings.Add("本地已修改，更新会覆盖");
-            }
-
-            if (paper.TargetImagesAtRisk)
-            {
-                warnings.Add("图片引用会被破坏，只能跳过或新增");
-            }
-
-            if (!selectable)
-            {
-                warnings.Add("缺少 papers.create 权限，无法新建");
-            }
+            var warnings = BuildImportRowWarnings(paper, selectable);
 
             rows.Add(new PaperRowItem
             {
@@ -787,7 +768,9 @@ internal sealed class DataIoSession : IPaperBodySession
                 Type = isNote ? "note" : "todo",
                 TypeLabel = isNote ? "笔记" : "待办",
                 Summary = (isNote
-                        ? (contentLength > 0 ? $"{contentLength} 字" : "空笔记")
+                        ? (contentLength > 0
+                            ? $"{contentLength} 字"
+                            : paper.Source.ContentAvailable == false ? "正文缺失" : "空笔记")
                         : $"{todoCount} 项待办") +
                     (isUpdate ? " · 将更新" : ""),
                 Warning = string.Join("；", warnings),
@@ -796,6 +779,38 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// 单张导入纸片在列表行上的告警。只有文件明确标记正文不可用时才提示“未包含正文”；
+    /// 文件中的空白笔记是正常内容，不应显示红色告警。
+    /// </summary>
+    internal static IReadOnlyList<string> BuildImportRowWarnings(ImportPaper paper, bool selectable)
+    {
+        var isNote = string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase);
+        var warnings = new List<string>();
+
+        if (isNote && paper.Source.ContentAvailable == false)
+        {
+            warnings.Add("文件未包含笔记正文");
+        }
+
+        if (paper.TargetLocallyModified)
+        {
+            warnings.Add("本地已修改，更新会覆盖");
+        }
+
+        if (paper.TargetImagesAtRisk)
+        {
+            warnings.Add("图片引用会被破坏，只能跳过或新增");
+        }
+
+        if (!selectable)
+        {
+            warnings.Add("缺少 papers.create 权限，无法新建");
+        }
+
+        return warnings;
     }
 
     // ---------- 预览 ----------
@@ -856,15 +871,15 @@ internal sealed class DataIoSession : IPaperBodySession
         }
 
         _view.SetCounts(
-            FormatCount(selectedNotes, notes.Count),
-            FormatCount(selectedTodoItems, totalTodoItems));
+            FormatCount(selectedNotes, notes.Count, "张"),
+            FormatCount(selectedTodoItems, totalTodoItems, "条"));
         _view.SetTypeAvailability(
             _gateway.Can(PaperTodoPermissionNames.NotesRead) && notes.Count > 0,
             _gateway.Can(PaperTodoPermissionNames.TodosRead) && todos.Count > 0);
 
         var selectedPapers = GetExportSelectedPapers();
         _view.SetEstimate(
-            $"{selectedNotes} 条笔记 · {selectedTodoItems} 条待办",
+            $"{selectedNotes} 张笔记 · {selectedTodoItems} 条待办",
             "包含标题、待办与笔记正文等必要元数据");
         _view.SetPrimaryEnabled(selectedPapers.Count > 0);
     }
@@ -873,7 +888,7 @@ internal sealed class DataIoSession : IPaperBodySession
     {
         if (_importPlan is null)
         {
-            _view.SetCounts("0 条", "0 条");
+            _view.SetCounts("0 张", "0 条");
             _view.SetTypeAvailability(false, false);
             _view.SetEstimate("尚未选择导入文件", "选择 JSON 或 Markdown 文件后显示预估");
             _view.SetPrimaryEnabled(false);
@@ -906,8 +921,8 @@ internal sealed class DataIoSession : IPaperBodySession
         var createCount = selected.Count - updateCount;
 
         _view.SetCounts(
-            FormatCount(selectedNotes, notes.Count),
-            FormatCount(selectedTodoItems, totalTodoItems));
+            FormatCount(selectedNotes, notes.Count, "张"),
+            FormatCount(selectedTodoItems, totalTodoItems, "条"));
         _view.SetTypeAvailability(notes.Count > 0, todos.Count > 0);
 
         // 文案必须如实反映本次是“新建”还是“更新”，不能永远宣称只追加。
@@ -918,19 +933,19 @@ internal sealed class DataIoSession : IPaperBodySession
             : "只追加新纸片，不覆盖现有数据";
 
         _view.SetEstimate(
-            $"{selectedNotes} 条笔记 · {selectedTodoItems} 条待办",
+            $"{selectedNotes} 张笔记 · {selectedTodoItems} 条待办",
             rule);
         _view.SetPrimaryEnabled(selected.Count > 0);
     }
 
-    private static string FormatCount(int selected, int total)
+    private static string FormatCount(int selected, int total, string unit)
     {
         if (total <= 0)
         {
-            return "0 条";
+            return $"0 {unit}";
         }
 
-        return selected >= total ? $"{total} 条" : $"已选 {selected} / {total} 条";
+        return selected >= total ? $"{total} {unit}" : $"已选 {selected} / {total} {unit}";
     }
 
     // ---------- 选择变化 ----------

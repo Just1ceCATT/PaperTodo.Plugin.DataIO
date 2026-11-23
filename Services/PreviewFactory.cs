@@ -35,6 +35,7 @@ internal static class PreviewFactory
                 Key = paper.Id,
                 Title = title,
                 TypeLabel = "待办",
+                IsTodo = true,
                 Meta = items.Count == 0
                     ? "暂无待办"
                     : $"{items.Count} 项待办 · {done} 项已完成",
@@ -113,6 +114,7 @@ internal static class PreviewFactory
                 Key = key,
                 Title = title,
                 TypeLabel = "待办",
+                IsTodo = true,
                 Meta = items.Count == 0
                     ? "暂无待办"
                     : $"{items.Count} 项待办 · {done} 项已完成",

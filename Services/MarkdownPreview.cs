@@ -26,6 +26,12 @@ internal static class MarkdownPreview
     /// <summary>单张纸片的渲染上限，避免超长正文让预览窗口长时间卡住。</summary>
     private const int MaxCharacters = 200_000;
 
+    /// <summary>单张纸片最多生成的块数量；字符上限无法约束“每行一个列表项”的极端文件。</summary>
+    private const int MaxBlocks = 2_000;
+
+    /// <summary>单个段落最多生成的 Inline 数量，防止超长行被格式标记拆成海量 Run。</summary>
+    private const int MaxInlinesPerBlock = 2_000;
+
     public static void Render(string markdown, Panel host, PreviewPalette palette)
     {
         host.Children.Clear();
@@ -52,7 +58,7 @@ internal static class MarkdownPreview
         var lines = text.Split('\n');
         var index = 0;
 
-        while (index < lines.Length)
+        while (index < lines.Length && host.Children.Count < MaxBlocks)
         {
             var line = lines[index];
             var trimmed = line.Trim();
@@ -117,7 +123,9 @@ internal static class MarkdownPreview
 
             if (TryListMarker(line, out _))
             {
-                while (index < lines.Length && TryListMarker(lines[index], out var item))
+                while (index < lines.Length &&
+                       host.Children.Count < MaxBlocks &&
+                       TryListMarker(lines[index], out var item))
                 {
                     host.Children.Add(BuildListItem(item, palette));
                     index++;
@@ -151,7 +159,21 @@ internal static class MarkdownPreview
             host.Children.Add(BuildParagraph(string.Join("\n", paragraph), palette));
         }
 
-        if (truncated)
+        var hasRemainingContent = index < lines.Length &&
+                                  lines.Skip(index).Any(line => line.Trim().Length > 0);
+        if (hasRemainingContent)
+        {
+            // 命中块数上限：提前结束渲染并明确告知，避免界面看起来“已经完整显示”。
+            host.Children.Add(new TextBlock
+            {
+                Text = $"（内容过多，仅显示前 {host.Children.Count:N0} 段）",
+                Margin = new Thickness(0, 10, 0, 0),
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11.5 * palette.Scale,
+                Foreground = palette.WeakBrush
+            });
+        }
+        else if (truncated)
         {
             host.Children.Add(new TextBlock
             {
@@ -523,6 +545,14 @@ internal static class MarkdownPreview
         var i = 0;
         while (i < text.Length)
         {
+            if (target.Count >= MaxInlinesPerBlock)
+            {
+                // 命中 Inline 上限时把剩余内容作为纯文本一次性追加，保留可读性。
+                plain.Append(text[i..]);
+                Flush();
+                return;
+            }
+
             var c = text[i];
 
             if (c == '\\' && i + 1 < text.Length)

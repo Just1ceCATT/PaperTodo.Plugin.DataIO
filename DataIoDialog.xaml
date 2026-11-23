@@ -13,7 +13,7 @@
     <Style x:Key="UpdateChoice" TargetType="RadioButton">
       <Setter Property="Foreground" Value="{DynamicResource DialogTextBrush}" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Focusable" Value="False" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="Margin" Value="0,0,6,0" />
       <Setter Property="Template">
         <Setter.Value>
@@ -33,6 +33,13 @@
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="Chip" Property="Background" Value="{DynamicResource DialogTintBrush}" />
                 <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource DialogBorderBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource DialogAccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Chip" Property="Opacity" Value="0.45" />
+                <Setter Property="Cursor" Value="Arrow" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>

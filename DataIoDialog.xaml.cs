@@ -615,6 +615,7 @@ public partial class DataIoDialog : Window
             theme.PaperColor,
             theme.IsDark ? Color.FromRgb(0x21, 0x1F, 0x1C) : Color.FromRgb(0xFF, 0xF9, 0xEA));
         Resources["DialogBorderBrush"] = MakeBrush(theme.BorderColor, Color.FromRgb(0x4C, 0x45, 0x3D));
+        Resources["DialogAccentBrush"] = MakeBrush(theme.AccentColor, Color.FromRgb(0x2F, 0x6B, 0xFF));
         Resources["DialogButtonHoverBrush"] = TintBrush(46);
         Resources["DialogTintBrush"] = TintBrush(32);
         Resources["DialogWarningBrush"] = MakeBrush(

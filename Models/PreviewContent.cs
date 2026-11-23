@@ -10,6 +10,10 @@ internal sealed class PreviewContent
     public required string Key { get; init; }
     public required string Title { get; init; }
     public required string TypeLabel { get; init; }
+
+    /// <summary>true 表示待办纸片；用于区分“空的待办”与“空的笔记”的占位文案。</summary>
+    public bool IsTodo { get; init; }
+
     public string Meta { get; init; } = "";
 
     /// <summary>正文缺失、由第三方插件提供等提示；为空表示无需提示。</summary>

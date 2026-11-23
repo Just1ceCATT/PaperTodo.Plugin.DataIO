@@ -23,6 +23,13 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="BorderBrush" Value="Transparent" />
       <Setter Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+      <Style.Triggers>
+        <!-- 分组行可用键盘聚焦（空格/回车展开），聚焦时给出可见边框 -->
+        <Trigger Property="IsKeyboardFocused" Value="True">
+          <Setter Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+        </Trigger>
+      </Style.Triggers>
     </Style>
     <Style x:Key="Divider" TargetType="Border">
       <Setter Property="Height" Value="1" />
@@ -55,7 +62,7 @@
       <Setter Property="Padding" Value="0" />
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Focusable" Value="False" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoWeakBrush}" />
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Template">
@@ -63,16 +70,26 @@
           <ControlTemplate TargetType="Button">
             <Border x:Name="Bg"
                     CornerRadius="5"
+                    BorderThickness="1"
+                    BorderBrush="Transparent"
                     Background="{TemplateBinding Background}">
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
-                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoSurfaceBrush}" />
-                <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+                <!-- 与整行悬停底色区分开，否则按钮悬停反馈会被行底色吞掉 -->
+                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource DataIoAccentSurfaceBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource DataIoAccentBrush}" />
               </Trigger>
               <Trigger Property="IsPressed" Value="True">
                 <Setter TargetName="Bg" Property="Opacity" Value="0.7" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Bg" Property="Opacity" Value="0.35" />
+                <Setter Property="Cursor" Value="Arrow" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -99,7 +116,8 @@
       <Border MouseLeftButtonDown="OnRowMouseLeftButtonDown"
               MouseEnter="OnRowMouseEnter"
               MouseLeave="OnRowMouseLeave"
-              MouseMove="OnRowMouseMove">
+              MouseMove="OnRowMouseMove"
+              Cursor="Hand">
         <Border.Style>
           <Style TargetType="Border" BasedOn="{StaticResource PaperListRow}">
             <!-- 每组第一行不画分割线，其余行画在顶边 -->
@@ -180,6 +198,7 @@
     <!-- 模式卡片：同一 GroupName 的 RadioButton 天然互斥 -->
     <Style x:Key="ModeCard" TargetType="RadioButton">
       <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
       <Setter Property="Padding" Value="8,10" />
       <Setter Property="Template">
@@ -200,6 +219,9 @@
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="Card" Property="Background" Value="{DynamicResource DataIoAccentSurfaceBrush}" />
                 <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBorderBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -309,7 +331,6 @@
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
       <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Focusable" Value="False" />
       <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="SnapsToDevicePixels" Value="True" />
       <Setter Property="UseLayoutRounding" Value="True" />
@@ -384,6 +405,10 @@
               </MultiTrigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.55" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="CheckBorder" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+                <Setter TargetName="CheckBorder" Property="BorderThickness" Value="2" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -644,14 +669,16 @@
                    Text="导出内容"
                    Style="{StaticResource SectionTitle}" />
         <TextBlock x:Name="ContentSectionHint"
-                   Text="点击条目展开并选择具体内容"
+                   Text="点击条目展开并选择；单击行切换勾选，双击行查看正文"
                    Style="{StaticResource SectionHint}" />
 
         <Border x:Name="NotesRow"
                 Style="{StaticResource RowBorder}"
                 Margin="0,8,0,0"
                 Padding="10,7"
-                Cursor="Hand">
+                Cursor="Hand"
+                Focusable="True"
+                KeyDown="OnTypeRowKeyDown">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
@@ -666,7 +693,7 @@
                        Style="{StaticResource RowTitle}" />
             <TextBlock x:Name="NotesCountText"
                        Grid.Column="2"
-                       Text="0 条"
+                       Text="0 张"
                        Style="{StaticResource RowValue}" />
             <TextBlock x:Name="NotesChevron"
                        Grid.Column="3"
@@ -707,7 +734,9 @@
                 Style="{StaticResource RowBorder}"
                 Margin="0,6,0,0"
                 Padding="10,7"
-                Cursor="Hand">
+                Cursor="Hand"
+                Focusable="True"
+                KeyDown="OnTypeRowKeyDown">
           <Grid>
             <Grid.ColumnDefinitions>
               <ColumnDefinition Width="Auto" />
@@ -766,7 +795,7 @@
                    Text="导出预估"
                    Style="{StaticResource SectionHint}" />
         <TextBlock x:Name="EstimateMain"
-                   Text="0 条笔记 · 0 条待办"
+                   Text="0 张笔记 · 0 条待办"
                    Margin="0,4,0,0"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource DataIoEstimateFontSize}"
@@ -871,7 +900,7 @@
                        FontSize="{DynamicResource DataIoFontSize}"
                        Foreground="{DynamicResource DataIoTextBrush}" />
           </Border>
-          <TextBlock Text="点击行内预览按钮查看全文"
+          <TextBlock Text="单击切换勾选 · 双击查看正文"
                      Margin="0,7,0,0"
                      FontSize="{DynamicResource DataIoWeakFontSize}"
                      Foreground="{DynamicResource DataIoWeakBrush}" />

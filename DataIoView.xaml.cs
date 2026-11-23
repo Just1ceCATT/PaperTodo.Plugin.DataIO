@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
@@ -37,8 +38,17 @@ public partial class DataIoView : UserControl
     private bool _primaryEnabled;
     private bool _canExport = true;
     private bool _canImport = true;
+    private bool _notesAvailable = true;
+    private bool _todosAvailable = true;
     private PaperBodyTheme? _theme;
     private bool _sizeHooked;
+    private Window? _hostWindow;
+
+    /// <summary>上一次单击行时切换了勾选的键；双击时用于抵消第一击的切换。</summary>
+    private string? _pendingRowToggleKey;
+
+    private const string ContentSectionHintText =
+        "点击条目展开并选择；单击行切换勾选，双击行查看正文";
 
     public DataIoMode Mode { get; private set; } = DataIoMode.Export;
 
@@ -95,7 +105,8 @@ public partial class DataIoView : UserControl
         _hoverTimer.Tick += OnHoverTimerTick;
 
         SummaryScroll.ScrollChanged += (_, _) => CancelHover();
-        Unloaded += (_, _) => CancelHover();
+        Loaded += OnViewLoaded;
+        Unloaded += OnViewUnloaded;
 
         WireEvents();
         ApplyModeVisuals(DataIoMode.Export);
@@ -194,7 +205,7 @@ public partial class DataIoView : UserControl
         var isExport = mode == DataIoMode.Export;
         ImportFileSection.Visibility = isExport ? Visibility.Collapsed : Visibility.Visible;
         ContentSectionTitle.Text = isExport ? "导出内容" : "导入内容";
-        ContentSectionHint.Text = "点击条目展开并选择；行内预览按钮可查看正文";
+        ContentSectionHint.Text = ContentSectionHintText;
         FormatRow.Visibility = isExport ? Visibility.Visible : Visibility.Collapsed;
         EstimateTitle.Text = isExport ? "导出预估" : "导入预估";
         PrimaryButton.Content = isExport ? "导出所选内容" : "导入所选内容";
@@ -361,10 +372,9 @@ public partial class DataIoView : UserControl
 
     public void SetTypeAvailability(bool notesEnabled, bool todosEnabled)
     {
-        NotesRow.IsEnabled = notesEnabled;
-        NotesRow.Opacity = notesEnabled ? 1.0 : 0.45;
-        TodosRow.IsEnabled = todosEnabled;
-        TodosRow.Opacity = todosEnabled ? 1.0 : 0.45;
+        _notesAvailable = notesEnabled;
+        _todosAvailable = todosEnabled;
+        ApplyRowAvailability();
 
         // 只在对应项被禁用且原本展开时收起它，不影响另一项。
         if (!notesEnabled && _notesExpanded)
@@ -436,8 +446,25 @@ public partial class DataIoView : UserControl
         TodosInvertButton.IsEnabled = !busy;
         SearchBox.IsEnabled = !busy;
         SearchClearButton.IsEnabled = !busy;
+        JsonFormatButton.IsEnabled = !busy;
+        MarkdownFormatButton.IsEnabled = !busy;
+        // 忙碌期间锁住行内选择与预览，避免出现被会话忽略的勾选操作。
+        NotesList.IsEnabled = !busy;
+        TodosList.IsEnabled = !busy;
         ExportModeButton.IsEnabled = !busy && _canExport;
         ImportModeButton.IsEnabled = !busy && _canImport;
+        ApplyRowAvailability();
+    }
+
+    /// <summary>行本身是否可交互同时取决于数据可用性与忙碌状态。</summary>
+    private void ApplyRowAvailability()
+    {
+        var notesInteractive = !_busy && _notesAvailable;
+        var todosInteractive = !_busy && _todosAvailable;
+        NotesRow.IsEnabled = notesInteractive;
+        TodosRow.IsEnabled = todosInteractive;
+        NotesRow.Opacity = notesInteractive ? 1.0 : 0.45;
+        TodosRow.Opacity = todosInteractive ? 1.0 : 0.45;
     }
 
     public void SetAvailability(bool canExport, bool canImport)
@@ -598,19 +625,77 @@ public partial class DataIoView : UserControl
         e.Handled = true;
     }
 
-    /// <summary>双击行：与预览按钮等价；点在复选框/按钮上时不触发。</summary>
+    /// <summary>
+    /// 行内点击：单击切换勾选，双击打开预览；点在复选框/预览按钮等交互控件上时不处理。
+    /// </summary>
     private void OnRowMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ClickCount != 2 ||
-            e.OriginalSource is not DependencyObject source ||
-            IsInteractiveSource(source) ||
-            sender is not FrameworkElement { DataContext: PaperRowItem row })
+        if (sender is not FrameworkElement { DataContext: PaperRowItem row })
         {
             return;
         }
 
-        e.Handled = true;
-        OpenPreview(row);
+        if (e.OriginalSource is DependencyObject source && IsInteractiveSource(source))
+        {
+            return;
+        }
+
+        if (e.ClickCount == 2)
+        {
+            // 双击的第一击已切换过勾选；这里先抵消，保证双击只负责预览。
+            if (_pendingRowToggleKey == row.Key)
+            {
+                if (row.CanSelect)
+                {
+                    row.IsSelected = !row.IsSelected;
+                }
+
+                _pendingRowToggleKey = null;
+            }
+
+            e.Handled = true;
+            OpenPreview(row);
+            return;
+        }
+
+        if (e.ClickCount == 1 && row.CanSelect)
+        {
+            row.IsSelected = !row.IsSelected;
+            _pendingRowToggleKey = row.Key;
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>笔记/待办分组行支持空格或回车展开、收起。</summary>
+    private void OnTypeRowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.IsRepeat || e.Key is not (Key.Space or Key.Enter))
+        {
+            return;
+        }
+
+        if (ReferenceEquals(sender, NotesRow))
+        {
+            if (!NotesRow.IsEnabled)
+            {
+                return;
+            }
+
+            _notesExpanded = !_notesExpanded;
+            AnimateNotes();
+            e.Handled = true;
+        }
+        else if (ReferenceEquals(sender, TodosRow))
+        {
+            if (!TodosRow.IsEnabled)
+            {
+                return;
+            }
+
+            _todosExpanded = !_todosExpanded;
+            AnimateTodos();
+            e.Handled = true;
+        }
     }
 
     private static bool IsInteractiveSource(DependencyObject source)
@@ -718,6 +803,42 @@ public partial class DataIoView : UserControl
             CancelHover();
         }
     }
+
+    private void OnViewLoaded(object sender, RoutedEventArgs e)
+    {
+        var window = Window.GetWindow(this);
+        if (ReferenceEquals(window, _hostWindow))
+        {
+            return;
+        }
+
+        DetachHostWindow();
+        _hostWindow = window;
+        if (_hostWindow is not null)
+        {
+            // 宿主纸片失去焦点时收起悬停卡片，避免卡片残留到其他窗口上方。
+            _hostWindow.Deactivated += OnHostWindowDeactivated;
+        }
+    }
+
+    private void OnViewUnloaded(object sender, RoutedEventArgs e)
+    {
+        CancelHover();
+        DetachHostWindow();
+    }
+
+    private void DetachHostWindow()
+    {
+        if (_hostWindow is null)
+        {
+            return;
+        }
+
+        _hostWindow.Deactivated -= OnHostWindowDeactivated;
+        _hostWindow = null;
+    }
+
+    private void OnHostWindowDeactivated(object? sender, EventArgs e) => CancelHover();
 
     private void CancelHover()
     {
@@ -829,7 +950,7 @@ public partial class DataIoView : UserControl
             HoverWarning.Visibility = Visibility.Visible;
         }
 
-        HoverExcerpt.Text = BuildExcerpt(content);
+        SetHoverExcerpt(content);
 
         HoverPreviewPopup.Placement = PlacementMode.MousePoint;
         HoverPreviewPopup.HorizontalOffset = 16;
@@ -863,22 +984,53 @@ public partial class DataIoView : UserControl
 
     private static bool AnimationsEnabled => SystemParameters.ClientAreaAnimation;
 
-    private static string BuildExcerpt(PreviewContent content)
+    /// <summary>
+    /// 悬停卡片摘要：待办使用与预览窗口一致的 Segoe Fluent Icons 勾选字形，
+    /// 笔记则退化为轻量纯文本。
+    /// </summary>
+    private void SetHoverExcerpt(PreviewContent content)
     {
+        HoverExcerpt.Inlines.Clear();
+
         if (content.Todos.Count > 0)
         {
-            var lines = content.Todos
-                .Take(4)
-                .Select(t => $"{(t.Done ? "☑" : "☐")} {t.Text}");
-            var text = string.Join("\n", lines);
-            if (content.Todos.Count > 4)
+            var iconFont = (FontFamily)Resources["DataIoIconFontFamily"];
+            var shown = Math.Min(content.Todos.Count, 4);
+            for (var i = 0; i < shown; i++)
             {
-                text += $"\n…还有 {content.Todos.Count - 4} 项";
+                if (i > 0)
+                {
+                    HoverExcerpt.Inlines.Add(new LineBreak());
+                }
+
+                var todo = content.Todos[i];
+                HoverExcerpt.Inlines.Add(new Run(todo.Done ? "" : "")
+                {
+                    FontFamily = iconFont,
+                    Foreground = (Brush)Resources[todo.Done ? "DataIoAccentBrush" : "DataIoWeakBrush"]
+                });
+                HoverExcerpt.Inlines.Add(new Run(" " + todo.Text));
             }
 
-            return text;
+            if (content.Todos.Count > shown)
+            {
+                HoverExcerpt.Inlines.Add(new LineBreak());
+                HoverExcerpt.Inlines.Add(new Run($"…还有 {content.Todos.Count - shown} 项")
+                {
+                    Foreground = (Brush)Resources["DataIoWeakBrush"]
+                });
+            }
+
+            return;
         }
 
+        HoverExcerpt.Text = content.IsTodo
+            ? "暂无待办。"
+            : BuildExcerpt(content);
+    }
+
+    private static string BuildExcerpt(PreviewContent content)
+    {
         if (!content.ContentAvailable)
         {
             return "正文不可读取。";

@@ -1,8 +1,10 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
@@ -17,6 +19,35 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal partial class PaperPreviewWindow : Window
 {
+    /// <summary>单次预览最多渲染的待办行，避免超大待办纸片卡住 UI 线程。</summary>
+    private const int MaxTodoRows = 500;
+
+    private const uint MonitorDefaultToNearest = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public MonitorRect Monitor;
+        public MonitorRect Work;
+        public uint Flags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
     private readonly double _scale;
     private readonly Color _tint;
     private readonly DataIoMode _mode;
@@ -56,7 +87,9 @@ internal partial class PaperPreviewWindow : Window
         _setSelected = setSelected;
 
         ApplyTheme(theme);
-        SizeToWorkArea();
+        // 先按主屏工作区给一个初始值；ShowModal 拿到宿主后会按所在显示器重新计算。
+        var work = SystemParameters.WorkArea;
+        SizeToWorkArea(work.Width, work.Height);
 
         PrevButton.Click += (_, _) => Move(-1);
         NextButton.Click += (_, _) => Move(1);
@@ -164,6 +197,12 @@ internal partial class PaperPreviewWindow : Window
             Owner = owner;
             Topmost = owner.Topmost;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
+
+            // 预览跟随宿主所在显示器，避免副屏尺寸不同时超出工作区。
+            if (TryGetOwnerWorkArea(owner) is { } area)
+            {
+                SizeToWorkArea(area.Width, area.Height);
+            }
         }
         else
         {
@@ -173,12 +212,48 @@ internal partial class PaperPreviewWindow : Window
         ShowDialog();
     }
 
-    private void SizeToWorkArea()
+    private void SizeToWorkArea(double workWidth, double workHeight)
     {
-        var work = SystemParameters.WorkArea;
         var widthFactor = Math.Clamp(_scale, 1.0, 1.45);
-        Width = Math.Min(560 * widthFactor, work.Width * 0.9);
-        Height = Math.Min(640 * Math.Clamp(_scale, 1.0, 1.25), work.Height * 0.85);
+        Width = Math.Min(560 * widthFactor, Math.Max(320, workWidth) * 0.9);
+        Height = Math.Min(
+            640 * Math.Clamp(_scale, 1.0, 1.25),
+            Math.Max(320, workHeight) * 0.85);
+    }
+
+    /// <summary>读取宿主窗口所在显示器的工作区（DIP）。失败时返回 null，回退到主屏。</summary>
+    private static (double Width, double Height)? TryGetOwnerWorkArea(Window owner)
+    {
+        try
+        {
+            var handle = new WindowInteropHelper(owner).Handle;
+            if (handle == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
+            if (monitor == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (!GetMonitorInfo(monitor, ref info))
+            {
+                return null;
+            }
+
+            var dpi = VisualTreeHelper.GetDpi(owner);
+            var width = (info.Work.Right - info.Work.Left) / (dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1);
+            var height = (info.Work.Bottom - info.Work.Top) / (dpi.DpiScaleY > 0 ? dpi.DpiScaleY : 1);
+            return width > 0 && height > 0 ? (width, height) : null;
+        }
+        catch (Exception)
+        {
+            // 取不到显示器信息时沿用主屏尺寸，不影响预览本身。
+            return null;
+        }
     }
 
     private void ApplyTheme(PaperBodyTheme theme)
@@ -449,10 +524,34 @@ internal partial class PaperPreviewWindow : Window
 
         if (content.Todos.Count > 0)
         {
-            foreach (var todo in content.Todos)
+            var shown = Math.Min(content.Todos.Count, MaxTodoRows);
+            for (var i = 0; i < shown; i++)
             {
-                BodyPanel.Children.Add(BuildTodoRow(todo));
+                BodyPanel.Children.Add(BuildTodoRow(content.Todos[i]));
             }
+
+            if (content.Todos.Count > shown)
+            {
+                BodyPanel.Children.Add(new TextBlock
+                {
+                    Text = $"还有 {content.Todos.Count - shown} 项未显示（共 {content.Todos.Count} 项）。",
+                    Margin = new Thickness(0, 8, 0, 0),
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 11.5 * _scale,
+                    Foreground = (Brush)Resources["DialogWeakBrush"]
+                });
+            }
+        }
+        else if (content.IsTodo)
+        {
+            // 待办纸片可以为空；这里不能沿用“空白笔记”的占位文案。
+            BodyPanel.Children.Add(new TextBlock
+            {
+                Text = "暂无待办。",
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12.5 * _scale,
+                Foreground = (Brush)Resources["DialogWeakBrush"]
+            });
         }
         else if (!content.ContentAvailable)
         {
