@@ -28,14 +28,15 @@
       └─ papertodo.dataio.native/
          ├─ plugin.json
          ├─ PaperTodo.Plugin.DATAIO.dll
+         ├─ PaperTodo.Plugin.DATAIO.deps.json
          └─ ...
    ```
 
-   注意不要把插件目录再套一层文件夹，`plugin.json` 必须直接位于 `papertodo.dataio.native` 内。
+   文件夹名必须与 `plugin.json` 中的 `id`（`papertodo.dataio.native`）一致，且 `plugin.json` 必须直接位于该层目录内，不要多套一层文件夹。请使用 Release 提供的成品目录，不要直接复制 GitHub 源码目录——源码目录不能作为插件运行。
 4. 启动 PaperTodo，进入 **设置 → 插件**，确认 DataIO 已被识别并处于启用状态。
 5. 新建或选择一张笔记纸，右键 → **正文类型** → DataIO。默认设置下，插件启动后也会自动创建或恢复一张 DataIO 工具纸片。
 
-系统要求：Windows；PaperTodo 需支持插件 API 2.3。原生插件不支持热重载，更新或删除插件文件后需要重启 PaperTodo。
+系统要求：Windows；PaperTodo 需支持插件 API 2.3。原生插件不支持热重载，更新或删除插件文件后需要退出重启；也可以在插件页点击“重启 PaperTodo 并重新扫描插件”。
 
 ## 快速开始
 
