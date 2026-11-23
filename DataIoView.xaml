@@ -751,7 +751,7 @@
                        Style="{StaticResource RowTitle}" />
             <TextBlock x:Name="TodosCountText"
                        Grid.Column="2"
-                       Text="0 条"
+                       Text="0 张"
                        Style="{StaticResource RowValue}" />
             <TextBlock x:Name="TodosChevron"
                        Grid.Column="3"
@@ -795,7 +795,7 @@
                    Text="导出预估"
                    Style="{StaticResource SectionHint}" />
         <TextBlock x:Name="EstimateMain"
-                   Text="0 张笔记 · 0 条待办"
+                   Text="0 张笔记 · 0 张待办"
                    Margin="0,4,0,0"
                    TextWrapping="Wrap"
                    FontSize="{DynamicResource DataIoEstimateFontSize}"

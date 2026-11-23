@@ -334,7 +334,7 @@ internal sealed class DataIoSession : IPaperBodySession
             if (!_gateway.Can(PaperTodoPermissionNames.PapersRead))
             {
                 _view.SetAvailability(false, _gateway.Can(PaperTodoPermissionNames.PapersCreate));
-                _view.SetCounts("0 张", "0 条");
+                _view.SetCounts("0 张", "0 张");
                 _view.SetPrimaryEnabled(false);
                 SetStatus("缺少 papers.read 权限，无法读取纸片列表。请在插件设置中重新授权后重启 PaperTodo。");
                 return;
@@ -856,15 +856,18 @@ internal sealed class DataIoSession : IPaperBodySession
         var totalTodoItems = todos.Sum(p => TodoCount(p.Id));
 
         int selectedNotes;
+        int selectedTodos;
         int selectedTodoItems;
         if (_exportSelection is null)
         {
             selectedNotes = notes.Count;
+            selectedTodos = todos.Count;
             selectedTodoItems = totalTodoItems;
         }
         else
         {
             selectedNotes = notes.Count(p => _exportSelection.Contains(p.Id));
+            selectedTodos = todos.Count(p => _exportSelection.Contains(p.Id));
             selectedTodoItems = todos
                 .Where(p => _exportSelection.Contains(p.Id))
                 .Sum(p => TodoCount(p.Id));
@@ -872,15 +875,17 @@ internal sealed class DataIoSession : IPaperBodySession
 
         _view.SetCounts(
             FormatCount(selectedNotes, notes.Count, "张"),
-            FormatCount(selectedTodoItems, totalTodoItems, "条"));
+            FormatCount(selectedTodos, todos.Count, "张"));
         _view.SetTypeAvailability(
             _gateway.Can(PaperTodoPermissionNames.NotesRead) && notes.Count > 0,
             _gateway.Can(PaperTodoPermissionNames.TodosRead) && todos.Count > 0);
 
         var selectedPapers = GetExportSelectedPapers();
         _view.SetEstimate(
-            $"{selectedNotes} 张笔记 · {selectedTodoItems} 条待办",
-            "包含标题、待办与笔记正文等必要元数据");
+            $"{selectedNotes} 张笔记 · {selectedTodos} 张待办",
+            selectedTodoItems > 0
+                ? $"共 {selectedTodoItems} 条待办；包含标题、笔记正文等必要元数据"
+                : "包含标题、笔记正文等必要元数据");
         _view.SetPrimaryEnabled(selectedPapers.Count > 0);
     }
 
@@ -888,7 +893,7 @@ internal sealed class DataIoSession : IPaperBodySession
     {
         if (_importPlan is null)
         {
-            _view.SetCounts("0 张", "0 条");
+            _view.SetCounts("0 张", "0 张");
             _view.SetTypeAvailability(false, false);
             _view.SetEstimate("尚未选择导入文件", "选择 JSON 或 Markdown 文件后显示预估");
             _view.SetPrimaryEnabled(false);
@@ -908,11 +913,12 @@ internal sealed class DataIoSession : IPaperBodySession
         var todos = GetImportCandidates("todo")
             .Where(c => IsImportSelectable(c.Paper))
             .ToList();
-        var totalTodoItems = todos.Sum(c => c.Paper.Source.Todos?.Count ?? 0);
 
         var selected = GetImportSelectedPapers();
         var selectedNotes = selected.Count(
             p => string.Equals(p.Source.Type, "note", StringComparison.OrdinalIgnoreCase));
+        var selectedTodos = selected.Count(
+            p => string.Equals(p.Source.Type, "todo", StringComparison.OrdinalIgnoreCase));
         var selectedTodoItems = selected
             .Where(p => string.Equals(p.Source.Type, "todo", StringComparison.OrdinalIgnoreCase))
             .Sum(p => p.Source.Todos?.Count ?? 0);
@@ -922,7 +928,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
         _view.SetCounts(
             FormatCount(selectedNotes, notes.Count, "张"),
-            FormatCount(selectedTodoItems, totalTodoItems, "条"));
+            FormatCount(selectedTodos, todos.Count, "张"));
         _view.SetTypeAvailability(notes.Count > 0, todos.Count > 0);
 
         // 文案必须如实反映本次是“新建”还是“更新”，不能永远宣称只追加。
@@ -931,9 +937,13 @@ internal sealed class DataIoSession : IPaperBodySession
                 ? $"将新建 {createCount} 张、更新 {updateCount} 张现有纸片"
                 : $"将更新 {updateCount} 张现有纸片，不新建")
             : "只追加新纸片，不覆盖现有数据";
+        if (selectedTodoItems > 0)
+        {
+            rule += $"；共 {selectedTodoItems} 条待办";
+        }
 
         _view.SetEstimate(
-            $"{selectedNotes} 张笔记 · {selectedTodoItems} 条待办",
+            $"{selectedNotes} 张笔记 · {selectedTodos} 张待办",
             rule);
         _view.SetPrimaryEnabled(selected.Count > 0);
     }
@@ -1698,28 +1708,7 @@ internal sealed class DataIoSession : IPaperBodySession
 
     private void ShowImportResult(ImportResult result)
     {
-        var stats = new List<(string Label, string Value)>
-        {
-            ("新增纸片", $"{result.CreatedPapers} 张"),
-            ("失败纸片", $"{result.FailedPapers} 张"),
-            ("新增待办", $"{result.CreatedTodos} 条"),
-            ("还原关联纸片", $"{result.RestoredLinks} 条"),
-            ("还原提醒", $"{result.RestoredReminders} 条")
-        };
-        if (result.UpdatedPapers > 0)
-        {
-            stats.Insert(1, ("更新纸片", $"{result.UpdatedPapers} 张"));
-        }
-
-        if (result.SkippedPapers > 0)
-        {
-            stats.Insert(result.UpdatedPapers > 0 ? 2 : 1, ("跳过纸片", $"{result.SkippedPapers} 张"));
-        }
-
-        if (result.DeletedTodos > 0)
-        {
-            stats.Add(("删除待办", $"{result.DeletedTodos} 条"));
-        }
+        var stats = BuildImportResultStats(result);
 
         var lines = new List<string>();
         if (result.Cancelled)
@@ -1759,6 +1748,57 @@ internal sealed class DataIoSession : IPaperBodySession
             title,
             stats,
             lines.Count > 0 ? lines : null);
+    }
+
+    /// <summary>
+    /// 导入结果弹窗的统计行：纸片按“张”、待办项按“条”，
+    /// 待办同时给出纸片张数与条目数，避免把“张”和“条”混为一谈。
+    /// </summary>
+    internal static List<(string Label, string Value)> BuildImportResultStats(ImportResult result)
+    {
+        var stats = new List<(string Label, string Value)>
+        {
+            ("新增纸片", $"{result.CreatedPapers} 张")
+        };
+        if (result.UpdatedPapers > 0)
+        {
+            stats.Add(("更新纸片", $"{result.UpdatedPapers} 张"));
+        }
+
+        if (result.SkippedPapers > 0)
+        {
+            stats.Add(("跳过纸片", $"{result.SkippedPapers} 张"));
+        }
+
+        stats.Add(("失败纸片", $"{result.FailedPapers} 张"));
+
+        if (result.CreatedTodoPapers > 0 || result.CreatedTodos > 0)
+        {
+            stats.Add(("新增待办纸片", $"{result.CreatedTodoPapers} 张"));
+            if (result.CreatedTodos > 0)
+            {
+                stats.Add(("新增待办项", $"{result.CreatedTodos} 条"));
+            }
+        }
+
+        if (result.UpdatedTodoPapers > 0 || result.UpdatedTodos > 0)
+        {
+            stats.Add(("更新待办纸片", $"{result.UpdatedTodoPapers} 张"));
+            if (result.UpdatedTodos > 0)
+            {
+                stats.Add(("更新待办项", $"{result.UpdatedTodos} 条"));
+            }
+        }
+
+        stats.Add(("还原关联纸片", $"{result.RestoredLinks} 条"));
+        stats.Add(("还原提醒", $"{result.RestoredReminders} 条"));
+
+        if (result.DeletedTodos > 0)
+        {
+            stats.Add(("删除待办项", $"{result.DeletedTodos} 条"));
+        }
+
+        return stats;
     }
 
     private static DataIoExportFormat ParseExportFormat(string? value) =>

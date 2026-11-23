@@ -4,7 +4,15 @@ namespace PaperTodo.Plugin.DataIo;
 internal sealed class ImportResult
 {
     public int CreatedPapers { get; set; }
+
+    /// <summary>新建成功的待办纸片张数；用于结果弹窗按“张”展示待办数量。</summary>
+    public int CreatedTodoPapers { get; set; }
+
     public int UpdatedPapers { get; set; }
+
+    /// <summary>更新成功的待办纸片张数。</summary>
+    public int UpdatedTodoPapers { get; set; }
+
     public int SkippedPapers { get; set; }
     public int FailedPapers { get; set; }
     public int CreatedTodos { get; set; }

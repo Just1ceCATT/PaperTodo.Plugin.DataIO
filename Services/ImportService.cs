@@ -88,15 +88,27 @@ internal sealed class ImportService
                     }
 
                     processed.Add((importPaper, localId, createdNow));
+                    var isTodoPaper = string.Equals(
+                        importPaper.Source.Type,
+                        "todo",
+                        StringComparison.OrdinalIgnoreCase);
                     if (createdNow)
                     {
                         result.CreatedPapers++;
                         result.CreatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                        if (isTodoPaper)
+                        {
+                            result.CreatedTodoPapers++;
+                        }
                     }
                     else
                     {
                         result.UpdatedPapers++;
                         result.UpdatedTodos += importPaper.Source.Todos?.Count ?? 0;
+                        if (isTodoPaper)
+                        {
+                            result.UpdatedTodoPapers++;
+                        }
                     }
 
                     if (!string.IsNullOrWhiteSpace(importPaper.Source.SourceId))
