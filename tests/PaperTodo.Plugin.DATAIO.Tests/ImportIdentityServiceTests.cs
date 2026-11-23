@@ -97,6 +97,32 @@ public sealed class ImportIdentityServiceTests
     }
 
     [Fact]
+    public void Fallback_can_require_markdown_provider_for_notes()
+    {
+        var link = new ImportIdentityLink
+        {
+            LocalPaperId = "missing",
+            Type = "note",
+            PreviousLocalPaperIds = ["todo-copy", "other-note", "markdown-note"]
+        };
+        var papers = new Dictionary<string, PaperSnapshot>
+        {
+            ["todo-copy"] = new("todo-copy", "todo", "待办", true, false, false, "builtin.todo"),
+            ["other-note"] = new("other-note", "note", "第三方", true, false, false, "other.plugin"),
+            ["markdown-note"] = new("markdown-note", "note", "笔记", true, false, false, "builtin.markdown")
+        };
+
+        var fallback = ImportIdentityService.FindFallback(
+            link,
+            papers,
+            "note",
+            requireMarkdownProvider: true);
+
+        Assert.NotNull(fallback);
+        Assert.Equal("markdown-note", fallback!.Id);
+    }
+
+    [Fact]
     public void Normalize_history_drops_current_duplicates_and_empties()
     {
         var links = new Dictionary<string, ImportIdentityLink>

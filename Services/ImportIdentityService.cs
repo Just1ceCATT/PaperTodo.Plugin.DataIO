@@ -113,9 +113,29 @@ internal sealed class ImportIdentityService
             }
             else
             {
-                if (!string.Equals(target.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal) ||
-                    !_gateway.Can(PaperTodoPermissionNames.NotesRead))
+                if (!string.Equals(target.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal))
                 {
+                    // 目标已不再是内置 Markdown 笔记：先尝试回退到同为 Markdown 的历史副本，否则清理映射。
+                    target = FindFallback(
+                        link,
+                        papersById,
+                        sourceType,
+                        requireMarkdownProvider: true);
+                    if (target is null)
+                    {
+                        _state.ImportLinks.Remove(sourceId);
+                        HasChanges = true;
+                        plan.Warnings.Add(
+                            $"纸片“{DisplayTitle(paper)}”的更新目标不再是内置 Markdown 笔记，已取消关联。");
+                        continue;
+                    }
+
+                    HasChanges = true;
+                }
+
+                if (!_gateway.Can(PaperTodoPermissionNames.NotesRead))
+                {
+                    // 权限缺失只是暂时无法读取，保留映射，等权限恢复后继续更新。
                     continue;
                 }
 
@@ -123,6 +143,8 @@ internal sealed class ImportIdentityService
                     () => _gateway.Context.Workspace.GetNote(target.Id));
                 if (note is not { ContentAvailable: true })
                 {
+                    plan.Warnings.Add(
+                        $"纸片“{DisplayTitle(paper)}”的本地笔记正文暂不可读，本次跳过更新。");
                     continue;
                 }
 
@@ -142,6 +164,7 @@ internal sealed class ImportIdentityService
                         MarkdownExportService.MissingImageLabel);
             }
 
+            paper.UpdateTargetFingerprint = fingerprint;
             paper.UpdateTargetId = target.Id;
             paper.UpdateTargetTitle = target.Title;
             paper.TargetLocallyModified =
@@ -312,7 +335,8 @@ internal sealed class ImportIdentityService
     internal static PaperSnapshot? FindFallback(
         ImportIdentityLink link,
         IReadOnlyDictionary<string, PaperSnapshot> papersById,
-        string type)
+        string type,
+        bool requireMarkdownProvider = false)
     {
         var history = link.PreviousLocalPaperIds ?? [];
         while (history.Count > 0)
@@ -320,7 +344,9 @@ internal sealed class ImportIdentityService
             var candidateId = history[0];
             history.RemoveAt(0);
             if (papersById.TryGetValue(candidateId, out var candidate) &&
-                string.Equals(candidate.Type, type, StringComparison.Ordinal))
+                string.Equals(candidate.Type, type, StringComparison.Ordinal) &&
+                (!requireMarkdownProvider ||
+                 string.Equals(candidate.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal)))
             {
                 link.LocalPaperId = candidateId;
                 link.LocalFingerprint = "";
@@ -332,6 +358,9 @@ internal sealed class ImportIdentityService
         link.PreviousLocalPaperIds = history;
         return null;
     }
+
+    private static string DisplayTitle(ImportPaper paper) =>
+        string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title;
 
     public static string ComputeNoteFingerprint(string? content) =>
         Hash(content ?? "");
