@@ -96,11 +96,21 @@
 
     <!-- 展开后的具体纸片行：紧凑列表，减少重复卡片与边框 -->
     <DataTemplate x:Key="PaperRowTemplate">
-      <Border Style="{StaticResource PaperListRow}"
-              MouseLeftButtonDown="OnRowMouseLeftButtonDown"
+      <Border MouseLeftButtonDown="OnRowMouseLeftButtonDown"
               MouseEnter="OnRowMouseEnter"
               MouseLeave="OnRowMouseLeave"
               MouseMove="OnRowMouseMove">
+        <Border.Style>
+          <Style TargetType="Border" BasedOn="{StaticResource PaperListRow}">
+            <!-- 每组第一行不画分割线，其余行画在顶边 -->
+            <Setter Property="BorderThickness" Value="0" />
+            <Style.Triggers>
+              <DataTrigger Binding="{Binding ShowTopSeparator}" Value="True">
+                <Setter Property="BorderThickness" Value="0,1,0,0" />
+              </DataTrigger>
+            </Style.Triggers>
+          </Style>
+        </Border.Style>
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />

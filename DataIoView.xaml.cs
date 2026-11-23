@@ -477,10 +477,13 @@ public partial class DataIoView : UserControl
 
             if (row.Type == "todo")
             {
+                // 每组第一行不画顶线，其余行画在顶边；必须在加入绑定集合前设置。
+                row.ShowTopSeparator = _todoRows.Count > 0;
                 _todoRows.Add(row);
             }
             else
             {
+                row.ShowTopSeparator = _noteRows.Count > 0;
                 _noteRows.Add(row);
             }
         }

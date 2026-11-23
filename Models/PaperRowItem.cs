@@ -18,6 +18,13 @@ public sealed class PaperRowItem : INotifyPropertyChanged
     public string Warning { get; init; } = "";
     public bool CanSelect { get; init; } = true;
 
+    /// <summary>
+    /// 是否在行顶绘制分割线。每组的第一行为 false，避免与上方按钮区重复分隔，
+    /// 最后一行不画底线，由列表外层收尾线统一分隔。
+    /// 视图必须在把行加入绑定集合之前设置该值（本属性不触发变更通知）。
+    /// </summary>
+    public bool ShowTopSeparator { get; set; }
+
     public bool IsSelected
     {
         get => _isSelected;
