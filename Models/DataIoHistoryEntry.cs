@@ -49,6 +49,23 @@ internal sealed class DataIoHistoryEntry
 
     [JsonIgnore]
     public bool IsImport => string.Equals(Kind, DataIoHistoryKinds.Import, StringComparison.Ordinal);
+
+    /// <summary>复制一份独立的记录，供 Runtime 与纸片镜像各自持有。</summary>
+    public DataIoHistoryEntry Clone() => new()
+    {
+        Kind = Kind,
+        At = At,
+        FilePath = FilePath,
+        Format = Format,
+        Papers = Papers,
+        Created = Created,
+        Updated = Updated,
+        Skipped = Skipped,
+        Failed = Failed,
+        Warnings = Warnings,
+        Cancelled = Cancelled,
+        StoppedEarly = StoppedEarly
+    };
 }
 
 internal enum DataIoHistoryBadgeTone

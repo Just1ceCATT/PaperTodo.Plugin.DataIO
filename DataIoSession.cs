@@ -15,7 +15,6 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 {
-    private const string MarkdownProviderId = "builtin.markdown";
 
     /// <summary>纸片转换为本插件后的默认标题。</summary>
     private const string DefaultPaperTitle = "DataIO";
@@ -80,6 +79,28 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>串行化身份解析，避免设置变化与导入同时重算更新目标。</summary>
     private readonly SemaphoreSlim _resolveLock = new(1, 1);
 
+    /// <summary>串行化与 provider Runtime 的工作区状态同步。</summary>
+    private readonly SemaphoreSlim _linkSyncLock = new(1, 1);
+
+    /// <summary>与 provider Runtime 同步工作区状态的请求序号与等待者。</summary>
+    private long _linkSyncRequestId;
+    private TaskCompletionSource<bool>? _linkSyncWaiter;
+
+    /// <summary>本会话是否成功从 Runtime 取得过权威快照；没有成功前不得反向覆盖 Runtime。</summary>
+    private bool _linkSynced;
+
+    /// <summary>最近一次同步是否已按当前工作区纸片列表校验过镜像。</summary>
+    private bool _linkSyncValidated;
+
+    /// <summary>本次会话有尚未推送到 Runtime 的工作区状态变化。</summary>
+    private bool _linkPushPending;
+
+    /// <summary>Runtime 状态损坏的提示是否已展示。</summary>
+    private bool _runtimeCorruptWarned;
+
+    /// <summary>本次导入是否已提示“映射不可用”，避免重复刷屏。</summary>
+    private bool _importLinksDegraded;
+
     public DataIoSession(PaperBodyContext context)
     {
         _context = context;
@@ -135,11 +156,36 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         _subscription = TrySubscribe();
         _view.Dispatcher.InvokeAsync(() => _ = RefreshAsync(), DispatcherPriority.Loaded);
+        // Runtime 可能在 Body 创建后稍晚才启动；先异步拉取一次映射，后续导入前还会再校验。
+        _view.Dispatcher.InvokeAsync(
+            () => _ = SyncWorkspaceStateAsync(CancellationToken.None),
+            DispatcherPriority.Background);
     }
 
     public FrameworkElement View => _view;
 
     public void Commit() => SaveState();
+
+    /// <summary>
+    /// 接收 provider Runtime 发回的工作区快照。Runtime state 按工作区隔离，
+    /// 是映射、历史和上次目录的权威存储；这里合并进本会话并刷新纸片级回退镜像。
+    /// </summary>
+    public bool OnRuntimeMessage(JsonElement message)
+    {
+        if (!RuntimeLinkProtocol.TryRead(
+                message,
+                out var type,
+                out var requestId,
+                out var workspace,
+                out var corrupt) ||
+            !string.Equals(type, RuntimeLinkProtocol.SnapshotType, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        ApplyRuntimeSnapshot(requestId, workspace, corrupt);
+        return true;
+    }
 
     public void RefreshFromModel() => ScheduleRefresh();
 
@@ -221,8 +267,6 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     public void OnDpiChanged()
     {
     }
-
-    public bool OnRuntimeMessage(JsonElement message) => false;
 
     public void OnSettingsChanged(string settingsJson)
     {
@@ -518,8 +562,199 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _identity.Reconcile(papersById);
         if (_identity.ConsumeChanges())
         {
-            SaveState();
+            SaveWorkspaceState();
         }
+    }
+
+    /// <summary>
+    /// 把 Runtime 的工作区快照合并进本会话。Runtime 按工作区隔离、不随纸片删除，
+    /// 是权威数据；纸片自己的 state 只保留一份回退镜像。
+    /// </summary>
+    private void ApplyRuntimeSnapshot(
+        long requestId,
+        RuntimeWorkspaceState? workspace,
+        bool corrupt)
+    {
+        var changed = workspace is not null &&
+                      RuntimeLinkProtocol.ApplyToState(_state, workspace, _linkSyncValidated);
+        if (changed)
+        {
+            RefreshHistoryUi();
+            if (!_busy)
+            {
+                SaveState();
+            }
+        }
+
+        if (corrupt && !_runtimeCorruptWarned)
+        {
+            _runtimeCorruptWarned = true;
+            var warning = "导入工作区状态损坏，原始内容已保留在插件状态备份中。";
+            _startupWarning = string.IsNullOrEmpty(_startupWarning)
+                ? warning
+                : _startupWarning + " " + warning;
+            if (!_disposed)
+            {
+                SetStatus(StartupPrefix() + "已从工作区状态恢复导入映射。");
+            }
+        }
+
+        if (_linkSyncWaiter is { } waiter &&
+            requestId == Interlocked.Read(ref _linkSyncRequestId))
+        {
+            waiter.TrySetResult(true);
+        }
+    }
+
+    private void RefreshHistoryUi()
+    {
+        _view.SetRecentOperations(_state.History);
+        _miniView?.Update(_state.History, _theme);
+    }
+
+    /// <summary>
+    /// 与 Runtime 对账：把旧版纸片镜像迁移进 Runtime，并取回权威快照。
+    /// 返回 false 表示本次没能取得权威数据，调用方应提示降级。
+    /// </summary>
+    private async Task<bool> SyncWorkspaceStateAsync(CancellationToken cancellationToken)
+    {
+        await _linkSyncLock.WaitAsync(cancellationToken);
+        try
+        {
+            for (var attempt = 0; attempt < 2 && !_context.Runtime.IsAvailable; attempt++)
+            {
+                await Task.Delay(120, cancellationToken);
+            }
+
+            if (!_context.Runtime.IsAvailable)
+            {
+                return false;
+            }
+
+            var requestId = Interlocked.Increment(ref _linkSyncRequestId);
+            var waiter = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _linkSyncWaiter = waiter;
+
+            // 只把当前工作区仍存在（或仍有历史副本）的映射迁移进 Runtime，
+            // 避免工具纸片隐藏期间错过的删除事件把死映射反向种进权威副本。
+            var request = RuntimeLinkProtocol.FromState(_state);
+            (request.ImportLinks, _linkSyncValidated) =
+                await FilterKnownLinksAsync(request.ImportLinks, cancellationToken);
+
+            try
+            {
+                if (!_context.Runtime.Post(
+                        RuntimeLinkProtocol.CreateMergeRequest(requestId, request)))
+                {
+                    MarkPushPending(request.ImportLinks);
+                    return false;
+                }
+
+                await waiter.Task.WaitAsync(TimeSpan.FromMilliseconds(800), cancellationToken);
+                // 只有按当前工作区校验过镜像，才允许后续用本地状态替换 Runtime。
+                _linkSynced = _linkSyncValidated;
+                if (_linkPushPending)
+                {
+                    PushWorkspaceState();
+                }
+
+                return _linkSyncValidated;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
+            catch (PaperTodoPluginException)
+            {
+                return false;
+            }
+            finally
+            {
+                if (ReferenceEquals(_linkSyncWaiter, waiter))
+                {
+                    _linkSyncWaiter = null;
+                }
+            }
+        }
+        finally
+        {
+            _linkSyncLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 按当前工作区纸片过滤待迁移的镜像映射：当前目标或历史副本仍存在才保留。
+    /// 列表不可读时返回 Validated=false，调用方应只做合并、不能反向覆盖 Runtime。
+    /// </summary>
+    private async Task<(Dictionary<string, ImportIdentityLink> Links, bool Validated)>
+        FilterKnownLinksAsync(
+            Dictionary<string, ImportIdentityLink> links,
+            CancellationToken cancellationToken)
+    {
+        if (links.Count == 0)
+        {
+            return (links, true);
+        }
+
+        if (!_gateway.Can(PaperTodoPermissionNames.PapersRead))
+        {
+            return (new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal), false);
+        }
+
+        IReadOnlyList<PaperSnapshot> papers;
+        try
+        {
+            papers = await _gateway.OnUiAsync(() => _context.Workspace.ListPapers());
+        }
+        catch (PaperTodoPluginException)
+        {
+            return (new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal), false);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var known = papers.Select(paper => paper.Id).ToHashSet(StringComparer.Ordinal);
+        return (RuntimeLinkProtocol.FilterKnownLinks(links, known), true);
+    }
+
+    /// <summary>映射、历史或上次目录变化后同时刷新纸片级镜像与 Runtime 权威状态。</summary>
+    private void SaveWorkspaceState()
+    {
+        SaveState();
+        PushWorkspaceState();
+    }
+
+    private void PushWorkspaceState()
+    {
+        // 没有成功拿到权威快照前，不能反向覆盖 Runtime；先落盘待推送日志。
+        if (!_context.Runtime.IsAvailable || !_linkSynced)
+        {
+            MarkPushPending();
+            return;
+        }
+
+        try
+        {
+            if (!_context.Runtime.Post(
+                    RuntimeLinkProtocol.CreateReplace(RuntimeLinkProtocol.FromState(_state))))
+            {
+                MarkPushPending();
+                return;
+            }
+
+            _linkPushPending = false;
+            RuntimeLinkProtocol.DeletePendingLinks();
+        }
+        catch (PaperTodoPluginException)
+        {
+            MarkPushPending();
+        }
+    }
+
+    /// <summary>Runtime 暂时不可用时把映射写入待推送日志，等 Runtime 恢复后合并。</summary>
+    private void MarkPushPending(IReadOnlyDictionary<string, ImportIdentityLink>? links = null)
+    {
+        _linkPushPending = true;
+        RuntimeLinkProtocol.WritePendingLinks(links ?? _state.ImportLinks);
     }
 
     /// <summary>首次展示状态栏时带上“状态已损坏并备份”的提示。</summary>
@@ -587,7 +822,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             else if (string.Equals(paper.Type, "note", StringComparison.Ordinal))
             {
                 if (!_settings.IncludeNotePapers ||
-                    !string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal) ||
+                    !string.Equals(paper.BodyProviderId, PaperProviders.Markdown, StringComparison.Ordinal) ||
                     !_gateway.Can(PaperTodoPermissionNames.NotesRead))
                 {
                     continue;
@@ -1147,7 +1382,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
 
         _state.LastExportDirectory = Path.GetDirectoryName(dialog.FileName) ?? "";
-        SaveState();
+        SaveWorkspaceState();
 
         var formatLabel = markdown ? "Markdown" : "JSON";
 
@@ -1287,7 +1522,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
 
         _state.LastImportDirectory = Path.GetDirectoryName(dialog.FileName) ?? "";
-        SaveState();
+        SaveWorkspaceState();
 
         SetStatus("正在读取导入文件…");
         ImportPlan plan;
@@ -1307,6 +1542,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             SetStatus(plan.FatalError);
             return;
         }
+
+        // 换文件时重新允许一次“映射不可用”的提示。
+        _importLinksDegraded = false;
 
         // 按当前设置解析可更新的本地纸片；解析失败时按全部新建处理并给出提示。
         if (!await RefreshUpdateTargetsAsync(plan, CancellationToken.None))
@@ -1368,6 +1606,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
             try
             {
+                // 优先使用 Runtime 中的权威映射；Runtime 不可用时退回纸片级镜像。
+                var linksSynced = await SyncWorkspaceStateAsync(cancellationToken);
+                if (!linksSynced && !_importLinksDegraded)
+                {
+                    _importLinksDegraded = true;
+                    plan.Warnings.Add(
+                        "未能读取工作区级导入映射，本次可能把已导入的纸片当作新建。");
+                }
+
                 await _identity.ResolveAsync(plan, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1379,7 +1626,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
             if (_identity.ConsumeChanges())
             {
-                SaveState();
+                SaveWorkspaceState();
             }
 
             return true;
@@ -1644,7 +1891,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
                 if (_identity.ConsumeChanges())
                 {
-                    SaveState();
+                    SaveWorkspaceState();
                 }
 
                 RecordHistory(new DataIoHistoryEntry
@@ -1737,7 +1984,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         _identity.RemoveByLocalPaperId(deleted.Paper.Id);
                         if (_identity.ConsumeChanges())
                         {
-                            SaveState();
+                            SaveWorkspaceState();
                         }
                     }
 
@@ -1809,7 +2056,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 _state.History.Count - DataIoState.MaxHistory);
         }
 
-        SaveState();
+        SaveWorkspaceState();
         _view.SetRecentOperations(_state.History);
         _miniView?.Update(_state.History, _theme);
     }

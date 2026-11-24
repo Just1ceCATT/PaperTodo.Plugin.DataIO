@@ -11,7 +11,6 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal sealed class ImportIdentityService
 {
-    private const string MarkdownProviderId = "builtin.markdown";
 
     private readonly HostGateway _gateway;
     private readonly DataIoState _state;
@@ -124,7 +123,7 @@ internal sealed class ImportIdentityService
             }
             else
             {
-                if (!string.Equals(target.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal))
+                if (!string.Equals(target.BodyProviderId, PaperProviders.Markdown, StringComparison.Ordinal))
                 {
                     // 目标已不再是内置 Markdown 笔记：先尝试回退到同为 Markdown 的历史副本，否则清理映射。
                     target = FindFallback(
@@ -263,6 +262,10 @@ internal sealed class ImportIdentityService
 
         return oldest.Length > 0;
     }
+
+    /// <summary>比较两条映射的最近导入时间；无法解析时按最旧处理。</summary>
+    internal static int CompareImportedAt(string? left, string? right) =>
+        ParseImportedAt(left).CompareTo(ParseImportedAt(right));
 
     private static DateTimeOffset ParseImportedAt(string? value) =>
         DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
@@ -464,7 +467,7 @@ internal sealed class ImportIdentityService
             if (papersById.TryGetValue(candidateId, out var candidate) &&
                 string.Equals(candidate.Type, type, StringComparison.Ordinal) &&
                 (!requireMarkdownProvider ||
-                 string.Equals(candidate.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal)))
+                 string.Equals(candidate.BodyProviderId, PaperProviders.Markdown, StringComparison.Ordinal)))
             {
                 link.LocalPaperId = candidateId;
                 link.LocalFingerprint = "";

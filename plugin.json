@@ -13,7 +13,8 @@
     "height": 260
   },
   "capabilities": [
-    "textZoom"
+    "textZoom",
+    "runtime"
   ],
   "permissions": [
     "papers.read",
