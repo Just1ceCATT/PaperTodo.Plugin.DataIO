@@ -5,7 +5,6 @@ namespace PaperTodo.Plugin.DataIo;
 /// <summary>通过宿主逻辑数据 API 采集快照并组装导出文档。</summary>
 internal sealed class ExportService
 {
-    private const string MarkdownProviderId = "builtin.markdown";
 
     private readonly HostGateway _gateway;
 
@@ -103,7 +102,7 @@ internal sealed class ExportService
             exportPaper.Content = "";
 
             // 只有内置 Markdown 正文可以通过逻辑 API 读取；其他插件正文由各自 provider 拥有。
-            if (string.Equals(paper.BodyProviderId, MarkdownProviderId, StringComparison.Ordinal) &&
+            if (string.Equals(paper.BodyProviderId, PaperProviders.Markdown, StringComparison.Ordinal) &&
                 _gateway.Can(PaperTodoPermissionNames.NotesRead))
             {
                 var note = await _gateway.OnUiAsync(() => _gateway.Context.Workspace.GetNote(paper.Id));

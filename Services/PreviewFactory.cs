@@ -8,7 +8,6 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static class PreviewFactory
 {
-    private const string MarkdownProviderId = "builtin.markdown";
 
     public static async Task<PreviewContent?> BuildExportAsync(
         HostGateway gateway,
@@ -60,7 +59,7 @@ internal static class PreviewFactory
         var body = note?.Content ?? "";
         var providerSupported = string.Equals(
             paper.BodyProviderId,
-            MarkdownProviderId,
+            PaperProviders.Markdown,
             StringComparison.Ordinal);
         var available = providerSupported && (note?.ContentAvailable ?? false);
 
