@@ -60,6 +60,9 @@ internal static class ExportJson
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         MaxDepth = 64,
+        // 与宿主读取 data.json 的容错保持一致：允许注释和尾随逗号。
+        ReadCommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
         // 保留中文原文，避免 \uXXXX 让导出文件难以阅读。
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
