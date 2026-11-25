@@ -1701,16 +1701,42 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
 
         var markdown = _view.ExportFormat == DataIoExportFormat.Markdown;
-        var extension = markdown ? ".md" : ".json";
+        var formatLabel = markdown ? "Markdown" : "JSON";
+
+        // 关闭纸片时取消导出，避免在已销毁的会话上继续弹结果框。
+        using var cts = new CancellationTokenSource();
+        _operation = cts;
+
+        // 先只读取正文，用图片引用决定保存对话框应显示 zip 还是单一文件。
+        SetStatus("正在读取数据…");
+        var document = await _exportService.CaptureDocumentAsync(
+            selected.Select(p => p.Id).ToList(),
+            _context.PaperId,
+            cts.Token);
+        cts.Token.ThrowIfCancellationRequested();
+
+        var hasImageReferences = document.Papers.Any(paper =>
+            string.Equals(paper.Type, "note", StringComparison.Ordinal) &&
+            paper.ContentAvailable == true &&
+            ImageReferenceScanner.Enumerate(paper.Content).Count > 0);
+
+        // 选中内容包含图片时统一输出压缩包；不含图片时只输出一个单一文件。
+        var extension = hasImageReferences ? ".zip" : markdown ? ".md" : ".json";
         var dialog = new SaveFileDialog
         {
             Title = "导出纸片数据",
-            Filter = markdown
-                ? "Markdown 文档 (*.md)|*.md"
-                : "PaperTodo 数据 (*.json)|*.json",
+            Filter = hasImageReferences
+                ? "PaperTodo 压缩包 (*.zip)|*.zip"
+                : markdown
+                    ? "Markdown 文档 (*.md)|*.md"
+                    : "PaperTodo 数据 (*.json)|*.json",
             DefaultExt = extension,
             AddExtension = true,
-            FileName = ExportFileName.Build(DateTimeOffset.Now, selected.Count, markdown)
+            FileName = ExportFileName.Build(
+                DateTimeOffset.Now,
+                selected.Count,
+                markdown,
+                zip: hasImageReferences)
         };
 
         var initial = ResolveDirectory(_state.LastExportDirectory);
@@ -1727,38 +1753,33 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _state.LastExportDirectory = Path.GetDirectoryName(dialog.FileName) ?? "";
         SaveWorkspaceState();
 
-        var formatLabel = markdown ? "Markdown" : "JSON";
-
-        // 关闭纸片时取消导出，避免在已销毁的会话上继续弹结果框。
-        using var cts = new CancellationTokenSource();
-        _operation = cts;
-
-        SetStatus("正在读取数据…");
-        var capture = await _exportService.CaptureAsync(
-            selected.Select(p => p.Id).ToList(),
-            _context.PaperId,
-            cts.Token);
-        cts.Token.ThrowIfCancellationRequested();
-
-        var document = capture.Document;
-
-        // 含图片时改用压缩包，用户在保存对话框里选的路径只作为基名。
-        var targetPath = capture.HasImages
+        // 用户在对话框里确定路径后再读取图片本体，取消时不必读取大文件。
+        var targetPath = hasImageReferences
             ? ExportFileName.EnsureZipExtension(dialog.FileName)
-            : dialog.FileName;
+            : ExportFileName.EnsureSingleFileExtension(dialog.FileName, markdown);
+
+        var imageCapture = ExportImageCapture.Empty;
+        if (hasImageReferences)
+        {
+            SetStatus("正在读取图片…");
+            imageCapture = await _exportService.CaptureImagesAsync(document, cts.Token);
+            cts.Token.ThrowIfCancellationRequested();
+        }
+
+        var images = imageCapture.Images;
 
         SetStatus("正在写入文件…");
         await Task.Run(() =>
         {
-            if (capture.HasImages)
+            if (hasImageReferences)
             {
                 if (markdown)
                 {
-                    ExportPackageService.WriteMarkdownZip(targetPath, document, capture.Images);
+                    ExportPackageService.WriteMarkdownZip(targetPath, document, images);
                 }
                 else
                 {
-                    ExportPackageService.WriteJsonZip(targetPath, document, capture.Images);
+                    ExportPackageService.WriteJsonZip(targetPath, document, images);
                 }
             }
             else if (markdown)
@@ -1789,26 +1810,26 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             status += $"（{unavailableNotes} 张笔记正文不可读取，已按空正文导出）";
         }
 
-        if (capture.HasImages)
+        if (imageCapture.HasImages)
         {
-            status += $"（含 {capture.Images.Count} 张图片）";
+            status += $"（含 {images.Count} 张图片）";
         }
         else if (imageSummary.HasAny)
         {
             status += $"（{imageSummary.NoteCount} 张笔记含 {imageSummary.ReferenceCount} 处图片引用，图片未包含在导出文件中）";
         }
 
-        if (capture.FailedImageReads > 0)
+        if (imageCapture.FailedImageReads > 0)
         {
-            status += $"（{capture.FailedImageReads} 张图片读取失败，未包含）";
+            status += $"（{imageCapture.FailedImageReads} 张图片读取失败，未包含）";
         }
 
-        if (capture.OversizedImages > 0)
+        if (imageCapture.OversizedImages > 0)
         {
-            status += $"（{capture.OversizedImages} 张图片超过 8 MiB，导入时会压缩后写回）";
+            status += $"（{imageCapture.OversizedImages} 张图片超过 8 MiB，导入时会压缩后写回）";
         }
 
-        if (capture.ImageCaptureTruncated)
+        if (imageCapture.ImageCaptureTruncated)
         {
             status += "（图片总量超过导出上限，部分图片未包含）";
         }
@@ -1825,31 +1846,31 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             Kind = DataIoHistoryKinds.Export,
             At = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
             FilePath = targetPath,
-            Format = capture.HasImages ? "zip" : markdown ? "markdown" : "json",
+            Format = hasImageReferences ? "zip" : markdown ? "markdown" : "json",
             Papers = document.Papers.Count,
             Warnings = (unavailableNotes > 0 ? 1 : 0)
-                + (capture.HasImages ? 0 : imageSummary.HasAny ? 1 : 0)
-                + (capture.FailedImageReads > 0 ? 1 : 0)
-                + (capture.OversizedImages > 0 ? 1 : 0)
-                + (capture.ImageCaptureTruncated ? 1 : 0)
+                + (imageCapture.HasImages ? 0 : imageSummary.HasAny ? 1 : 0)
+                + (imageCapture.FailedImageReads > 0 ? 1 : 0)
+                + (imageCapture.OversizedImages > 0 ? 1 : 0)
+                + (imageCapture.ImageCaptureTruncated ? 1 : 0)
         });
 
         var stats = new List<(string Label, string Value)>
         {
             ("导出纸片", $"{document.Papers.Count} 张"),
-            ("导出格式", capture.HasImages ? $"{formatLabel} 压缩包" : formatLabel)
+            ("导出格式", hasImageReferences ? $"{formatLabel} 压缩包" : formatLabel)
         };
         if (unavailableNotes > 0)
         {
             stats.Add(("正文不可读", $"{unavailableNotes} 张"));
         }
 
-        if (capture.HasImages)
+        if (imageCapture.HasImages)
         {
-            stats.Add(("包含图片", $"{capture.Images.Count} 张"));
-            if (capture.OversizedImages > 0)
+            stats.Add(("包含图片", $"{images.Count} 张"));
+            if (imageCapture.OversizedImages > 0)
             {
-                stats.Add(("需压缩图片", $"{capture.OversizedImages} 张"));
+                stats.Add(("需压缩图片", $"{imageCapture.OversizedImages} 张"));
             }
         }
         else if (imageSummary.HasAny)
@@ -1858,9 +1879,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             stats.Add(("图片引用", $"{imageSummary.ReferenceCount} 处"));
         }
 
-        if (capture.FailedImageReads > 0)
+        if (imageCapture.FailedImageReads > 0)
         {
-            stats.Add(("图片读取失败", $"{capture.FailedImageReads} 张"));
+            stats.Add(("图片读取失败", $"{imageCapture.FailedImageReads} 张"));
         }
 
         // 每次都明确说明导出文件不是完整备份，避免用户把它当作唯一的数据保全手段。
@@ -1877,40 +1898,37 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 "提醒、关联纸片、可见性等 PaperTodo 专有数据不会保留。");
         }
 
-        if (capture.HasImages)
+        if (hasImageReferences)
         {
-            details.Add("检测到笔记图片，已自动保存为 .zip；图片本体和正文都在包内，无需手动解压。");
-            if (markdown)
+            details.Add(imageCapture.HasImages
+                ? "检测到笔记图片，已自动保存为 .zip；图片本体和正文都在包内，无需手动解压。"
+                : "正文引用了图片，已保存为 .zip，但这次没有图片真正写入包内；" +
+                  "换设备或原图被清理后，这些引用可能无法显示。");
+
+            if (imageCapture.HasImages && markdown)
             {
                 details.Add("压缩包内的 Markdown 使用相对图片链接，可直接用其他 Markdown 工具查看。");
             }
 
-            if (capture.OversizedImages > 0)
+            if (imageCapture.OversizedImages > 0)
             {
                 details.Add(
-                    $"{capture.OversizedImages} 张图片超过插件直接写入上限（8 MiB），" +
+                    $"{imageCapture.OversizedImages} 张图片超过插件直接写入上限（8 MiB），" +
                     "导入时会按宿主规则压缩到 8 MiB 以内；" +
                     "GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。");
             }
 
-            if (capture.FailedImageReads > 0)
+            if (imageCapture.FailedImageReads > 0)
             {
                 details.Add(
-                    $"{capture.FailedImageReads} 张图片读取失败，正文中的引用保持原样；" +
+                    $"{imageCapture.FailedImageReads} 张图片读取失败，正文中的引用保持原样；" +
                     "换设备后这些引用可能无法显示。");
             }
 
-            if (capture.ImageCaptureTruncated)
+            if (imageCapture.ImageCaptureTruncated)
             {
                 details.Add("图片总量超过单次导出上限，剩余图片未包含在压缩包中。");
             }
-        }
-        else if (imageSummary.HasAny)
-        {
-            details.Add(markdown
-                ? "图片本体未包含在文件中；正文中的图片引用已原样保留，但换设备或原图被清理后将无法显示。"
-                : "图片本体未包含在文件中。导入到其他设备、或原图已被清理后，图片将无法显示；" +
-                  "如果图片 ID 被复用，还可能显示成其他图片。");
         }
 
         _view.ShowResultDialog("导出完成", stats, details);

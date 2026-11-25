@@ -16,9 +16,10 @@ internal sealed class ExportService
     }
 
     /// <summary>
-    /// 在 UI 线程读取宿主数据并组装文档。序列化与写盘由调用方放到后台线程。
+    /// 在 UI 线程读取宿主数据并组装文档（不含图片本体）。
+    /// 调用方可以先用正文里的图片引用决定保存格式，再按需读取图片。
     /// </summary>
-    public async Task<ExportCaptureResult> CaptureAsync(
+    public async Task<ExportDocument> CaptureDocumentAsync(
         IReadOnlyCollection<string> paperIds,
         string currentPaperId,
         CancellationToken cancellationToken)
@@ -56,8 +57,6 @@ internal sealed class ExportService
             }
         };
 
-        var images = new ImageCaptureState();
-        var canCaptureImages = CanCaptureNoteImages();
         foreach (var paper in papers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -68,35 +67,69 @@ internal sealed class ExportService
                 continue;
             }
 
-            var exportPaper = await MapPaperAsync(paper, todosByPaper, cancellationToken);
-            document.Papers.Add(exportPaper);
-
-            if (canCaptureImages &&
-                string.Equals(exportPaper.Type, "note", StringComparison.Ordinal) &&
-                exportPaper.ContentAvailable == true)
-            {
-                await CapturePaperImagesAsync(
-                    paper.Id,
-                    exportPaper,
-                    images,
-                    cancellationToken);
-            }
+            document.Papers.Add(
+                await MapPaperAsync(paper, todosByPaper, cancellationToken));
         }
 
-        if (images.Images.Count > 0)
+        return document;
+    }
+
+    /// <summary>读取文档中笔记引用的图片本体；单张失败只跳过该图片。</summary>
+    public async Task<ExportImageCapture> CaptureImagesAsync(
+        ExportDocument document,
+        CancellationToken cancellationToken)
+    {
+        if (!CanCaptureNoteImages())
+        {
+            return ExportImageCapture.Empty;
+        }
+
+        var state = new ImageCaptureState();
+        foreach (var paper in document.Papers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!string.Equals(paper.Type, "note", StringComparison.Ordinal) ||
+                paper.ContentAvailable != true)
+            {
+                continue;
+            }
+
+            await CapturePaperImagesAsync(
+                paper.SourceId,
+                paper,
+                state,
+                cancellationToken);
+        }
+
+        if (state.Images.Count > 0)
         {
             // 有图片清单时才写 v2；无图片仍保持 v1，旧插件可以继续读取。
-            document.Images = images.Images
+            document.Images = state.Images
                 .Select(ExportPackageService.ToManifest)
                 .ToList();
             document.SchemaVersion = ExportDocument.CurrentSchemaVersion;
         }
 
+        return new ExportImageCapture(
+            state.Images,
+            state.FailedReads,
+            state.Truncated);
+    }
+
+    /// <summary>一次性采集正文与图片，供不需要提前决定保存格式的调用方使用。</summary>
+    public async Task<ExportCaptureResult> CaptureAsync(
+        IReadOnlyCollection<string> paperIds,
+        string currentPaperId,
+        CancellationToken cancellationToken)
+    {
+        var document = await CaptureDocumentAsync(paperIds, currentPaperId, cancellationToken);
+        var images = await CaptureImagesAsync(document, cancellationToken);
         return new ExportCaptureResult(
             document,
             images.Images,
-            images.FailedReads,
-            images.Truncated);
+            images.FailedImageReads,
+            images.ImageCaptureTruncated);
     }
 
     private bool CanCaptureNoteImages()
@@ -247,6 +280,20 @@ internal sealed class ExportService
         LinkedPath = todo.LinkedPath,
         LinkedPathIsDirectory = todo.LinkedPathIsDirectory
     };
+}
+
+/// <summary>图片本体采集结果：已读取的图片、失败数量与是否因超限截断。</summary>
+internal sealed record ExportImageCapture(
+    IReadOnlyList<CapturedExportImage> Images,
+    int FailedImageReads,
+    bool ImageCaptureTruncated)
+{
+    public static ExportImageCapture Empty { get; } = new([], 0, false);
+
+    public bool HasImages => Images.Count > 0;
+
+    /// <summary>超过插件追加上限、只能保留在压缩包里的图片数量。</summary>
+    public int OversizedImages => Images.Count(image => !image.Restorable);
 }
 
 /// <summary>一次导出的结果：正文文档、已读取的图片和图片统计。</summary>

@@ -58,4 +58,29 @@ public sealed class ExportFileNameTests
             @"C:\导出\backup.ZIP",
             ExportFileName.EnsureZipExtension(@"C:\导出\backup.ZIP"));
     }
+
+    [Fact]
+    public void Zip_name_uses_zip_extension_when_images_are_referenced()
+    {
+        Assert.Equal(
+            "pt-261123-1435-3张.zip",
+            ExportFileName.Build(At, 3, markdown: false, zip: true));
+        Assert.Equal(
+            "pt-261123-1435-2张.zip",
+            ExportFileName.Build(At, 2, markdown: true, zip: true));
+    }
+
+    [Fact]
+    public void Single_file_extension_is_restored_for_plain_exports()
+    {
+        Assert.Equal(
+            @"C:\导出\pt-261123-1435-3张.json",
+            ExportFileName.EnsureSingleFileExtension(@"C:\导出\pt-261123-1435-3张.zip", markdown: false));
+        Assert.Equal(
+            @"C:\导出\pt-261123-1435-3张.md",
+            ExportFileName.EnsureSingleFileExtension(@"C:\导出\pt-261123-1435-3张.json", markdown: true));
+        Assert.Equal(
+            @"C:\导出\pt-261123-1435-3张.MD",
+            ExportFileName.EnsureSingleFileExtension(@"C:\导出\pt-261123-1435-3张.MD", markdown: true));
+    }
 }

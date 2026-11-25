@@ -13,9 +13,9 @@ internal static class ExportFileName
     /// <summary>插件前缀；两字符即可识别来源，同时给时间与数量留出空间。</summary>
     public const string Prefix = "pt";
 
-    public static string Build(DateTimeOffset at, int paperCount, bool markdown)
+    public static string Build(DateTimeOffset at, int paperCount, bool markdown, bool zip = false)
     {
-        var extension = markdown ? ".md" : ".json";
+        var extension = zip ? ".zip" : markdown ? ".md" : ".json";
         var count = Math.Max(0, paperCount);
         var stamp = at.ToString("yyMMdd-HHmm", CultureInfo.InvariantCulture);
         return $"{Prefix}-{stamp}-{count}张{extension}";
@@ -26,4 +26,13 @@ internal static class ExportFileName
         string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase)
             ? path
             : Path.ChangeExtension(path, ".zip");
+
+    /// <summary>不含图片时把用户输入的其他扩展名改回 .json/.md，避免单文件被写成 .zip。</summary>
+    public static string EnsureSingleFileExtension(string path, bool markdown)
+    {
+        var extension = markdown ? ".md" : ".json";
+        return string.Equals(Path.GetExtension(path), extension, StringComparison.OrdinalIgnoreCase)
+            ? path
+            : Path.ChangeExtension(path, extension);
+    }
 }
