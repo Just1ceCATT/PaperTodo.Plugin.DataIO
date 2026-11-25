@@ -21,6 +21,15 @@ internal sealed class ImportResult
     public int RestoredLinks { get; set; }
     public int RestoredReminders { get; set; }
 
+    /// <summary>成功写回笔记的图片数量。</summary>
+    public int RestoredImages { get; set; }
+
+    /// <summary>写回失败且保留原引用的图片数量。</summary>
+    public int FailedImages { get; set; }
+
+    /// <summary>因超过插件上限或缺少权限而未写回的图片数量。</summary>
+    public int SkippedImages { get; set; }
+
     /// <summary>成功处理的 sourceId → 本地纸片 ID，用于导入后更新身份映射。</summary>
     public Dictionary<string, string> SourceIdToPaperId { get; } =
         new(StringComparer.Ordinal);

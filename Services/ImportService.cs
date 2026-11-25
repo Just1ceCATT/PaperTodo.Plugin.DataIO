@@ -1,3 +1,4 @@
+using System.IO;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -115,6 +116,26 @@ internal sealed class ImportService
                     {
                         idMap[importPaper.Source.SourceId] = localId;
                         result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
+                    }
+
+                    // 图片紧跟正文写入，尽量缩短“正文已更新但图片仍是旧引用”的窗口。
+                    try
+                    {
+                        await RestoreImagesAsync(
+                            importPaper,
+                            localId,
+                            createdNow,
+                            result,
+                            cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+                    {
+                        result.Warnings.Add(
+                            $"纸片“{DisplayTitle(importPaper)}”的图片未能写回：{ex.Message}");
                     }
                 }
                 catch (PaperTodoPluginException ex) when (IsFatal(ex.Code))
@@ -447,7 +468,7 @@ internal sealed class ImportService
             Type = type,
             Title = importPaper.SafeTitle,
             Show = settings.ImportShowCreated || source.Show,
-            Content = type == "note" ? source.Content ?? "" : null,
+            Content = type == "note" ? BuildCreateContent(importPaper) : null,
             Todos = todos
         };
 
@@ -472,6 +493,328 @@ internal sealed class ImportService
                 result.Warnings.Add($"标题“{normalized}”超过标题上限，已截断为“{truncated}”。");
                 request = request with { Title = truncated.Length == 0 ? null : truncated };
             }
+        }
+    }
+
+    /// <summary>
+    /// 新建带图片的笔记时先移除旧图片引用，等图片写入成功后由最终替换恢复完整正文。
+    /// 这样不会先以其他机器上失效的引用创建纸片，也避免末尾开放代码块阻止追加。
+    /// </summary>
+    private static string BuildCreateContent(ImportPaper importPaper)
+    {
+        var content = importPaper.Source.Content ?? "";
+        if (importPaper.Images.Count == 0 || importPaper.ResolvedImageReferences == 0)
+        {
+            return content;
+        }
+
+        return importPaper.UsesRelativeImageLinks
+            ? ImageReferenceScanner.RewriteRelativeImageLinks(content, _ => "")
+            : ImageReferenceScanner.RewriteReferences(content, _ => "");
+    }
+
+    /// <summary>
+    /// 把压缩包内的图片写回笔记：先逐张追加拿到本机图片 ID，再整体替换正文。
+    /// 单张追加失败只保留原引用；整体写入失败时会尝试清理本次追加的尾部引用。
+    /// </summary>
+    private async Task RestoreImagesAsync(
+        ImportPaper importPaper,
+        string paperId,
+        bool createdNow,
+        ImportResult result,
+        CancellationToken cancellationToken)
+    {
+        var images = importPaper.Images;
+        if (images.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(importPaper.Source.Type, "note", StringComparison.OrdinalIgnoreCase) ||
+            importPaper.Source.ContentAvailable != true)
+        {
+            result.SkippedImages += images.Count;
+            return;
+        }
+
+        if (importPaper.ResolvedImageReferences == 0)
+        {
+            // 正文没有引用这些图片，写回只会产生孤儿图片。
+            result.SkippedImages += images.Count;
+            return;
+        }
+
+        if (!_gateway.Can(PaperTodoPermissionNames.NotesAppend) ||
+            !_gateway.Can(PaperTodoPermissionNames.NotesReplace))
+        {
+            result.SkippedImages += images.Count;
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”包含 {images.Count} 张图片，" +
+                "但缺少 notes.append/notes.replace 权限，图片未写回。");
+            return;
+        }
+
+        try
+        {
+            _ = _gateway.Context.NoteAssets;
+        }
+        catch (InvalidOperationException)
+        {
+            result.SkippedImages += images.Count;
+            result.Warnings.Add("当前宿主不支持插件写入笔记图片，压缩包中的图片未写回。");
+            return;
+        }
+
+        var canReadImages = _gateway.Can(PaperTodoPermissionNames.NotesRead);
+        var newIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        var idsByFile = new Dictionary<string, string>(StringComparer.Ordinal);
+        var appended = new List<string>();
+        var failed = 0;
+        var skipped = 0;
+        string? firstFailure = null;
+
+        try
+        {
+            for (var index = 0; index < images.Count; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var image = images[index];
+                if (!image.Restorable)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                // 同一工作区重新导入时，图片往往已经存在且内容一致，直接复用原 ID，
+                // 避免重复写入和正文图片 ID 每次导入都变化。
+                if (canReadImages &&
+                    !string.IsNullOrWhiteSpace(image.SourceImageId) &&
+                    await CanReuseLocalImageAsync(paperId, image))
+                {
+                    newIds[image.SourceImageId] = image.SourceImageId;
+                    idsByFile[image.File] = image.SourceImageId;
+                    continue;
+                }
+
+                var imageName = Path.GetFileName(image.File);
+                if (imageName.Length > 200)
+                {
+                    imageName = imageName[..200];
+                }
+
+                try
+                {
+                    var inserted = await _gateway.OnUiAsync(
+                        () => _gateway.Context.NoteAssets.AppendImage(
+                            paperId,
+                            image.Bytes,
+                            string.IsNullOrEmpty(imageName) ? null : imageName));
+                    newIds[image.SourceImageId] = inserted.ImageId;
+                    idsByFile[image.File] = inserted.ImageId;
+                    appended.Add(inserted.MarkdownReference);
+                }
+                catch (PaperTodoPluginException ex) when (ex.Code == "image_reference_not_renderable")
+                {
+                    // 正文末尾处于未闭合代码块，继续追加同样会失败。
+                    failed += images.Count - index;
+                    result.Warnings.Add(
+                        $"纸片“{DisplayTitle(importPaper)}”的正文末尾有未闭合的代码块，图片无法写回；" +
+                        "请先修正正文后重新导入。");
+                    break;
+                }
+                catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+                {
+                    failed++;
+                    firstFailure ??= ex.Message;
+                }
+
+                await HostGateway.YieldAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            throw;
+        }
+
+        result.FailedImages += failed;
+        result.SkippedImages += skipped;
+
+        if (newIds.Count == 0)
+        {
+            if (failed > 0)
+            {
+                var reason = string.IsNullOrWhiteSpace(firstFailure) ? "" : $"（{firstFailure}）";
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”的 {failed} 张图片未能写回" +
+                    $"{reason}，相关引用保持原样。");
+            }
+
+            // 新建时为了追加图片移除过引用；图片全部失败时把文件中的原始引用写回，保留位置。
+            if (createdNow &&
+                !string.Equals(
+                    BuildCreateContent(importPaper),
+                    importPaper.Source.Content ?? "",
+                    StringComparison.Ordinal))
+            {
+                try
+                {
+                    await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(
+                        new WriteNoteRequest
+                        {
+                            PaperId = paperId,
+                            Content = importPaper.Source.Content ?? "",
+                            Mode = NoteWriteMode.Replace
+                        }));
+                }
+                catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+                {
+                    result.Warnings.Add(
+                        $"纸片“{DisplayTitle(importPaper)}”的原始图片引用未能写回：{ex.Message}");
+                }
+            }
+
+            return;
+        }
+
+        var finalContent = BuildContentWithNewImageIds(importPaper, newIds, idsByFile);
+        try
+        {
+            // 全部图片都能复用且正文没有变化时，不触发无意义的保存。
+            var current = await TryGetNoteAsync(paperId);
+            if (current is { ContentAvailable: true } &&
+                string.Equals(current.Content, finalContent, StringComparison.Ordinal))
+            {
+                result.RestoredImages += newIds.Count;
+            }
+            else
+            {
+                await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
+                {
+                    PaperId = paperId,
+                    Content = finalContent,
+                    Mode = NoteWriteMode.Replace
+                }));
+                result.RestoredImages += newIds.Count;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            throw;
+        }
+        catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+        {
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            result.FailedImages += newIds.Count;
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”的图片已写入，但正文更新失败：" +
+                $"{ex.Message}；已尝试清理追加的图片引用。");
+            return;
+        }
+
+        if (failed > 0)
+        {
+            var reason = string.IsNullOrWhiteSpace(firstFailure) ? "" : $"（{firstFailure}）";
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”有 {failed} 张图片未能写回" +
+                $"{reason}，相关引用保持原样。");
+        }
+
+        if (skipped > 0)
+        {
+            result.Warnings.Add(
+                $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片超过 8 MiB，仅保留在压缩包中。");
+        }
+    }
+
+    /// <summary>本地已有同一张笔记的同 ID 图片且字节完全一致时，可直接复用该 ID。</summary>
+    private async Task<bool> CanReuseLocalImageAsync(string paperId, ImportImageAsset image)
+    {
+        try
+        {
+            var existing = await _gateway.OnUiAsync(
+                () => _gateway.Context.NoteAssets.ReadImage(paperId, image.SourceImageId));
+            return existing.Bytes.AsSpan().SequenceEqual(image.Bytes);
+        }
+        catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>把正文里的旧图片引用替换成本机新写入的图片 ID。</summary>
+    internal static string BuildContentWithNewImageIds(
+        ImportPaper importPaper,
+        IReadOnlyDictionary<string, string> newIds,
+        IReadOnlyDictionary<string, string> idsByFile)
+    {
+        var content = importPaper.Source.Content ?? "";
+        return importPaper.UsesRelativeImageLinks
+            ? ImageReferenceScanner.RewriteRelativeImageLinks(
+                content,
+                file => idsByFile.TryGetValue(file, out var newId) ? $"i:{newId}" : null)
+            : ImageReferenceScanner.RewriteReferences(
+                content,
+                imageId => newIds.TryGetValue(imageId, out var newId) ? $"i:{newId}" : null);
+    }
+
+    /// <summary>
+    /// 正文替换失败时，尝试把本次追加到末尾的图片引用移除。
+    /// 用户在此期间改动过正文时放弃回滚，避免覆盖新内容。
+    /// </summary>
+    private async Task TryRollbackAppendedImagesAsync(
+        string paperId,
+        IReadOnlyList<string> references,
+        ImportResult result)
+    {
+        if (references.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var note = await TryGetNoteAsync(paperId);
+            if (note is not { ContentAvailable: true })
+            {
+                return;
+            }
+
+            var content = note.Content ?? "";
+            for (var index = references.Count - 1; index >= 0; index--)
+            {
+                var reference = references[index];
+                if (content.EndsWith("\r\n" + reference, StringComparison.Ordinal))
+                {
+                    content = content[..^(2 + reference.Length)];
+                }
+                else if (content.EndsWith("\n" + reference, StringComparison.Ordinal))
+                {
+                    content = content[..^(1 + reference.Length)];
+                }
+                else if (string.Equals(content, reference, StringComparison.Ordinal))
+                {
+                    content = "";
+                }
+                else
+                {
+                    result.Warnings.Add(
+                        "图片恢复失败后未能清理已追加的引用：笔记正文在此期间被修改，已保留原样。");
+                    return;
+                }
+            }
+
+            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
+            {
+                PaperId = paperId,
+                Content = content,
+                Mode = NoteWriteMode.Replace
+            }));
+        }
+        catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+        {
+            result.Warnings.Add("图片恢复失败后未能清理已追加的图片引用，笔记末尾可能多出图片。");
         }
     }
 

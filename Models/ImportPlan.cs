@@ -11,12 +11,29 @@ internal sealed class ImportPlan
     public int DroppedReminders { get; set; }
     public int PathLinkCount { get; set; }
 
-    /// <summary>含图片引用的笔记张数与图片引用总数；图片本体不在导出文件中。</summary>
+    /// <summary>含图片引用的笔记张数与图片引用总数。</summary>
     public int NotesWithImages { get; set; }
     public int ImageReferenceCount { get; set; }
 
+    /// <summary>压缩包中随文件提供的图片总数（含无法写回的超限图片）。</summary>
+    public int ImageAssetCount { get; set; }
+
+    /// <summary>可以写回笔记的图片数量。</summary>
+    public int RestorableImageCount { get; set; }
+
+    /// <summary>超过插件追加上限、只能保留在压缩包中的图片数量。</summary>
+    public int UnrestorableImageCount { get; set; }
+
+    /// <summary>清单存在但文件缺失、损坏或校验失败的图片数量。</summary>
+    public int MissingImageAssetCount { get; set; }
+
+    /// <summary>正文中有引用、但压缩包没有提供对应图片的数量。</summary>
+    public int UnresolvedImageReferenceCount { get; set; }
+
     /// <summary>正文含“图片缺失”标记的笔记张数（通常来自旧版 Markdown 导出）。</summary>
     public int LossyImageNotes { get; set; }
+
+    public bool HasEmbeddedImages => ImageAssetCount > 0;
 
     /// <summary>非空表示文件整体不可导入。</summary>
     public string? FatalError { get; set; }
@@ -58,4 +75,34 @@ internal sealed class ImportPaper
     /// 为 false 时无需出现在更新预览里，也不应计入更新。
     /// </summary>
     public bool UpdateHasChanges { get; set; }
+
+    /// <summary>随压缩包提供、属于这张笔记的图片。</summary>
+    public List<ImportImageAsset> Images { get; } = [];
+
+    /// <summary>压缩包正文使用 images/ 相对链接（Markdown 包），否则使用 i: 引用。</summary>
+    public bool UsesRelativeImageLinks { get; set; }
+
+    /// <summary>正文中能从压缩包找到图片的引用数量。</summary>
+    public int ResolvedImageReferences { get; set; }
+
+    /// <summary>正文中找不到对应图片的引用数量。</summary>
+    public int UnresolvedImageReferences { get; set; }
+}
+
+/// <summary>压缩包内一张可写回笔记的图片；内容完全在内存中。</summary>
+internal sealed class ImportImageAsset
+{
+    /// <summary>导出机器上的图片 ID，用于 JSON 包的 i: 引用映射。</summary>
+    public required string SourceImageId { get; init; }
+
+    /// <summary>压缩包内的相对路径，用于 Markdown 包的相对链接映射。</summary>
+    public required string File { get; init; }
+
+    public required string Mime { get; init; }
+    public required byte[] Bytes { get; init; }
+
+    /// <summary>false 表示超过插件追加 API 上限，只能保留在压缩包中。</summary>
+    public bool Restorable { get; init; }
+
+    public string Sha256 { get; init; } = "";
 }

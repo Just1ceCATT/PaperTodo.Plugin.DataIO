@@ -29,7 +29,15 @@ internal static class JsonFiles
     }
 
     /// <summary>先写临时文件再原子替换，避免中途失败留下半截文件。</summary>
-    public static void WriteAllTextAtomic(string path, string text)
+    public static void WriteAllTextAtomic(string path, string text) =>
+        WriteBytesAtomic(path, stream =>
+        {
+            using var writer = new StreamWriter(stream, Utf8NoBom, leaveOpen: true);
+            writer.Write(text);
+        });
+
+    /// <summary>以临时文件写入二进制内容（例如压缩包），完成后原子替换目标文件。</summary>
+    public static void WriteBytesAtomic(string path, Action<Stream> write)
     {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory))
@@ -40,7 +48,15 @@ internal static class JsonFiles
         var temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temp, text, Utf8NoBom);
+            using (var stream = new FileStream(
+                       temp,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None))
+            {
+                write(stream);
+            }
+
             File.Move(temp, path, overwrite: true);
         }
         finally

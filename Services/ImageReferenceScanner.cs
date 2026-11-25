@@ -1,10 +1,11 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 识别内置 Markdown 笔记里的 PaperTodo 图片引用，例如 ![image|100%](i:123456)。
-/// 导出文件只保存正文文本，不包含图片本体；这里用于在导出/导入时统计并提示风险。
+/// 导出时用于提取图片 ID、把引用改写成压缩包内的相对链接。
 /// </summary>
 internal static partial class ImageReferenceScanner
 {
@@ -14,8 +15,149 @@ internal static partial class ImageReferenceScanner
     [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:(\d{3,8})\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferenceWithIdPattern();
 
+    /// <summary>带 span 的引用匹配；url 组覆盖 i:ID 本身，方便只替换地址、保留标签与宽度。</summary>
+    [GeneratedRegex(
+        @"!\[[^\]\r\n]*\]\(\s*(?<url>i:(?<id>\d{3,8}))\s*\)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex RewritePattern();
+
+    /// <summary>Markdown 压缩包使用的相对图片链接，例如 ![说明](images/abc/123456.png)。</summary>
+    [GeneratedRegex(
+        @"!\[[^\]\r\n]*\]\(\s*(?<url>images/[^)\s]+)\s*\)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex RelativeLinkPattern();
+
     public static int Count(string? markdown) =>
         string.IsNullOrEmpty(markdown) ? 0 : ReferencePattern().Matches(markdown).Count;
+
+    /// <summary>按出现顺序枚举正文里合法的图片引用；ID 规则与宿主一致（3～8 位数字）。</summary>
+    public static IReadOnlyList<ImageReferenceMatch> Enumerate(string? markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return [];
+        }
+
+        var matches = RewritePattern().Matches(markdown);
+        if (matches.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<ImageReferenceMatch>(matches.Count);
+        foreach (Match match in matches)
+        {
+            result.Add(new ImageReferenceMatch(
+                match.Groups["id"].Value,
+                match.Index,
+                match.Length));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 把引用里的 i:ID 地址替换为解析器给出的新地址；解析器返回 null 时保留原引用。
+    /// 标签、宽度等属性原样保留。
+    /// </summary>
+    public static string RewriteReferences(string? markdown, Func<string, string?> resolve)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return markdown ?? "";
+        }
+
+        var matches = RewritePattern().Matches(markdown);
+        if (matches.Count == 0)
+        {
+            return markdown;
+        }
+
+        var builder = new StringBuilder(markdown.Length);
+        var cursor = 0;
+        foreach (Match match in matches)
+        {
+            var replacement = resolve(match.Groups["id"].Value);
+            if (replacement is null)
+            {
+                continue;
+            }
+
+            var url = match.Groups["url"];
+            builder.Append(markdown, cursor, url.Index - cursor);
+            builder.Append(replacement);
+            cursor = url.Index + url.Length;
+        }
+
+        builder.Append(markdown, cursor, markdown.Length - cursor);
+        return builder.ToString();
+    }
+
+    /// <summary>统计 Markdown 压缩包相对链接的数量；这些链接在导入时会换成 i: 引用。</summary>
+    public static int CountRelativeImageLinks(string? markdown) =>
+        string.IsNullOrEmpty(markdown) ? 0 : RelativeLinkPattern().Matches(markdown).Count;
+
+    /// <summary>按出现顺序枚举 Markdown 压缩包里的相对图片链接。</summary>
+    public static IReadOnlyList<string> EnumerateRelativeImageLinks(string? markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return [];
+        }
+
+        var matches = RelativeLinkPattern().Matches(markdown);
+        if (matches.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<string>(matches.Count);
+        foreach (Match match in matches)
+        {
+            result.Add(match.Groups["url"].Value);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 把相对图片链接替换为解析器给出的新地址（通常是 i:图片ID）；
+    /// 解析器返回 null 时保留原链接。
+    /// </summary>
+    public static string RewriteRelativeImageLinks(
+        string? markdown,
+        Func<string, string?> resolve)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return markdown ?? "";
+        }
+
+        var matches = RelativeLinkPattern().Matches(markdown);
+        if (matches.Count == 0)
+        {
+            return markdown;
+        }
+
+        var builder = new StringBuilder(markdown.Length);
+        var cursor = 0;
+        foreach (Match match in matches)
+        {
+            var replacement = resolve(match.Groups["url"].Value);
+            if (replacement is null)
+            {
+                continue;
+            }
+
+            var url = match.Groups["url"];
+            builder.Append(markdown, cursor, url.Index - cursor);
+            builder.Append(replacement);
+            cursor = url.Index + url.Length;
+        }
+
+        builder.Append(markdown, cursor, markdown.Length - cursor);
+        return builder.ToString();
+    }
 
     /// <summary>
     /// 正文中是否含有“图片缺失”标记。旧版 Markdown 导出会把图片引用替换成该标记，
@@ -33,6 +175,9 @@ internal static partial class ImageReferenceScanner
                 markdown,
                 match => $"[{label}: {match.Groups[1].Value}]");
 }
+
+/// <summary>正文里一处合法图片引用的位置。</summary>
+internal readonly record struct ImageReferenceMatch(string ImageId, int Start, int Length);
 
 /// <summary>一组笔记中的图片引用统计。</summary>
 internal readonly record struct ImageReferenceSummary(int NoteCount, int ReferenceCount)

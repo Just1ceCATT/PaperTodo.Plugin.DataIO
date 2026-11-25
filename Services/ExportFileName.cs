@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO;
 
 namespace PaperTodo.Plugin.DataIo;
 
@@ -19,4 +20,10 @@ internal static class ExportFileName
         var stamp = at.ToString("yyMMdd-HHmm", CultureInfo.InvariantCulture);
         return $"{Prefix}-{stamp}-{count}张{extension}";
     }
+
+    /// <summary>含图片时把用户选择的 .json/.md 路径改成 .zip；已经是 .zip 时保持不变。</summary>
+    public static string EnsureZipExtension(string path) =>
+        string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase)
+            ? path
+            : Path.ChangeExtension(path, ".zip");
 }

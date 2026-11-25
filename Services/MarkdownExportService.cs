@@ -13,7 +13,16 @@ internal static class MarkdownExportService
     public const string MissingImageLabel = "图片缺失";
     private const string AlwaysEscapedMarkdownCharacters = "\\`*_{}[]<>~|&";
 
-    public static void Write(string path, ExportDocument document)
+    public static void Write(string path, ExportDocument document) =>
+        JsonFiles.WriteAllTextAtomic(path, Build(document));
+
+    /// <summary>
+    /// 生成 Markdown 文本。imageLinkResolver 非空时，把 (纸片来源 ID, 图片 ID)
+    /// 解析为压缩包内的相对链接；返回 null 表示该图片未随包导出，引用保持原样。
+    /// </summary>
+    public static string Build(
+        ExportDocument document,
+        Func<string, string, string?>? imageLinkResolver = null)
     {
         var builder = new StringBuilder();
         for (var index = 0; index < document.Papers.Count; index++)
@@ -46,11 +55,11 @@ internal static class MarkdownExportService
             }
             else
             {
-                AppendNote(builder, paper);
+                AppendNote(builder, paper, imageLinkResolver);
             }
         }
 
-        JsonFiles.WriteAllTextAtomic(path, builder.ToString());
+        return builder.ToString();
     }
 
     private static void AppendTitle(StringBuilder builder, string? title)
@@ -99,7 +108,10 @@ internal static class MarkdownExportService
         }
     }
 
-    private static void AppendNote(StringBuilder builder, ExportPaper paper)
+    private static void AppendNote(
+        StringBuilder builder,
+        ExportPaper paper,
+        Func<string, string, string?>? imageLinkResolver)
     {
         if (paper.ContentAvailable == false)
         {
@@ -110,9 +122,17 @@ internal static class MarkdownExportService
             return;
         }
 
-        // 图片引用原样保留：图片本体虽然不在文件中，但引用文本必须完整写入，
-        // 否则把导出的 Markdown 再导入（更新同一纸片）时会用“图片缺失”标记覆盖原正文。
-        AppendNoteContent(builder, paper.Content ?? "");
+        // 无图片包时引用原样保留；含图片包时改写成压缩包内的相对链接。
+        // 两种写法都必须完整写入，否则回导更新同一纸片时会破坏本地图片引用。
+        var content = paper.Content ?? "";
+        if (imageLinkResolver != null)
+        {
+            content = ImageReferenceScanner.RewriteReferences(
+                content,
+                imageId => imageLinkResolver(paper.SourceId, imageId));
+        }
+
+        AppendNoteContent(builder, content);
     }
 
     /// <summary>

@@ -460,7 +460,7 @@ public partial class DataIoView : UserControl
         ImportFileNameText.Text = hasFile ? fileName! : "尚未选择文件";
         ImportFileNameText.ToolTip = hasFile ? fileName : null;
         ImportFileStatusText.Text = string.IsNullOrWhiteSpace(status)
-            ? "支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
+            ? "支持 PaperTodo JSON、Markdown 文档 (*.md) 或导出压缩包 (*.zip)"
             : status!;
         ChooseFileButton.Content = hasFile ? "重新选择" : "选择文件";
     }

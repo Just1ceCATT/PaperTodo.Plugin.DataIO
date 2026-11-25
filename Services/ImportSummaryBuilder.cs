@@ -63,15 +63,42 @@ internal static class ImportSummaryBuilder
         ImportPlan sourcePlan)
     {
         var problems = new List<string>();
-        var imageSummary = ImageReferenceSummary.FromNotes(
-            selected
-                .Where(paper => string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
-                .Select(paper => paper.Source.Content));
-        if (imageSummary.HasAny)
+        var attachedImages = selected.Sum(paper => paper.Images.Count);
+        var unrestorableImages = selected.Sum(
+            paper => paper.Images.Count(image => !image.Restorable));
+        var unresolvedReferences = selected.Sum(paper => paper.UnresolvedImageReferences);
+
+        if (attachedImages > 0)
         {
-            problems.Add(
-                $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用" +
-                "（跨设备或原图已清理时可能无法显示）");
+            if (unrestorableImages > 0)
+            {
+                problems.Add(
+                    $"{unrestorableImages} 张图片超过 8 MiB，仅保留在压缩包中，不会写回笔记");
+            }
+
+            if (unresolvedReferences > 0)
+            {
+                problems.Add(
+                    $"{unresolvedReferences} 处图片引用在压缩包中没有对应图片，导入后可能无法显示");
+            }
+        }
+        else
+        {
+            var imageSummary = ImageReferenceSummary.FromNotes(
+                selected
+                    .Where(paper => string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
+                    .Select(paper => paper.Source.Content));
+            if (imageSummary.HasAny)
+            {
+                problems.Add(
+                    $"{imageSummary.NoteCount} 张笔记包含 {imageSummary.ReferenceCount} 处图片引用" +
+                    "（跨文件、跨设备或原图已清理时可能无法显示）");
+            }
+        }
+
+        if (sourcePlan.MissingImageAssetCount > 0)
+        {
+            problems.Add($"{sourcePlan.MissingImageAssetCount} 张图片文件缺失或校验失败");
         }
 
         if (sourcePlan.LossyImageNotes > 0)

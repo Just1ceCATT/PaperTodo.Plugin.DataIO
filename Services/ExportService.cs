@@ -5,6 +5,8 @@ namespace PaperTodo.Plugin.DataIo;
 /// <summary>通过宿主逻辑数据 API 采集快照并组装导出文档。</summary>
 internal sealed class ExportService
 {
+    /// <summary>一次导出最多内嵌的图片总字节；超出后剩余图片只保留正文引用并提示。</summary>
+    internal const long MaxEmbeddedImageBytes = 512L * 1024 * 1024;
 
     private readonly HostGateway _gateway;
 
@@ -16,7 +18,7 @@ internal sealed class ExportService
     /// <summary>
     /// 在 UI 线程读取宿主数据并组装文档。序列化与写盘由调用方放到后台线程。
     /// </summary>
-    public async Task<ExportDocument> CaptureAsync(
+    public async Task<ExportCaptureResult> CaptureAsync(
         IReadOnlyCollection<string> paperIds,
         string currentPaperId,
         CancellationToken cancellationToken)
@@ -54,6 +56,8 @@ internal sealed class ExportService
             }
         };
 
+        var images = new ImageCaptureState();
+        var canCaptureImages = CanCaptureNoteImages();
         foreach (var paper in papers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -64,10 +68,125 @@ internal sealed class ExportService
                 continue;
             }
 
-            document.Papers.Add(await MapPaperAsync(paper, todosByPaper, cancellationToken));
+            var exportPaper = await MapPaperAsync(paper, todosByPaper, cancellationToken);
+            document.Papers.Add(exportPaper);
+
+            if (canCaptureImages &&
+                string.Equals(exportPaper.Type, "note", StringComparison.Ordinal) &&
+                exportPaper.ContentAvailable == true)
+            {
+                await CapturePaperImagesAsync(
+                    paper.Id,
+                    exportPaper,
+                    images,
+                    cancellationToken);
+            }
         }
 
-        return document;
+        if (images.Images.Count > 0)
+        {
+            // 有图片清单时才写 v2；无图片仍保持 v1，旧插件可以继续读取。
+            document.Images = images.Images
+                .Select(ExportPackageService.ToManifest)
+                .ToList();
+            document.SchemaVersion = ExportDocument.CurrentSchemaVersion;
+        }
+
+        return new ExportCaptureResult(
+            document,
+            images.Images,
+            images.FailedReads,
+            images.Truncated);
+    }
+
+    private bool CanCaptureNoteImages()
+    {
+        if (!_gateway.Can(PaperTodoPermissionNames.NotesRead))
+        {
+            return false;
+        }
+
+        try
+        {
+            _ = _gateway.Context.NoteAssets;
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            // 旧宿主没有图片读取能力；正文照常导出。
+            return false;
+        }
+    }
+
+    /// <summary>逐张读取笔记引用到的图片。单张失败只跳过该图片，不影响整次导出。</summary>
+    private async Task CapturePaperImagesAsync(
+        string paperId,
+        ExportPaper paper,
+        ImageCaptureState state,
+        CancellationToken cancellationToken)
+    {
+        var references = ImageReferenceScanner.Enumerate(paper.Content);
+        if (references.Count == 0)
+        {
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var reference in references)
+        {
+            if (!seen.Add(reference.ImageId))
+            {
+                continue;
+            }
+
+            if (state.Truncated)
+            {
+                break;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var image = await _gateway.OnUiAsync(
+                    () => _gateway.Context.NoteAssets.ReadImage(paperId, reference.ImageId));
+                if (state.TotalBytes + image.Bytes.LongLength > MaxEmbeddedImageBytes)
+                {
+                    state.Truncated = true;
+                    break;
+                }
+
+                state.TotalBytes += image.Bytes.Length;
+                state.Images.Add(new CapturedExportImage(
+                    paper.SourceId,
+                    image.ImageId,
+                    ExportPackageService.BuildImageEntry(
+                        paper.SourceId,
+                        image.ImageId,
+                        image.Mime),
+                    image.Mime,
+                    image.Bytes,
+                    image.Bytes.LongLength <= IPaperNoteAssetsApi.MaximumImageAppendBytes));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+            {
+                // 图片已被清理、归属变化或超出读取上限时保留引用并继续导出。
+                state.FailedReads++;
+            }
+
+            await HostGateway.YieldAsync();
+        }
+    }
+
+    private sealed class ImageCaptureState
+    {
+        public List<CapturedExportImage> Images { get; } = [];
+        public int FailedReads { get; set; }
+        public bool Truncated { get; set; }
+        public long TotalBytes { get; set; }
     }
 
     private async Task<ExportPaper> MapPaperAsync(
@@ -128,4 +247,17 @@ internal sealed class ExportService
         LinkedPath = todo.LinkedPath,
         LinkedPathIsDirectory = todo.LinkedPathIsDirectory
     };
+}
+
+/// <summary>一次导出的结果：正文文档、已读取的图片和图片统计。</summary>
+internal sealed record ExportCaptureResult(
+    ExportDocument Document,
+    IReadOnlyList<CapturedExportImage> Images,
+    int FailedImageReads,
+    bool ImageCaptureTruncated)
+{
+    public bool HasImages => Images.Count > 0;
+
+    /// <summary>超过插件追加上限、只能保留在压缩包里的图片数量。</summary>
+    public int OversizedImages => Images.Count(image => !image.Restorable);
 }

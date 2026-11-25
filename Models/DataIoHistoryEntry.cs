@@ -24,7 +24,7 @@ internal sealed class DataIoHistoryEntry
 
     public string FilePath { get; set; } = "";
 
-    /// <summary>导出或导入文件格式："json" / "markdown"；无法识别时为空。</summary>
+    /// <summary>导出或导入文件格式："json" / "markdown" / "zip"；无法识别时为空。</summary>
     public string Format { get; set; } = "";
 
     /// <summary>导出纸片张数；导入时不用。</summary>
@@ -182,6 +182,11 @@ internal static class DataIoHistoryText
 
     public static string FormatLabel(DataIoHistoryEntry entry)
     {
+        if (string.Equals(entry.Format, "zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return "压缩包";
+        }
+
         if (string.Equals(entry.Format, "markdown", StringComparison.OrdinalIgnoreCase))
         {
             return "Markdown";
@@ -196,6 +201,7 @@ internal static class DataIoHistoryText
         {
             ".md" or ".markdown" => "Markdown",
             ".json" => "JSON",
+            ".zip" => "压缩包",
             _ => ""
         };
     }

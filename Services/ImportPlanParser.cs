@@ -1,5 +1,9 @@
 using System.IO;
+using System.IO.Compression;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
@@ -13,9 +17,22 @@ internal static class ImportPlanParser
     public const int MaxTodoTextChars = 5_000;
     public const int MaxTodosPerPaper = 200;
 
+    /// <summary>压缩包解压后允许的总字节数；与导出的图片总量上限保持一致。</summary>
+    public const long MaxPackageExpandedBytes = ExportService.MaxEmbeddedImageBytes;
+
+    private const int MaxPackageEntries = 5_000;
+    private const int MaxPackageImages = 2_000;
+    private const long MaxImageEntryBytes = IPaperNoteAssetsApi.MaximumImageBytes;
+
     public static ImportPlan ParseFile(string path)
     {
         var extension = Path.GetExtension(path);
+        if (string.Equals(extension, ".zip", StringComparison.OrdinalIgnoreCase) ||
+            LooksLikeZip(path))
+        {
+            return ParsePackage(path);
+        }
+
         if (string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(extension, ".markdown", StringComparison.OrdinalIgnoreCase))
         {
@@ -23,6 +40,432 @@ internal static class ImportPlanParser
         }
 
         return Parse(DataFileService.ReadPayload(path));
+    }
+
+    private static bool LooksLikeZip(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            Span<byte> signature = stackalloc byte[4];
+            return stream.Read(signature) == signature.Length &&
+                   signature[0] == (byte)'P' &&
+                   signature[1] == (byte)'K' &&
+                   signature[2] == 3 &&
+                   signature[3] == 4;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 读取含图片的导出压缩包。不落盘解压，只读取清单引用的条目；
+    /// 文件缺失、校验失败或超限的图片会被跳过并记录提示。
+    /// </summary>
+    private static ImportPlan ParsePackage(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            return ParseArchive(archive, path);
+        }
+        catch (InvalidDataException)
+        {
+            return Fatal("压缩包已损坏或不是有效的 zip 文件。");
+        }
+        catch (IOException ex)
+        {
+            return Fatal($"读取压缩包失败：{ex.Message}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Fatal($"读取压缩包失败：{ex.Message}");
+        }
+    }
+
+    private static ImportPlan ParseArchive(ZipArchive archive, string path)
+    {
+        if (archive.Entries.Count == 0)
+        {
+            return Fatal("压缩包为空。");
+        }
+
+        if (archive.Entries.Count > MaxPackageEntries)
+        {
+            return Fatal($"压缩包条目过多（{archive.Entries.Count} 个），已拒绝导入。");
+        }
+
+        long expandedBytes = 0;
+        foreach (var entry in archive.Entries)
+        {
+            expandedBytes += entry.Length;
+            if (expandedBytes > MaxPackageExpandedBytes)
+            {
+                return Fatal("压缩包解压后超过 512 MiB 上限，已拒绝导入。");
+            }
+        }
+
+        var jsonEntry = UniqueEntry(archive, ExportPackageService.JsonEntryName);
+        if (jsonEntry != null)
+        {
+            var json = ReadEntryText(jsonEntry, JsonFiles.MaxImportBytes);
+            if (json is null)
+            {
+                return Fatal("压缩包中的导出 JSON 过大或无法读取。");
+            }
+
+            var plan = Parse(json);
+            if (plan.FatalError != null)
+            {
+                return plan;
+            }
+
+            AttachImages(plan, ReadJsonImageManifest(json), archive, usesRelativeLinks: false);
+            return plan;
+        }
+
+        var markdownEntry = UniqueEntry(archive, ExportPackageService.MarkdownEntryName);
+        if (markdownEntry != null)
+        {
+            var markdown = ReadEntryText(markdownEntry, JsonFiles.MaxImportBytes);
+            if (markdown is null)
+            {
+                return Fatal("压缩包中的 Markdown 正文过大或无法读取。");
+            }
+
+            if (string.IsNullOrWhiteSpace(markdown))
+            {
+                return Fatal("压缩包中的 Markdown 正文为空。");
+            }
+
+            var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path));
+            if (plan.FatalError == null)
+            {
+                plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
+            }
+
+            var manifestEntry = UniqueEntry(archive, ExportPackageService.MarkdownManifestEntryName);
+            var images = manifestEntry is null
+                ? null
+                : ReadMarkdownImageManifest(ReadEntryText(manifestEntry, 16L * 1024 * 1024));
+            if (plan.FatalError == null)
+            {
+                AttachImages(plan, images, archive, usesRelativeLinks: true);
+            }
+
+            return plan;
+        }
+
+        return Fatal("压缩包不是由 DataIo 导出的：缺少 dataio-export.json 或 dataio-export.md。");
+    }
+
+    private static ImportPlan Fatal(string message) => new() { FatalError = message };
+
+    /// <summary>只接受唯一同名条目；重复条目视为不可信，返回 null。</summary>
+    private static ZipArchiveEntry? UniqueEntry(ZipArchive archive, string name)
+    {
+        ZipArchiveEntry? found = null;
+        foreach (var entry in archive.Entries)
+        {
+            if (!string.Equals(entry.FullName, name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (found != null)
+            {
+                return null;
+            }
+
+            found = entry;
+        }
+
+        return found;
+    }
+
+    private static string? ReadEntryText(ZipArchiveEntry entry, long maxBytes)
+    {
+        var bytes = ReadEntryBytes(entry, maxBytes);
+        if (bytes is null)
+        {
+            return null;
+        }
+
+        var text = Encoding.UTF8.GetString(bytes);
+        return text.Length > 0 && text[0] == '﻿' ? text[1..] : text;
+    }
+
+    /// <summary>
+    /// 有上限地读取压缩包条目；不信任中央目录声明的长度，实际读取超过上限即失败。
+    /// </summary>
+    private static byte[]? ReadEntryBytes(ZipArchiveEntry entry, long maxBytes)
+    {
+        if (entry.Length > maxBytes)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = entry.Open();
+            using var buffer = new MemoryStream();
+            var chunk = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                total += read;
+                if (total > maxBytes)
+                {
+                    return null;
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+
+            return buffer.ToArray();
+        }
+        catch (InvalidDataException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private static List<ExportImage>? ReadJsonImageManifest(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<ExportDocument>(json, ExportJson.Options)?.Images;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static List<ExportImage>? ReadMarkdownImageManifest(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<ExportImageManifest>(json, ExportJson.Options)?.Images;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>把清单中的图片附加到对应笔记，并统计可还原与缺失数量。</summary>
+    private static void AttachImages(
+        ImportPlan plan,
+        List<ExportImage>? manifest,
+        ZipArchive archive,
+        bool usesRelativeLinks)
+    {
+        var notes = plan.Papers
+            .Where(paper => string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (manifest is { Count: > 0 })
+        {
+            if (manifest.Count > MaxPackageImages)
+            {
+                plan.Warnings.Add(
+                    $"压缩包图片数量超过 {MaxPackageImages} 张上限，多余的图片不会写回笔记。");
+                manifest = manifest.Take(MaxPackageImages).ToList();
+            }
+
+            var bySourceId = notes
+                .Where(paper => !string.IsNullOrWhiteSpace(paper.Source.SourceId))
+                .GroupBy(paper => paper.Source.SourceId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+            var entryCounts = archive.Entries
+                .GroupBy(entry => entry.FullName, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+
+            var seenFiles = new HashSet<(string PaperSourceId, string File)>();
+            var seenIds = new HashSet<(string PaperSourceId, string ImageId)>();
+            var missing = 0;
+            foreach (var image in manifest)
+            {
+                if (!IsSafeImageEntryPath(image.File) ||
+                    !bySourceId.TryGetValue(image.PaperSourceId, out var paper))
+                {
+                    missing++;
+                    continue;
+                }
+
+                if (!seenFiles.Add((image.PaperSourceId, image.File)) ||
+                    !seenIds.Add((image.PaperSourceId, image.ImageId)))
+                {
+                    continue;
+                }
+
+                if (!entryCounts.TryGetValue(image.File, out var count) || count != 1)
+                {
+                    missing++;
+                    continue;
+                }
+
+                var entry = archive.GetEntry(image.File)!;
+                if (entry.Length <= 0 || entry.Length > MaxImageEntryBytes)
+                {
+                    missing++;
+                    continue;
+                }
+
+                var bytes = ReadEntryBytes(entry, MaxImageEntryBytes);
+                if (bytes is null || bytes.Length == 0 ||
+                    (image.ByteLength > 0 && image.ByteLength != bytes.Length) ||
+                    (!string.IsNullOrEmpty(image.Sha256) &&
+                     !string.Equals(
+                         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                         image.Sha256,
+                         StringComparison.OrdinalIgnoreCase)))
+                {
+                    missing++;
+                    continue;
+                }
+
+                var restorable = image.Restorable &&
+                    bytes.LongLength <= IPaperNoteAssetsApi.MaximumImageAppendBytes;
+                paper.Images.Add(new ImportImageAsset
+                {
+                    SourceImageId = image.ImageId,
+                    File = image.File,
+                    Mime = image.Mime,
+                    Bytes = bytes,
+                    Restorable = restorable,
+                    Sha256 = image.Sha256
+                });
+
+                plan.ImageAssetCount++;
+                if (restorable)
+                {
+                    plan.RestorableImageCount++;
+                }
+                else
+                {
+                    plan.UnrestorableImageCount++;
+                }
+            }
+
+            plan.MissingImageAssetCount = missing;
+        }
+        else if (usesRelativeLinks)
+        {
+            plan.Warnings.Add("Markdown 压缩包缺少图片清单，正文中的相对图片链接不会写回为笔记图片。");
+        }
+
+        foreach (var paper in notes)
+        {
+            paper.UsesRelativeImageLinks = usesRelativeLinks;
+            CountImageReferences(paper, usesRelativeLinks);
+            plan.UnresolvedImageReferenceCount += paper.UnresolvedImageReferences;
+        }
+
+        plan.NotesWithImages = notes.Count(
+            paper => paper.ResolvedImageReferences + paper.UnresolvedImageReferences > 0);
+        plan.ImageReferenceCount = notes.Sum(
+            paper => paper.ResolvedImageReferences + paper.UnresolvedImageReferences);
+
+        if (plan.UnrestorableImageCount > 0)
+        {
+            plan.Warnings.Add(
+                $"{plan.UnrestorableImageCount} 张图片超过 8 MiB 插件写入上限，" +
+                "只保留在压缩包中，导入时不会写回笔记。");
+        }
+
+        if (plan.MissingImageAssetCount > 0)
+        {
+            plan.Warnings.Add(
+                $"{plan.MissingImageAssetCount} 张图片文件缺失或校验失败，相关引用将保持原样。");
+        }
+
+        if (plan.UnresolvedImageReferenceCount > 0)
+        {
+            plan.Warnings.Add(
+                $"{plan.UnresolvedImageReferenceCount} 处图片引用在压缩包中没有对应图片，导入后可能无法显示。");
+        }
+    }
+
+    private static void CountImageReferences(ImportPaper paper, bool usesRelativeLinks)
+    {
+        var content = paper.Source.Content;
+        if (usesRelativeLinks)
+        {
+            var files = paper.Images
+                .Select(image => image.File)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var link in ImageReferenceScanner.EnumerateRelativeImageLinks(content))
+            {
+                if (files.Contains(link))
+                {
+                    paper.ResolvedImageReferences++;
+                }
+                else
+                {
+                    paper.UnresolvedImageReferences++;
+                }
+            }
+
+            // Markdown 包里未被改写的 i: 引用来自导出时读取失败的图片，无法在本机还原。
+            paper.UnresolvedImageReferences += ImageReferenceScanner.Enumerate(content).Count;
+            return;
+        }
+
+        var imageIds = paper.Images
+            .Select(image => image.SourceImageId)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var reference in ImageReferenceScanner.Enumerate(content))
+        {
+            if (imageIds.Contains(reference.ImageId))
+            {
+                paper.ResolvedImageReferences++;
+            }
+            else
+            {
+                paper.UnresolvedImageReferences++;
+            }
+        }
+    }
+
+    /// <summary>压缩包内的图片路径必须是 images/ 下的普通相对路径。</summary>
+    private static bool IsSafeImageEntryPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            path.Contains('\\') ||
+            path.Contains(':') ||
+            path.StartsWith('/'))
+        {
+            return false;
+        }
+
+        if (!path.StartsWith("images/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var segments = path.Split('/');
+        return segments.All(segment =>
+            segment.Length > 0 && segment is not "." and not "..");
     }
 
     private static ImportPlan ParseMarkdown(string markdown, string path)
@@ -131,7 +574,8 @@ internal static class ImportPlanParser
             return new ImportPlan { FatalError = "文件内容为空。" };
         }
 
-        if (version != ExportDocument.CurrentSchemaVersion)
+        if (version < ExportDocument.MinimumSupportedSchemaVersion ||
+            version > ExportDocument.CurrentSchemaVersion)
         {
             return new ImportPlan
             {
@@ -347,7 +791,8 @@ internal static class ImportPlanParser
             return plan;
         }
 
-        if (document.SchemaVersion != ExportDocument.CurrentSchemaVersion)
+        if (document.SchemaVersion < ExportDocument.MinimumSupportedSchemaVersion ||
+            document.SchemaVersion > ExportDocument.CurrentSchemaVersion)
         {
             plan.FatalError = document.SchemaVersion > ExportDocument.CurrentSchemaVersion
                 ? $"文件由更新版本的插件导出（schemaVersion={document.SchemaVersion}），请先升级插件。"

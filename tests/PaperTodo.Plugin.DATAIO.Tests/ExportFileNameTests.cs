@@ -39,4 +39,23 @@ public sealed class ExportFileNameTests
 
         Assert.Equal("pt-261123-1435-0张.json", name);
     }
+
+    [Fact]
+    public void Zip_extension_replaces_plain_extension()
+    {
+        Assert.Equal(
+            @"C:\导出\pt-261123-1435-3张.zip",
+            ExportFileName.EnsureZipExtension(@"C:\导出\pt-261123-1435-3张.json"));
+        Assert.Equal(
+            @"C:\导出\pt-261123-1435-3张.zip",
+            ExportFileName.EnsureZipExtension(@"C:\导出\pt-261123-1435-3张.md"));
+    }
+
+    [Fact]
+    public void Zip_extension_is_kept_when_already_zip()
+    {
+        Assert.Equal(
+            @"C:\导出\backup.ZIP",
+            ExportFileName.EnsureZipExtension(@"C:\导出\backup.ZIP"));
+    }
 }
