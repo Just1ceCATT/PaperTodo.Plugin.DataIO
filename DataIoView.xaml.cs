@@ -63,6 +63,9 @@ public partial class DataIoView : UserControl
     /// </summary>
     internal Func<string, Task<PreviewContent?>>? PreviewLoader { get; set; }
 
+    /// <summary>悬停摘要专用加载器：只需要文本，不应触发图片读取。</summary>
+    internal Func<string, Task<PreviewContent?>>? HoverPreviewLoader { get; set; }
+
     public event EventHandler? ModeChanged;
     public event EventHandler? ExportFormatChanged;
     public event EventHandler? NoteSelectionChanged;
@@ -946,7 +949,8 @@ public partial class DataIoView : UserControl
         _hoverTimer.Stop();
 
         var row = _hoverRow;
-        if (row is null || _busy || _previewOpen || PreviewLoader is null)
+        var loader = HoverPreviewLoader ?? PreviewLoader;
+        if (row is null || _busy || _previewOpen || loader is null)
         {
             return;
         }
@@ -961,7 +965,7 @@ public partial class DataIoView : UserControl
         PreviewContent? content;
         try
         {
-            content = await PreviewLoader(row.Key);
+            content = await loader(row.Key);
         }
         catch (Exception)
         {

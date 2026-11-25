@@ -23,7 +23,17 @@ internal sealed class PreviewContent
     public bool ContentAvailable { get; init; } = true;
     public string Body { get; init; } = "";
     public IReadOnlyList<PreviewTodoItem> Todos { get; init; } = [];
+
+    /// <summary>
+    /// 正文图片引用的编码数据，键与 Markdown 中的地址一致（i:图片ID 或 images/ 相对路径）。
+    /// 只保存原始字节，实际解码交给预览渲染，避免缓存里存放放大后的位图。
+    /// </summary>
+    public IReadOnlyDictionary<string, PreviewImage> Images { get; init; } =
+        new Dictionary<string, PreviewImage>(StringComparer.Ordinal);
 }
+
+/// <summary>预览窗口可直接使用的图片字节；内容来自宿主图片库或导入压缩包。</summary>
+internal sealed record PreviewImage(string Mime, byte[] Bytes);
 
 /// <summary>预览中的一条待办，Meta 汇总提醒与链接等附加信息。</summary>
 internal sealed record PreviewTodoItem(string Text, bool Done, string Meta)

@@ -130,7 +130,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             _gateway,
             _state,
             id => _context.Workspace.GetPaper(id));
-        _view.PreviewLoader = LoadPreviewAsync;
+        _view.PreviewLoader = key => LoadPreviewAsync(key, includeImages: true);
+        _view.HoverPreviewLoader = key => LoadPreviewAsync(key, includeImages: false);
 
         _view.ModeChanged += OnModeChanged;
         _view.ExportFormatChanged += OnExportFormatChanged;
@@ -325,6 +326,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _subscription?.Dispose();
         _previewCache.Clear();
         _view.PreviewLoader = null;
+        _view.HoverPreviewLoader = null;
 
         _view.ModeChanged -= OnModeChanged;
         _view.ExportFormatChanged -= OnExportFormatChanged;
@@ -1114,8 +1116,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
     // ---------- 预览 ----------
 
-    /// <summary>按需读取一张纸片的预览内容；结果按 key 缓存，列表变化时整体失效。</summary>
-    private async Task<PreviewContent?> LoadPreviewAsync(string key)
+    /// <summary>
+    /// 按需读取一张纸片的预览内容；结果按 key 缓存，列表变化时整体失效。
+    /// includeImages 为 false 时用于悬停摘要，只读正文，不触碰图片库。
+    /// </summary>
+    private async Task<PreviewContent?> LoadPreviewAsync(string key, bool includeImages)
     {
         if (_disposed)
         {
@@ -1130,10 +1135,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         var generation = _previewGeneration;
         var mode = _mode;
         var content = mode == DataIoMode.Export
-            ? await BuildExportPreviewAsync(key)
-            : PreviewFactory.BuildImport(_importPlan, key);
+            ? await BuildExportPreviewAsync(key, includeImages)
+            : PreviewFactory.BuildImport(_importPlan, key, includeImages);
 
-        if (content is not null && !_disposed && generation == _previewGeneration)
+        // 只缓存带图片的快照；纯文本结果若被缓存，预览窗口会命中而缺少图片。
+        if (includeImages && content is not null && !_disposed && generation == _previewGeneration)
         {
             _previewCache[key] = content;
         }
@@ -1141,11 +1147,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         return content;
     }
 
-    private Task<PreviewContent?> BuildExportPreviewAsync(string paperId)
+    private Task<PreviewContent?> BuildExportPreviewAsync(string paperId, bool includeImages)
     {
         var paper = _papers.FirstOrDefault(p => string.Equals(p.Id, paperId, StringComparison.Ordinal));
         var todos = _todosByPaper.TryGetValue(paperId, out var stored) ? stored : null;
-        return PreviewFactory.BuildExportAsync(_gateway, paper, todos);
+        return PreviewFactory.BuildExportAsync(_gateway, paper, todos, includeImages);
     }
 
     private void UpdateExportSummary()

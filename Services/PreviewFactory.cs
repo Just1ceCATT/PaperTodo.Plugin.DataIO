@@ -12,7 +12,8 @@ internal static class PreviewFactory
     public static async Task<PreviewContent?> BuildExportAsync(
         HostGateway gateway,
         PaperSnapshot? paper,
-        TodoSnapshot[]? storedTodos)
+        TodoSnapshot[]? storedTodos,
+        bool includeImages = true)
     {
         if (paper is null)
         {
@@ -73,6 +74,10 @@ internal static class PreviewFactory
             warning = "无法读取这张笔记的正文。";
         }
 
+        var images = available && includeImages
+            ? await PreviewImageLoader.LoadExportAsync(gateway, paper.Id, body)
+            : new Dictionary<string, PreviewImage>(StringComparer.Ordinal);
+
         return new PreviewContent
         {
             Key = paper.Id,
@@ -81,11 +86,15 @@ internal static class PreviewFactory
             Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
             Warning = warning,
             ContentAvailable = available,
-            Body = available ? body : ""
+            Body = available ? body : "",
+            Images = images
         };
     }
 
-    public static PreviewContent? BuildImport(ImportPlan? plan, string key)
+    public static PreviewContent? BuildImport(
+        ImportPlan? plan,
+        string key,
+        bool includeImages = true)
     {
         if (plan is null ||
             !int.TryParse(key, System.Globalization.NumberStyles.Integer,
@@ -96,7 +105,8 @@ internal static class PreviewFactory
             return null;
         }
 
-        var source = plan.Papers[index].Source;
+        var importPaper = plan.Papers[index];
+        var source = importPaper.Source;
         var isNote = string.Equals(source.Type, "note", StringComparison.OrdinalIgnoreCase);
         var title = string.IsNullOrWhiteSpace(source.Title) ? "（无标题）" : source.Title;
 
@@ -142,7 +152,10 @@ internal static class PreviewFactory
             Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
             Warning = warning,
             ContentAvailable = available,
-            Body = available ? body : ""
+            Body = available ? body : "",
+            Images = available && includeImages
+                ? PreviewImageLoader.CollectImport(importPaper)
+                : new Dictionary<string, PreviewImage>(StringComparer.Ordinal)
         };
     }
 

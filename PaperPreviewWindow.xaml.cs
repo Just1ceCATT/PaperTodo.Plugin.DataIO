@@ -302,7 +302,22 @@ internal partial class PaperPreviewWindow : Window
         (Brush)Resources["DialogSurfaceBrush"],
         _scale,
         FontFamily,
-        new FontFamily("Cascadia Mono, Consolas, Courier New"));
+        new FontFamily("Cascadia Mono, Consolas, Courier New"),
+        PreviewContentWidth());
+
+    /// <summary>正文可用宽度（DIP）：扣掉窗口边框、弹层内边距、正文边距与滚动条。</summary>
+    private double PreviewContentWidth()
+    {
+        var windowWidth = Width > 0 ? Width : ActualWidth;
+        if (double.IsNaN(windowWidth) || windowWidth <= 0)
+        {
+            windowWidth = 560;
+        }
+
+        // Shell: 20 内边距 + 1 边框；BodyPanel: 16 边距；右侧给滚动条留位置。
+        var contentWidth = windowWidth - 2 * (20 + 1) - 2 * 16 - SystemParameters.VerticalScrollBarWidth;
+        return Math.Max(200, contentWidth);
+    }
 
     // ---------- 导航与加载 ----------
 
@@ -565,7 +580,7 @@ internal partial class PaperPreviewWindow : Window
         }
         else
         {
-            MarkdownPreview.Render(content.Body, BodyPanel, CreatePalette());
+            MarkdownPreview.Render(content.Body, BodyPanel, CreatePalette(), content.Images);
         }
 
         AnimateBodyIn();

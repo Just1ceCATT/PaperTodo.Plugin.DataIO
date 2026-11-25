@@ -1,8 +1,10 @@
+using System.IO;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace PaperTodo.Plugin.DataIo;
 
@@ -15,7 +17,8 @@ internal sealed record PreviewPalette(
     Brush SurfaceBrush,
     double Scale,
     FontFamily FontFamily,
-    FontFamily MonoFontFamily);
+    FontFamily MonoFontFamily,
+    double ContentWidth);
 
 /// <summary>
 /// 轻量 Markdown 预览渲染：只覆盖标题、列表、引用、代码块、分隔线与常见行内样式，
@@ -32,7 +35,17 @@ internal static class MarkdownPreview
     /// <summary>单个段落最多生成的 Inline 数量，防止超长行被格式标记拆成海量 Run。</summary>
     private const int MaxInlinesPerBlock = 2_000;
 
-    public static void Render(string markdown, Panel host, PreviewPalette palette)
+    /// <summary>单张纸片最多解码的图片数量；超出后图片行退回为普通占位文本。</summary>
+    private const int MaxImageBlocks = 60;
+
+    /// <summary>解码宽度的上限（像素），避免大图在预览里占用过多内存。</summary>
+    private const int MaxDecodePixelWidth = 2_000;
+
+    public static void Render(
+        string markdown,
+        Panel host,
+        PreviewPalette palette,
+        IReadOnlyDictionary<string, PreviewImage>? images = null)
     {
         host.Children.Clear();
 
@@ -57,6 +70,8 @@ internal static class MarkdownPreview
 
         var lines = text.Split('\n');
         var index = 0;
+        var imageBlocks = 0;
+        var imageCache = new ImageRenderCache();
 
         while (index < lines.Length && host.Children.Count < MaxBlocks)
         {
@@ -65,6 +80,22 @@ internal static class MarkdownPreview
 
             if (trimmed.Length == 0)
             {
+                index++;
+                continue;
+            }
+
+            if (TryParseImageLine(trimmed, out var imageLine))
+            {
+                if (imageBlocks < MaxImageBlocks)
+                {
+                    host.Children.Add(BuildImageBlock(imageLine, host, images, palette, imageCache));
+                    imageBlocks++;
+                }
+                else
+                {
+                    host.Children.Add(BuildImageFallback(imageLine.Label, palette));
+                }
+
                 index++;
                 continue;
             }
@@ -299,7 +330,50 @@ internal static class MarkdownPreview
                TryHeading(trimmed, out _, out _) ||
                IsDivider(trimmed) ||
                trimmed.StartsWith('>') ||
+               TryParseImageLine(trimmed, out _) ||
                TryListMarker(line, out _);
+    }
+
+    /// <summary>
+    /// 解析独占一行的图片引用。宿主只把整行引用渲染为图片，
+    /// 因此这里同样只接受“整行只有图片标记”（可带 {width=…} 属性）。
+    /// </summary>
+    private static bool TryParseImageLine(string trimmed, out MarkdownImageLine image)
+    {
+        image = default;
+        if (!trimmed.StartsWith("![", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var labelEnd = trimmed.IndexOf(']', 2);
+        if (labelEnd < 2 || labelEnd + 1 >= trimmed.Length || trimmed[labelEnd + 1] != '(')
+        {
+            return false;
+        }
+
+        var urlEnd = trimmed.IndexOf(')', labelEnd + 2);
+        if (urlEnd < 0)
+        {
+            return false;
+        }
+
+        var url = trimmed[(labelEnd + 2)..urlEnd].Trim();
+        if (!url.StartsWith("i:", StringComparison.Ordinal) &&
+            !url.StartsWith("images/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var tail = trimmed[(urlEnd + 1)..].Trim();
+        if (tail.Length > 0 &&
+            !(tail.StartsWith('{') && tail.EndsWith('}')))
+        {
+            return false;
+        }
+
+        image = new MarkdownImageLine(trimmed[2..labelEnd], url, tail);
+        return true;
     }
 
     private static bool IsFence(string trimmed, out string fence)
@@ -517,6 +591,307 @@ internal static class MarkdownPreview
         row.Children.Add(marker);
         row.Children.Add(text);
         return row;
+    }
+
+    /// <summary>整行图片引用：label 可能带 |100% / |300x200 等尺寸说明，attributes 为 {width=…}。</summary>
+    private readonly record struct MarkdownImageLine(string Label, string Url, string Attributes);
+
+    /// <summary>一次渲染内的图片解码缓存，避免同一张图片重复读取元数据或解码。</summary>
+    private sealed class ImageRenderCache
+    {
+        public Dictionary<string, (int Width, int Height)> Natural { get; } =
+            new(StringComparer.Ordinal);
+
+        public Dictionary<string, BitmapSource?> Bitmaps { get; } =
+            new(StringComparer.Ordinal);
+    }
+
+    private static FrameworkElement BuildImageBlock(
+        MarkdownImageLine image,
+        Panel host,
+        IReadOnlyDictionary<string, PreviewImage>? images,
+        PreviewPalette palette,
+        ImageRenderCache cache)
+    {
+        if (images is null ||
+            !images.TryGetValue(image.Url, out var data) ||
+            data.Bytes.Length == 0)
+        {
+            return BuildImagePlaceholder("图片缺失或无法预览", image.Label, palette);
+        }
+
+        if (!cache.Natural.TryGetValue(image.Url, out var natural))
+        {
+            natural = ReadNaturalSize(data.Bytes);
+            cache.Natural[image.Url] = natural;
+        }
+
+        // 元数据读取失败时退回完整解码，用解码后的尺寸继续排版。
+        if (natural.Width <= 0 && !cache.Bitmaps.TryGetValue(image.Url, out var decoded))
+        {
+            decoded = DecodeBitmap(data.Bytes, 0);
+            cache.Bitmaps[image.Url] = decoded;
+            if (decoded is not null)
+            {
+                natural = (decoded.PixelWidth, decoded.PixelHeight);
+                cache.Natural[image.Url] = natural;
+            }
+        }
+
+        var available = Math.Max(80, palette.ContentWidth);
+        var displayWidth = ResolveImageDisplayWidth(
+            image.Label,
+            image.Attributes,
+            available,
+            natural.Width);
+
+        if (!cache.Bitmaps.TryGetValue(image.Url, out var bitmap))
+        {
+            var pixelWidth = natural.Width > 0
+                ? Math.Min(
+                    natural.Width,
+                    Math.Max(1, (int)Math.Ceiling(displayWidth * GetDpiScale(host))))
+                : 0;
+            bitmap = DecodeBitmap(data.Bytes, Math.Min(pixelWidth, MaxDecodePixelWidth));
+            cache.Bitmaps[image.Url] = bitmap;
+        }
+
+        if (bitmap is null)
+        {
+            return BuildImagePlaceholder("图片已损坏，无法显示", image.Label, palette);
+        }
+
+        return new Border
+        {
+            Margin = new Thickness(0, 6, 0, 8),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = new Image
+            {
+                Source = bitmap,
+                Width = displayWidth,
+                Stretch = Stretch.Uniform,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                SnapsToDevicePixels = true,
+                UseLayoutRounding = true,
+                ToolTip = string.IsNullOrWhiteSpace(image.Label) ? null : image.Label
+            }
+        };
+    }
+
+    private static Border BuildImagePlaceholder(
+        string message,
+        string label,
+        PreviewPalette palette) => new()
+        {
+            Margin = new Thickness(0, 6, 0, 8),
+            Padding = new Thickness(12, 11, 12, 11),
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+            BorderBrush = palette.BorderBrush,
+            Background = palette.SurfaceBrush,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            MinWidth = 180,
+            MaxWidth = Math.Max(180, palette.ContentWidth),
+            Child = new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11.5 * palette.Scale,
+                Foreground = palette.WeakBrush,
+                ToolTip = string.IsNullOrWhiteSpace(label) ? null : label
+            },
+            ToolTip = string.IsNullOrWhiteSpace(label) ? null : label
+        };
+
+    private static TextBlock BuildImageFallback(string label, PreviewPalette palette)
+    {
+        var block = CreateTextBlock(palette, 13.0, palette.WeakBrush);
+        block.Margin = new Thickness(0, 3, 0, 3);
+        block.Text = string.IsNullOrWhiteSpace(label) ? "🖼 图片" : "🖼 " + label;
+        return block;
+    }
+
+    /// <summary>与宿主一致的宽度规则：属性优先，其次 |百分比、|宽x高，最后按原始尺寸且不超过容器。</summary>
+    private static double ResolveImageDisplayWidth(
+        string label,
+        string attributeText,
+        double contentWidth,
+        int naturalWidth)
+    {
+        var available = Math.Max(80, contentWidth);
+        naturalWidth = Math.Max(1, naturalWidth);
+
+        double? width = null;
+        if (TryParseAttributeWidth(attributeText, out var attributeValue, out var attributePercent))
+        {
+            width = attributePercent
+                ? available * ClampPercent(attributeValue) / 100.0
+                : attributeValue;
+        }
+        else
+        {
+            foreach (var spec in label.Split('|').Skip(1))
+            {
+                var trimmed = spec.Trim();
+                if (TryParsePercent(trimmed, out var percent))
+                {
+                    width = available * ClampPercent(percent) / 100.0;
+                    continue;
+                }
+
+                if (TryParseDimensionWidth(trimmed, out var pixels))
+                {
+                    width = pixels;
+                }
+            }
+        }
+
+        width ??= Math.Min(available, naturalWidth);
+        return Math.Round(Math.Clamp(width.Value, 24, available), 1);
+    }
+
+    private static bool TryParseAttributeWidth(
+        string attributeText,
+        out double value,
+        out bool isPercent)
+    {
+        value = 0;
+        isPercent = false;
+        var trimmed = attributeText.Trim();
+        if (trimmed.Length < 3 ||
+            !trimmed.StartsWith('{') ||
+            !trimmed.EndsWith('}'))
+        {
+            return false;
+        }
+
+        var parts = trimmed[1..^1].Split(
+            [' ', ',', ';'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            var separator = part.IndexOf('=');
+            if (separator < 0)
+            {
+                separator = part.IndexOf(':');
+            }
+
+            if (separator <= 0 || separator >= part.Length - 1 ||
+                !string.Equals(part[..separator].Trim(), "width", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var raw = part[(separator + 1)..].Trim();
+            isPercent = raw.EndsWith('%');
+            if (isPercent)
+            {
+                raw = raw[..^1];
+            }
+            else if (raw.EndsWith("px", StringComparison.OrdinalIgnoreCase))
+            {
+                raw = raw[..^2];
+            }
+
+            return double.TryParse(
+                raw,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out value) && value > 0;
+        }
+
+        return false;
+    }
+
+    private static bool TryParsePercent(string value, out double percent)
+    {
+        percent = 0;
+        var trimmed = value.Trim();
+        return trimmed.EndsWith('%') &&
+               double.TryParse(
+                   trimmed[..^1],
+                   System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture,
+                   out percent) &&
+               percent > 0;
+    }
+
+    private static bool TryParseDimensionWidth(string value, out double width)
+    {
+        width = 0;
+        var normalized = value.Replace('×', 'x');
+        var separator = normalized.IndexOf('x');
+        var widthText = separator > 0 ? normalized[..separator] : normalized;
+        return double.TryParse(
+            widthText,
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out width) && width > 0;
+    }
+
+    private static double ClampPercent(double percent) => Math.Clamp(percent, 1, 1_000);
+
+    /// <summary>只读取图片头信息拿原始尺寸，不解码完整像素。</summary>
+    private static (int Width, int Height) ReadNaturalSize(byte[] bytes)
+    {
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            var decoder = BitmapDecoder.Create(
+                stream,
+                BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile,
+                BitmapCacheOption.None);
+            if (decoder.Frames.Count == 0)
+            {
+                return (0, 0);
+            }
+
+            var frame = decoder.Frames[0];
+            return (frame.PixelWidth, frame.PixelHeight);
+        }
+        catch (Exception)
+        {
+            // 预览是辅助功能，任何解码/格式异常都退化为“无法显示”占位。
+            return (0, 0);
+        }
+    }
+
+    private static BitmapSource? DecodeBitmap(byte[] bytes, int pixelWidth)
+    {
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            bitmap.StreamSource = stream;
+            if (pixelWidth > 0)
+            {
+                bitmap.DecodePixelWidth = pixelWidth;
+            }
+
+            bitmap.EndInit();
+            bitmap.Freeze();
+            return bitmap;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static double GetDpiScale(Visual visual)
+    {
+        try
+        {
+            var dpi = VisualTreeHelper.GetDpi(visual);
+            return dpi.DpiScaleX > 0 ? dpi.DpiScaleX : 1.0;
+        }
+        catch (Exception)
+        {
+            return 1.0;
+        }
     }
 
     private static TextBlock CreateTextBlock(PreviewPalette palette, double size, Brush foreground) => new()
