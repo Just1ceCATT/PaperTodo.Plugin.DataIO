@@ -1245,7 +1245,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         if (paper.TargetImagesAtRisk)
         {
-            warnings.Add("图片引用会被破坏，只能跳过或新增");
+            warnings.Add("部分图片无法写回，更新时会移除对应引用");
         }
 
         if (!selectable)
@@ -1350,9 +1350,14 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 $"文件中有 {plan.NotesWithImages} 张笔记包含 {plan.ImageReferenceCount} 处图片引用；" +
                 $"压缩包内含 {plan.ImageAssetCount} 张图片（{plan.RestorableImageCount} 张可写回）。";
 
+            if (plan.CompressedImageCount > 0)
+            {
+                text += $"{plan.CompressedImageCount} 张超过 8 MiB，将按宿主规则压缩后写回。";
+            }
+
             if (plan.UnrestorableImageCount > 0)
             {
-                text += $"{plan.UnrestorableImageCount} 张超过 8 MiB，仅保留在压缩包中。";
+                text += $"{plan.UnrestorableImageCount} 张无法压缩到 8 MiB 以内，仅保留在压缩包中。";
             }
 
             if (plan.MissingImageAssetCount > 0)
@@ -1717,7 +1722,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         if (capture.OversizedImages > 0)
         {
-            status += $"（{capture.OversizedImages} 张图片超过 8 MiB，仅保留在压缩包中）";
+            status += $"（{capture.OversizedImages} 张图片超过 8 MiB，导入时会压缩后写回）";
         }
 
         if (capture.ImageCaptureTruncated)
@@ -1761,7 +1766,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             stats.Add(("包含图片", $"{capture.Images.Count} 张"));
             if (capture.OversizedImages > 0)
             {
-                stats.Add(("超限图片", $"{capture.OversizedImages} 张"));
+                stats.Add(("需压缩图片", $"{capture.OversizedImages} 张"));
             }
         }
         else if (imageSummary.HasAny)
@@ -1800,8 +1805,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             if (capture.OversizedImages > 0)
             {
                 details.Add(
-                    $"{capture.OversizedImages} 张图片超过插件写入上限（8 MiB），" +
-                    "只保留在压缩包中，导入时无法自动写回笔记。");
+                    $"{capture.OversizedImages} 张图片超过插件直接写入上限（8 MiB），" +
+                    "导入时会按宿主规则压缩到 8 MiB 以内；" +
+                    "GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。");
             }
 
             if (capture.FailedImageReads > 0)
@@ -2240,7 +2246,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             if (nonRestorableImages > 0)
             {
                 result.Warnings.Add(
-                    $"{nonRestorableImages} 张图片超过 8 MiB，仅保留在压缩包中，未写回笔记。");
+                    $"{nonRestorableImages} 张图片无法压缩到 8 MiB 以内，" +
+                    "仅保留在压缩包中，未写回笔记。");
             }
 
             if (_importPlan.MissingImageAssetCount > 0)

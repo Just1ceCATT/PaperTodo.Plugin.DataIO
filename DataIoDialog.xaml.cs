@@ -493,7 +493,7 @@ public partial class DataIoDialog : Window
         {
             card.Children.Add(new TextBlock
             {
-                Text = "文件无法完整还原正文引用的图片（缺失、校验失败或超过 8 MiB），更新会破坏本地图片引用；只能选择“跳过”或“新增”。",
+                Text = "文件无法完整还原正文引用的部分图片（缺失、校验失败或无法压缩到 8 MiB 以内）；选择“更新”会移除这些引用，其余正文仍会更新。",
                 FontSize = 11.5 * _scale,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)Resources["DialogWarningBrush"],
@@ -519,7 +519,8 @@ public partial class DataIoDialog : Window
             });
         }
 
-        var updateAllowed = !paper.TargetImagesAtRisk && !contentUnavailable;
+        // 图片失败不再阻止更新：更新会移除失败引用，但保留文字更新。
+        var updateAllowed = !contentUnavailable;
         var choices = new StackPanel
         {
             Orientation = Orientation.Horizontal,

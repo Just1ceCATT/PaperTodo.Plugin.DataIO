@@ -99,6 +99,38 @@ internal static partial class ImageReferenceScanner
         return builder.ToString();
     }
 
+    [GeneratedRegex(
+        @"!\[[^\]\r\n]*\]\(\s*(?<url>i:\d{3,8}|images/[^)\s]+)\s*\)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex AnyReferencePattern();
+
+    /// <summary>
+    /// 删除无法写回的图片引用，保留其余正文。返回新正文与被删除的引用数量。
+    /// 用于“图片插入失败但文字仍要更新”的场景。
+    /// </summary>
+    public static (string Content, int Removed) RemoveUnresolvedReferences(
+        string? markdown,
+        Func<string, bool> isResolved)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return (markdown ?? "", 0);
+        }
+
+        var removed = 0;
+        var content = AnyReferencePattern().Replace(markdown, match =>
+        {
+            if (isResolved(match.Groups["url"].Value))
+            {
+                return match.Value;
+            }
+
+            removed++;
+            return "";
+        });
+        return (content, removed);
+    }
+
     /// <summary>
     /// 把本插件可控的图片地址（i:ID 或 images/ 相对链接）统一成 i:，
     /// 用于判断“本地 i:ID”与“文件中相对链接”是否只是写法不同。

@@ -69,6 +69,41 @@ public sealed class ImportImageSafetyTests
     }
 
     [Fact]
+    public void Removing_unresolved_references_keeps_text_and_resolved_images()
+    {
+        const string content =
+            "第一段\n![image|100%](i:101)\n第二段\n![image|50%](i:102)\n第三段";
+
+        var (result, removed) = ImageReferenceScanner.RemoveUnresolvedReferences(
+            content,
+            url => url == "i:101");
+
+        Assert.Equal(1, removed);
+        Assert.Contains("第一段", result);
+        Assert.Contains("第二段", result);
+        Assert.Contains("第三段", result);
+        Assert.Contains("(i:101)", result);
+        Assert.DoesNotContain("i:102", result);
+    }
+
+    [Fact]
+    public void Removing_unresolved_relative_links_keeps_surrounding_text()
+    {
+        const string content =
+            "开头\n![a](images/p1/101.png)\n中间\n![b](images/p1/102.png)\n结尾";
+
+        var (result, removed) = ImageReferenceScanner.RemoveUnresolvedReferences(
+            content,
+            url => url.EndsWith("101.png", StringComparison.Ordinal));
+
+        Assert.Equal(1, removed);
+        Assert.Contains("images/p1/101.png", result);
+        Assert.DoesNotContain("102.png", result);
+        Assert.Contains("中间", result);
+        Assert.Contains("结尾", result);
+    }
+
+    [Fact]
     public void Image_url_normalization_ignores_local_and_package_address_forms()
     {
         const string local = "前言\n![image|100%](i:001)\n正文";

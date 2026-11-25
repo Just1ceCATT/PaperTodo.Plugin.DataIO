@@ -21,8 +21,14 @@ internal sealed class ImportPlan
     /// <summary>可以写回笔记的图片数量。</summary>
     public int RestorableImageCount { get; set; }
 
-    /// <summary>超过插件追加上限、只能保留在压缩包中的图片数量。</summary>
+    /// <summary>超过插件追加上限、且无法压缩到 8 MiB 以内，只能保留在压缩包中的图片数量。</summary>
     public int UnrestorableImageCount { get; set; }
+
+    /// <summary>超过 8 MiB、已按宿主规则压缩后写回的图片数量。</summary>
+    public int CompressedImageCount { get; set; }
+
+    /// <summary>超过 8 MiB 且无法安全压缩的图片数量（GIF/TIFF、解码失败等）。</summary>
+    public int CompressionFailedImageCount { get; set; }
 
     /// <summary>清单存在但文件缺失、损坏或校验失败的图片数量。</summary>
     public int MissingImageAssetCount { get; set; }

@@ -49,8 +49,8 @@ internal sealed class ExportImage
     public string Sha256 { get; set; } = "";
 
     /// <summary>
-    /// false 表示图片超过插件追加 API 的单图上限，只能保留在压缩包中，
-    /// 无法在导入时自动写回笔记。
+    /// false 表示图片超过插件直接追加的单图上限（8 MiB）。
+    /// 导入时会先按宿主规则压缩再写回；GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。
     /// </summary>
     public bool Restorable { get; set; } = true;
 }

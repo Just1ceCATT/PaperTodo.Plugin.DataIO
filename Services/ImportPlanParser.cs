@@ -346,14 +346,38 @@ internal static class ImportPlanParser
                     continue;
                 }
 
+                var storedBytes = bytes;
+                var storedMime = image.Mime;
                 var restorable = image.Restorable &&
                     bytes.LongLength <= IPaperNoteAssetsApi.MaximumImageAppendBytes;
+
+                // 超过 8 MiB 时按宿主规则压缩后再写回；原始字节仍保留在压缩包内。
+                if (bytes.LongLength > IPaperNoteAssetsApi.MaximumImageAppendBytes)
+                {
+                    if (ImageCompressionService.TryCompress(
+                            bytes,
+                            image.Mime,
+                            out var compressed,
+                            out _))
+                    {
+                        storedBytes = compressed.Bytes;
+                        storedMime = compressed.Mime;
+                        restorable = true;
+                        plan.CompressedImageCount++;
+                    }
+                    else
+                    {
+                        restorable = false;
+                        plan.CompressionFailedImageCount++;
+                    }
+                }
+
                 paper.Images.Add(new ImportImageAsset
                 {
                     SourceImageId = image.ImageId,
                     File = image.File,
-                    Mime = image.Mime,
-                    Bytes = bytes,
+                    Mime = storedMime,
+                    Bytes = storedBytes,
                     Restorable = restorable,
                     Sha256 = image.Sha256
                 });
@@ -388,11 +412,18 @@ internal static class ImportPlanParser
         plan.ImageReferenceCount = notes.Sum(
             paper => paper.ResolvedImageReferences + paper.UnresolvedImageReferences);
 
+        if (plan.CompressedImageCount > 0)
+        {
+            plan.Warnings.Add(
+                $"{plan.CompressedImageCount} 张超过 8 MiB 的图片已按宿主规则压缩，" +
+                "导入时写回压缩后的版本；原始图片仍保留在压缩包中。");
+        }
+
         if (plan.UnrestorableImageCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.UnrestorableImageCount} 张图片超过 8 MiB 插件写入上限，" +
-                "只保留在压缩包中，导入时不会写回笔记。");
+                $"{plan.UnrestorableImageCount} 张图片无法压缩到 8 MiB 以内" +
+                "（例如 GIF/TIFF 或解码失败），只保留在压缩包中，导入时不会写回笔记。");
         }
 
         if (plan.MissingImageAssetCount > 0)

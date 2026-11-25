@@ -301,18 +301,9 @@ internal sealed class ImportService
                 "本地笔记在确认后已被修改，已跳过更新，请重新导入后确认。");
         }
 
-        // 图片必须能全部写回才允许替换正文：否则源工作区的 i:ID 可能指向本机另一张图，
-        // 相对链接则必然无法显示，两者都会把本地笔记改坏。
-        var imageBlocker = GetImageRestoreBlocker(importPaper);
-        if (imageBlocker != null)
-        {
-            throw new PaperTodoPluginException(
-                "images_unavailable",
-                $"{imageBlocker}，更新会破坏本地图片引用，已跳过该纸片；可改为“新增”后手动处理。");
-        }
-
-        // 有图片时先写图片、再一次性写入最终正文，避免出现“正文已替换、图片未恢复”的中间状态。
-        if (importPaper.Images.Count > 0 && importPaper.ResolvedImageReferences > 0)
+        // 图片失败不能连带丢弃文字：无法写回的引用会被移除，其余正文仍然更新。
+        string content;
+        if (importPaper.Images.Count > 0)
         {
             var imagesHandled = await RestoreImagesAsync(
                 importPaper,
@@ -327,20 +318,70 @@ internal sealed class ImportService
                 return (targetId, false, true);
             }
 
-            // 预检已通过，仍无法写回通常是权限变化或宿主拒绝；此时不能退回写入源正文。
-            throw new PaperTodoPluginException(
-                "image_restore_failed",
-                $"纸片“{DisplayTitle(importPaper)}”的图片未能写回，已取消更新，本地笔记保持不变。");
+            // 图片完全没能写回（权限变化、宿主不支持等）：移除所有图片引用，只保留文字。
+            (content, var removed) = ImageReferenceScanner.RemoveUnresolvedReferences(
+                source.Content ?? "",
+                _ => false);
+            if (removed > 0)
+            {
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”的 {removed} 处图片引用无法写回，" +
+                    "已移除这些引用并更新其余正文。");
+            }
+        }
+        else
+        {
+            // 没有随包图片时（例如普通 JSON），只移除已知无法还原的相对链接；
+            // 同一工作区的 i: 引用保持原样。
+            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "");
+            if (removed > 0)
+            {
+                var reason = GetImageRestoreBlocker(importPaper) ?? "图片无法写回";
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”的 {removed} 处图片引用无法写回" +
+                    $"（{reason}），已移除这些引用并更新其余正文。");
+            }
         }
 
         await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
         {
             PaperId = targetId,
-            Content = source.Content ?? "",
+            Content = content,
             Mode = NoteWriteMode.Replace
         }));
         await HostGateway.YieldAsync();
         return (targetId, false, false);
+    }
+
+    /// <summary>移除没有可用资产、确定无法写回的图片引用；保留其余正文。</summary>
+    private static (string Content, int Removed) StripUnrestorableReferences(
+        ImportPaper paper,
+        string content)
+    {
+        if (paper.UsesRelativeImageLinks)
+        {
+            var files = paper.Images
+                .Where(image => image.Restorable)
+                .Select(image => image.File)
+                .ToHashSet(StringComparer.Ordinal);
+            return ImageReferenceScanner.RemoveUnresolvedReferences(
+                content,
+                url => files.Contains(url));
+        }
+
+        // 没有随包图片的普通 JSON：引用可能在本机仍然有效，不擅自删除。
+        if (paper.Images.Count == 0)
+        {
+            return (content, 0);
+        }
+
+        var ids = paper.Images
+            .Where(image => image.Restorable)
+            .Select(image => image.SourceImageId)
+            .ToHashSet(StringComparer.Ordinal);
+        return ImageReferenceScanner.RemoveUnresolvedReferences(
+            content,
+            url => url.StartsWith("i:", StringComparison.Ordinal) && ids.Contains(url[2..]));
     }
 
     /// <summary>更新待办纸片：先完整匹配并校验权限，再统一写入，避免“改一半才报失败”。</summary>
@@ -664,11 +705,9 @@ internal sealed class ImportService
                 }
                 catch (PaperTodoPluginException ex) when (ex.Code == "image_reference_not_renderable")
                 {
-                    // 正文末尾处于未闭合代码块，继续追加同样会失败。
+                    // 宿主拒绝在未闭合代码块后追加图片；沿用宿主文案，继续保留正文文本。
                     failed += images.Count - index;
-                    result.Warnings.Add(
-                        $"纸片“{DisplayTitle(importPaper)}”的正文末尾有未闭合的代码块，图片无法写回；" +
-                        "请先修正正文后重新导入。");
+                    firstFailure ??= ex.Message;
                     break;
                 }
                 catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
@@ -689,18 +728,7 @@ internal sealed class ImportService
         result.FailedImages += failed;
         result.SkippedImages += skipped;
 
-        // 更新笔记时不允许“部分图片成功”：失败或超限的引用会指向本机另一张图 / 死链，
-        // 回滚本次追加的图片引用并中止该纸片的更新，本地笔记保持原样。
-        if (abortOnUpdate && (failed > 0 || skipped > 0))
-        {
-            await TryRollbackAppendedImagesAsync(paperId, appended, result);
-            throw new PaperTodoPluginException(
-                "image_restore_failed",
-                $"纸片“{DisplayTitle(importPaper)}”有 {failed + skipped} 张图片无法写回，" +
-                "已取消更新，本地笔记保持不变。");
-        }
-
-        if (newIds.Count == 0)
+        if (newIds.Count == 0 && !abortOnUpdate)
         {
             if (failed > 0)
             {
@@ -738,14 +766,17 @@ internal sealed class ImportService
         }
 
         var finalContent = BuildContentWithNewImageIds(importPaper, newIds, idsByFile);
-        if (abortOnUpdate && HasUnresolvedImageReferences(importPaper, finalContent, newIds))
+        if (abortOnUpdate)
         {
-            // 预检已覆盖可预见情况；这里是最后防线，绝不把仍含旧地址的正文写回本地。
-            await TryRollbackAppendedImagesAsync(paperId, appended, result);
-            throw new PaperTodoPluginException(
-                "image_restore_failed",
-                $"纸片“{DisplayTitle(importPaper)}”仍有图片引用未能解析，" +
-                "已取消更新，本地笔记保持不变。");
+            // 更新时图片失败不能连带丢掉文字：移除无法写回的引用，其余正文照常写入。
+            var mappedIds = newIds.Values.ToHashSet(StringComparer.Ordinal);
+            var resolvedFiles = idsByFile.Keys.ToHashSet(StringComparer.Ordinal);
+            (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
+                finalContent,
+                url => url.StartsWith("images/", StringComparison.Ordinal)
+                    ? resolvedFiles.Contains(url)
+                    : url.StartsWith("i:", StringComparison.Ordinal) &&
+                      mappedIds.Contains(url[2..]));
         }
 
         try
@@ -786,15 +817,19 @@ internal sealed class ImportService
         if (failed > 0)
         {
             var reason = string.IsNullOrWhiteSpace(firstFailure) ? "" : $"（{firstFailure}）";
+            var suffix = abortOnUpdate
+                ? "已移除对应引用并更新其余正文。"
+                : "相关引用保持原样。";
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”有 {failed} 张图片未能写回" +
-                $"{reason}，相关引用保持原样。");
+                $"{reason}，{suffix}");
         }
 
         if (skipped > 0)
         {
-            result.Warnings.Add(
-                $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片超过 8 MiB，仅保留在压缩包中。");
+            result.Warnings.Add(abortOnUpdate
+                ? $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法压缩到 8 MiB 以内，已移除对应引用并更新其余正文。"
+                : $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法压缩到 8 MiB 以内，仅保留在压缩包中。");
         }
 
         return true;
@@ -850,7 +885,7 @@ internal sealed class ImportService
 
                 if (!image.Restorable)
                 {
-                    return "有图片超过 8 MiB 写入上限";
+                    return "有图片无法压缩到 8 MiB 以内";
                 }
             }
 
@@ -878,26 +913,11 @@ internal sealed class ImportService
 
             if (!image.Restorable)
             {
-                return "有图片超过 8 MiB 写入上限";
+                return "有图片无法压缩到 8 MiB 以内";
             }
         }
 
         return null;
-    }
-
-    /// <summary>重写后的正文是否仍残留旧图片地址（相对链接，或未映射的 i:ID）。</summary>
-    private static bool HasUnresolvedImageReferences(
-        ImportPaper paper,
-        string finalContent,
-        IReadOnlyDictionary<string, string> newIds)
-    {
-        if (paper.UsesRelativeImageLinks)
-        {
-            return ImageReferenceScanner.EnumerateRelativeImageLinks(finalContent).Count > 0;
-        }
-
-        return ImageReferenceScanner.Enumerate(paper.Source.Content ?? "")
-            .Any(reference => !newIds.ContainsKey(reference.ImageId));
     }
 
     /// <summary>本地已有同一张笔记的同 ID 图片且字节完全一致时，可直接复用该 ID。</summary>
