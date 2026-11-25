@@ -11,3 +11,8 @@ artifacts/
 
 # 本地打包产物
 dist/
+
+# 本地草稿与临时材料
+/ui优化.md
+/samples/待办1.md
+/docs/bug-report-图片库写入禁用.md
