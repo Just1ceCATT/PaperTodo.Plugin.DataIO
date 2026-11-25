@@ -54,6 +54,70 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         }
 
         _subscription = context.Papers.Subscribe(OnRuntimeEvent);
+
+        // 宿主以折叠/胶囊状态恢复工具纸片时会延迟构建正文外壳，展开后可能只留下空白窗口。
+        // Runtime 比 Body 更早稳定，启动后主动请求一次“展开”，强制宿主走正常的正文构建路径。
+        _ = Task.Run(() => NormalizeStartupPresentationAsync(context));
+    }
+
+    private static async Task NormalizeStartupPresentationAsync(PaperPluginRuntimeContext context)
+    {
+        try
+        {
+            // 等宿主完成启动纸片恢复与首帧展示。
+            await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            if (!AutoStartEnabled(context.Settings.Json) ||
+                context.Workspace is not IPaperWorkspacePresentationApi presentation)
+            {
+                return;
+            }
+
+            foreach (var paper in context.Workspace.ListPapers())
+            {
+                if (!paper.IsVisible ||
+                    !string.Equals(paper.Type, "note", StringComparison.Ordinal) ||
+                    !string.Equals(
+                        paper.BodyProviderId,
+                        context.ProviderId,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    presentation.ExpandPaper(paper.Id, activate: false);
+                }
+                catch (PaperTodoPluginException)
+                {
+                    // 单个纸片不可展示时继续处理其它纸片。
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // 启动补建只是兜底；宿主关闭或权限变化时静默放弃。
+        }
+    }
+
+    /// <summary>读取插件设置中的“启动后自动打开”；缺失时按 plugin.json 的默认值 true 处理。</summary>
+    private static bool AutoStartEnabled(string? settingsJson)
+    {
+        if (string.IsNullOrWhiteSpace(settingsJson))
+        {
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(settingsJson);
+            return !document.RootElement.TryGetProperty("autoStart", out var value) ||
+                   value.ValueKind != JsonValueKind.False;
+        }
+        catch (JsonException)
+        {
+            return true;
+        }
     }
 
     private void OnRuntimeEvent(PaperPluginRuntimeEvent evt)

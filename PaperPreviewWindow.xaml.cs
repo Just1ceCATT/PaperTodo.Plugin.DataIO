@@ -76,7 +76,7 @@ internal partial class PaperPreviewWindow : Window
     {
         InitializeComponent();
 
-        _scale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.8, 2.4);
+        _scale = ThemeBrushes.NormalizeScale(theme.FontScale, 0.8, 2.4);
         _tint = tint;
         _mode = mode;
         _keys = keys;

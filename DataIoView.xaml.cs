@@ -1178,7 +1178,7 @@ public partial class DataIoView : UserControl
         var hideSubtitle = narrow || height < 460;
         var tiny = width < 320;
 
-        var themeScale = theme.FontScale <= 0 ? 1.0 : Math.Clamp(theme.FontScale, 0.7, 2.5);
+        var themeScale = ThemeBrushes.NormalizeScale(theme.FontScale, 0.7, 2.5);
         var widthFactor = Math.Clamp((width - 240) / 480.0, 0.84, 1.0);
         var scale = themeScale * widthFactor;
 

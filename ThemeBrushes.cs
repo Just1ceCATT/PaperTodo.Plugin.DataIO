@@ -23,6 +23,15 @@ internal static class ThemeBrushes
         return brush;
     }
 
+    /// <summary>
+    /// 归一化宿主下发的字体缩放。NaN/Infinity/非正数会让所有字号、边距变成无效值，
+    /// 进而让 WPF 布局反复失败、整个插件正文显示为空白，因此必须回退到 1.0。
+    /// </summary>
+    public static double NormalizeScale(double scale, double minimum, double maximum) =>
+        double.IsFinite(scale) && scale > 0
+            ? Math.Clamp(scale, minimum, maximum)
+            : 1.0;
+
     public static Color ParseColor(string? hex, Color fallback)
     {
         if (!string.IsNullOrWhiteSpace(hex))

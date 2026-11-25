@@ -3,6 +3,7 @@ using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using PaperTodo.Plugin;
@@ -101,6 +102,13 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本次导入是否已提示“映射不可用”，避免重复刷屏。</summary>
     private bool _importLinksDegraded;
 
+    /// <summary>本会话是否已尝试过一次“正文未挂载”自愈，避免重复重建。</summary>
+    private bool _autoReloadRequested;
+
+    /// <summary>进程内自愈重建次数上限，防止宿主持续失败时反复重建。</summary>
+    private static int _autoReloadCount;
+    private const int MaxAutoReloads = 2;
+
     public DataIoSession(PaperBodyContext context)
     {
         _context = context;
@@ -142,6 +150,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.PrimaryActionRequested += OnPrimaryActionRequested;
         _view.ChooseImportFileRequested += OnChooseImportFileRequested;
         _view.ClearImportFileRequested += OnClearImportFileRequested;
+        _view.Loaded += OnViewLoaded;
 
         _view.ApplyTheme(_theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
@@ -199,7 +208,139 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         // 导入只在会话 Dispose 时中止。
     }
 
-    public void OnActivated() => ScheduleRefresh();
+    public void OnActivated()
+    {
+        ScheduleRefresh();
+        // 宿主在极少数启动/工作区切换时序下会保留会话但让正文脱离可视树，
+        // 表现为纸片空白。用户激活纸片时补一次重建，避免必须删除纸片才能恢复。
+        if (PresentationSource.FromVisual(_view) is null)
+        {
+            TryAutoReloadBody();
+            return;
+        }
+
+        ScheduleRenderedCheck(0);
+    }
+
+    private void OnViewLoaded(object sender, RoutedEventArgs e)
+    {
+        _view.Loaded -= OnViewLoaded;
+        // 首帧布局完成后再判定，避免在 attach 过程中误判尺寸为 0。
+        ScheduleRenderedCheck(0);
+    }
+
+    /// <summary>
+    /// 分几次检查正文是否真的完成布局：隐藏纸片恢复、启动动画或工作区切换时，
+    /// attach 当下尺寸可能还是 0，不能立即判定为空白。
+    /// </summary>
+    private void ScheduleRenderedCheck(int attempt)
+    {
+        if (_disposed || _autoReloadRequested)
+        {
+            return;
+        }
+
+        var timer = new DispatcherTimer(DispatcherPriority.Background, _view.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(attempt == 0 ? 180 : 420)
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            CheckViewRendered(attempt);
+        };
+        timer.Start();
+    }
+
+    private void CheckViewRendered(int attempt)
+    {
+        if (_disposed || _autoReloadRequested)
+        {
+            return;
+        }
+
+        if (PresentationSource.FromVisual(_view) is null)
+        {
+            // view 完全脱离可视树：稍后再看一次，仍是脱离就重建。
+            if (attempt < 2)
+            {
+                ScheduleRenderedCheck(attempt + 1);
+            }
+            else
+            {
+                TryAutoReloadBody();
+            }
+
+            return;
+        }
+
+        // 窗口仍然隐藏时不判定尺寸，等下一次可见/激活事件。
+        if (!_view.IsVisible)
+        {
+            return;
+        }
+
+        if (_view.ActualWidth <= 1 ||
+            _view.ActualHeight <= 1 ||
+            IsViewClippedAway())
+        {
+            if (attempt < 2)
+            {
+                ScheduleRenderedCheck(attempt + 1);
+            }
+            else
+            {
+                TryAutoReloadBody();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 宿主会把插件正文放进一个带圆角裁剪的容器。极少数启动时序下裁剪几何为 0，
+    /// 正文虽然已挂载且有尺寸却完全不可见；沿可视树向上检查一层即可识别。
+    /// </summary>
+    private bool IsViewClippedAway()
+    {
+        DependencyObject? node = _view;
+        for (var depth = 0; node is not null && depth < 4; depth++)
+        {
+            if (node is UIElement element && element.Clip is Geometry clip)
+            {
+                var bounds = clip.Bounds;
+                if (bounds.Width <= 1 || bounds.Height <= 1)
+                {
+                    return true;
+                }
+            }
+
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return false;
+    }
+
+    private void TryAutoReloadBody()
+    {
+        if (_disposed || _autoReloadRequested)
+        {
+            return;
+        }
+
+        _autoReloadRequested = true;
+        if (Interlocked.Increment(ref _autoReloadCount) > MaxAutoReloads)
+        {
+            return;
+        }
+
+        try
+        {
+            _context.Body.RequestReload();
+        }
+        catch (Exception)
+        {
+            // 自愈只是兜底；重建失败时保留当前会话，不影响其它操作。
+        }
+    }
 
     public void OnDeactivated()
     {
@@ -216,6 +357,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         // 恢复可见时强制失效预览缓存，避免悬停预览继续显示旧正文。
         _noteContentDirty = true;
         ScheduleRefresh();
+        // 隐藏状态下创建的正文可能没有完成布局，显示后补一次尺寸检查。
+        ScheduleRenderedCheck(0);
     }
 
     public void OnPresentationChanged(bool visible)
@@ -339,6 +482,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.PrimaryActionRequested -= OnPrimaryActionRequested;
         _view.ChooseImportFileRequested -= OnChooseImportFileRequested;
         _view.ClearImportFileRequested -= OnClearImportFileRequested;
+        _view.Loaded -= OnViewLoaded;
     }
 
     // ---------- 模式与刷新 ----------
