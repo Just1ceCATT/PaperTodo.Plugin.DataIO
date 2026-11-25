@@ -1736,7 +1736,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         "未能读取工作区级导入映射，本次可能把已导入的纸片当作新建。");
                 }
 
-                await _identity.ResolveAsync(plan, cancellationToken);
+                await _identity.ResolveAsync(plan, _settings, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

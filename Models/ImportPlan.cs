@@ -35,6 +35,15 @@ internal sealed class ImportPlan
 
     public bool HasEmbeddedImages => ImageAssetCount > 0;
 
+    /// <summary>文件格式是否携带提醒数据；Markdown 不携带，更新时不能据此删除本地提醒。</summary>
+    public bool SupportsReminders { get; set; } = true;
+
+    /// <summary>文件格式是否携带待办关联纸片；Markdown 不携带，更新时不能据此清除本地关联。</summary>
+    public bool SupportsPaperLinks { get; set; } = true;
+
+    /// <summary>压缩包内的主文件类型，例如“JSON 压缩包”；普通文件为 null。</summary>
+    public string? ContainerFormat { get; set; }
+
     /// <summary>非空表示文件整体不可导入。</summary>
     public string? FatalError { get; set; }
 
@@ -75,6 +84,12 @@ internal sealed class ImportPaper
     /// 为 false 时无需出现在更新预览里，也不应计入更新。
     /// </summary>
     public bool UpdateHasChanges { get; set; }
+
+    /// <summary>
+    /// 正文/待办文本没有差异，但顺序、提醒或关联纸片与本地不同。
+    /// 这类纸片仍需出现在更新预览里，供用户选择是否同步。
+    /// </summary>
+    public bool UpdateHasMetaChanges { get; set; }
 
     /// <summary>随压缩包提供、属于这张笔记的图片。</summary>
     public List<ImportImageAsset> Images { get; } = [];

@@ -27,6 +27,12 @@ internal static partial class ImageReferenceScanner
         RegexOptions.CultureInvariant)]
     private static partial Regex RelativeLinkPattern();
 
+    /// <summary>只改写地址、保留标签的图片引用匹配；用于比较不同来源地址是否等价。</summary>
+    [GeneratedRegex(
+        @"(?<prefix>!\[[^\]\r\n]*\]\()\s*(?:i:\d{3,8}|images/[^)\s]+)\s*(?<suffix>\))",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex ImageUrlPattern();
+
     public static int Count(string? markdown) =>
         string.IsNullOrEmpty(markdown) ? 0 : ReferencePattern().Matches(markdown).Count;
 
@@ -91,6 +97,22 @@ internal static partial class ImageReferenceScanner
 
         builder.Append(markdown, cursor, markdown.Length - cursor);
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// 把本插件可控的图片地址（i:ID 或 images/ 相对链接）统一成 i:，
+    /// 用于判断“本地 i:ID”与“文件中相对链接”是否只是写法不同。
+    /// </summary>
+    public static string NormalizeImageUrls(string? markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return markdown ?? "";
+        }
+
+        return ImageUrlPattern().Replace(
+            markdown,
+            match => match.Groups["prefix"].Value + "i:" + match.Groups["suffix"].Value);
     }
 
     /// <summary>统计 Markdown 压缩包相对链接的数量；这些链接在导入时会换成 i: 引用。</summary>

@@ -336,7 +336,7 @@ public partial class DataIoDialog : Window
         {
             card.Children.Add(new TextBlock
             {
-                Text = "文件中的图片引用已被替换为“图片缺失”标记，更新会破坏本地图片引用；只能选择“跳过”或“新增”。",
+                Text = "文件无法完整还原正文引用的图片（缺失、校验失败或超过 8 MiB），更新会破坏本地图片引用；只能选择“跳过”或“新增”。",
                 FontSize = 11.5 * _scale,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = (Brush)Resources["DialogWarningBrush"],

@@ -127,6 +127,7 @@ internal static class ImportPlanParser
                 return plan;
             }
 
+            plan.ContainerFormat = "JSON 压缩包";
             AttachImages(plan, ReadJsonImageManifest(json), archive, usesRelativeLinks: false);
             return plan;
         }
@@ -145,9 +146,10 @@ internal static class ImportPlanParser
                 return Fatal("压缩包中的 Markdown 正文为空。");
             }
 
-            var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path));
+            var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path), supportsTodoMetadata: false);
             if (plan.FatalError == null)
             {
+                plan.ContainerFormat = "Markdown 压缩包";
                 plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
             }
 
@@ -476,7 +478,7 @@ internal static class ImportPlanParser
         }
 
         // Markdown 解析结果直接走同一套校验，不再先序列化成 JSON 再解析。
-        var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path));
+        var plan = ParseDocument(MarkdownImportParser.Parse(markdown, path), supportsTodoMetadata: false);
         if (plan.FatalError == null)
         {
             plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
@@ -776,9 +778,13 @@ internal static class ImportPlanParser
     };
 
     /// <summary>校验内存中的导出文档并生成导入计划（JSON 与 Markdown 共用）。</summary>
-    private static ImportPlan ParseDocument(ExportDocument document)
+    private static ImportPlan ParseDocument(ExportDocument document, bool supportsTodoMetadata = true)
     {
-        var plan = new ImportPlan();
+        var plan = new ImportPlan
+        {
+            SupportsReminders = supportsTodoMetadata,
+            SupportsPaperLinks = supportsTodoMetadata
+        };
 
         // 显式 null 或数组内混入 null 都要过滤，避免后续访问元素时抛空引用。
         document.Papers = document.Papers?.OfType<ExportPaper>().ToList() ?? [];

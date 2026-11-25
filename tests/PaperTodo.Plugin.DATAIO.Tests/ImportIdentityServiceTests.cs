@@ -81,21 +81,99 @@ public sealed class ImportIdentityServiceTests
     }
 
     [Fact]
-    public void NoOp_note_is_only_detected_for_mapped_unchanged_notes()
+    public void NoOp_is_detected_for_mapped_papers_without_any_change()
     {
-        static ImportPaper Paper(string type, string? target, bool hasChanges) => new()
+        static ImportPaper Paper(
+            string type,
+            string? target,
+            bool hasChanges,
+            bool hasMetaChanges = false) => new()
         {
             Source = new ExportPaper { Type = type },
             UpdateTargetId = target,
-            UpdateHasChanges = hasChanges
+            UpdateHasChanges = hasChanges,
+            UpdateHasMetaChanges = hasMetaChanges
         };
 
         Assert.True(DataIoSession.IsNoOpUpdate(Paper("note", "p1", hasChanges: false)));
         Assert.False(DataIoSession.IsNoOpUpdate(Paper("note", "p1", hasChanges: true)));
         Assert.False(DataIoSession.IsNoOpUpdate(Paper("note", null, hasChanges: false)));
-        // 待办仍保留在预览中：差异快照不包含提醒/关联，不能据此判定无操作。
-        Assert.False(DataIoSession.IsNoOpUpdate(Paper("todo", "p1", hasChanges: false)));
+        // 待办文本没有变化，也没有顺序/提醒/关联差异时同样按无操作处理。
+        Assert.True(DataIoSession.IsNoOpUpdate(Paper("todo", "p1", hasChanges: false)));
+        Assert.False(DataIoSession.IsNoOpUpdate(
+            Paper("todo", "p1", hasChanges: false, hasMetaChanges: true)));
     }
+
+    [Fact]
+    public void Todo_meta_changes_detect_order_reminder_and_link_differences()
+    {
+        var settings = new DataIoSettings();
+        var local = new[]
+        {
+            Todo("a", "A", 0),
+            Todo("b", "B", 1)
+        };
+
+        // 顺序变化。
+        Assert.True(ImportIdentityService.HasTodoMetaChanges(
+            local,
+            [TodoSource("B", order: 0), TodoSource("A", order: 1)],
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true));
+
+        // 完全相同。
+        Assert.False(ImportIdentityService.HasTodoMetaChanges(
+            local,
+            [TodoSource("A", order: 0), TodoSource("B", order: 1)],
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true));
+
+        // 提醒变化。
+        Assert.True(ImportIdentityService.HasTodoMetaChanges(
+            local,
+            [TodoSource("A", order: 0, reminder: DateTimeOffset.Now.AddHours(1)), TodoSource("B", order: 1)],
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true));
+
+        // 关联纸片变化。
+        Assert.True(ImportIdentityService.HasTodoMetaChanges(
+            [Todo("a", "A", 0, link: "paper-1")],
+            [TodoSource("A", order: 0)],
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true));
+
+        // Markdown 不携带提醒/关联，不能据此判定存在差异。
+        Assert.False(ImportIdentityService.HasTodoMetaChanges(
+            [Todo("a", "A", 0, link: "paper-1", reminder: DateTimeOffset.Now.AddHours(1))],
+            [TodoSource("A", order: 0)],
+            settings,
+            supportsPaperLinks: false,
+            supportsReminders: false));
+    }
+
+    private static TodoSnapshot Todo(
+        string id,
+        string text,
+        int order,
+        string? link = null,
+        DateTimeOffset? reminder = null) =>
+        new("p", "t", id, text, false, order, link, null, reminder);
+
+    private static ExportTodo TodoSource(
+        string text,
+        int order,
+        DateTimeOffset? reminder = null,
+        string? linkedSourceId = null) => new()
+    {
+        Text = text,
+        Order = order,
+        ReminderAt = reminder,
+        LinkedSourcePaperId = linkedSourceId
+    };
 
     [Fact]
     public void Fallback_can_require_markdown_provider_for_notes()

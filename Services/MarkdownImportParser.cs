@@ -39,9 +39,26 @@ internal static partial class MarkdownImportParser
             var trimmed = lines[index].Trim();
 
             // 代码块内的注释标记只是笔记内容，不能用来分节。
-            if (TryToggleFence(trimmed, ref fenceCharacter) || fenceCharacter != '\0')
+            if (TryToggleFence(trimmed, ref fenceCharacter))
             {
                 continue;
+            }
+
+            if (fenceCharacter != '\0')
+            {
+                // 未闭合的围栏会让后续所有纸片都被当成代码内容。
+                // 导出端会转义正文中的标记行，因此严格命中的 v2 标记仍是结构边界：
+                // 只有在“当前围栏之后还有闭合围栏”时，才把标记当作代码内容忽略。
+                if (TypeMarkerPattern().IsMatch(trimmed) &&
+                    trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase) &&
+                    !HasClosingFenceAhead(lines, index + 1, fenceCharacter))
+                {
+                    fenceCharacter = '\0';
+                }
+                else
+                {
+                    continue;
+                }
             }
 
             var match = TypeMarkerPattern().Match(trimmed);
@@ -250,6 +267,31 @@ internal static partial class MarkdownImportParser
         return trimmed.StartsWith("<!--", StringComparison.Ordinal) &&
                trimmed.EndsWith("-->", StringComparison.Ordinal) &&
                trimmed.Contains(ContentUnavailableMarker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 围栏之后是否还有同种闭合围栏。遇到下一个 v2 分节标记即停止：
+    /// 说明当前围栏在分节边界仍未闭合，应把它当作未闭合围栏处理。
+    /// </summary>
+    private static bool HasClosingFenceAhead(string[] lines, int start, char fenceCharacter)
+    {
+        var fence = new string(fenceCharacter, 3);
+        for (var index = start; index < lines.Length; index++)
+        {
+            var trimmed = lines[index].Trim();
+            if (trimmed.StartsWith(fence, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (TypeMarkerPattern().IsMatch(trimmed) &&
+                trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

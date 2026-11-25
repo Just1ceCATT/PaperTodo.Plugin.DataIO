@@ -73,6 +73,7 @@ internal sealed class ImportService
                 try
                 {
                     var createdNow = string.IsNullOrWhiteSpace(importPaper.UpdateTargetId);
+                    var imagesHandled = false;
                     string localId;
                     if (createdNow)
                     {
@@ -80,12 +81,15 @@ internal sealed class ImportService
                     }
                     else
                     {
-                        (localId, createdNow) = await UpdateOneAsync(
+                        var update = await UpdateOneAsync(
                             importPaper,
                             importPaper.UpdateTargetId!,
                             settings,
                             result,
                             cancellationToken);
+                        localId = update.Id;
+                        createdNow = update.Created;
+                        imagesHandled = update.ImagesHandled;
                     }
 
                     processed.Add((importPaper, localId, createdNow));
@@ -118,15 +122,18 @@ internal sealed class ImportService
                         result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
                     }
 
-                    // 图片紧跟正文写入，尽量缩短“正文已更新但图片仍是旧引用”的窗口。
+                    // 更新笔记时图片已在写入正文前处理完；新建或待办纸片在这里补图片。
                     try
                     {
-                        await RestoreImagesAsync(
-                            importPaper,
-                            localId,
-                            createdNow,
-                            result,
-                            cancellationToken);
+                        if (!imagesHandled)
+                        {
+                            await RestoreImagesAsync(
+                                importPaper,
+                                localId,
+                                createdNow,
+                                result,
+                                cancellationToken);
+                        }
                     }
                     catch (OperationCanceledException)
                     {
@@ -166,9 +173,18 @@ internal sealed class ImportService
                 for (var i = 0; i < processed.Count; i++)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var (paper, localId, _) = processed[i];
+                    var (paper, localId, createdNow) = processed[i];
                     _progress?.Report($"正在还原 {i + 1}/{processed.Count}：{DisplayTitle(paper)}");
-                    await RepairAsync(paper, localId, settings, idMap, result, cancellationToken);
+                    await RepairAsync(
+                        paper,
+                        localId,
+                        createdNow,
+                        settings,
+                        plan.SupportsPaperLinks,
+                        plan.SupportsReminders,
+                        idMap,
+                        result,
+                        cancellationToken);
                     await HostGateway.YieldAsync();
                 }
             }
@@ -188,7 +204,7 @@ internal sealed class ImportService
     /// 标题、类型等宿主不支持的字段保持不变，并在标题不一致时提示。
     /// 所有可预见的失败（权限、内容不可用、破坏性差异）都在写入前判定，避免部分生效。
     /// </summary>
-    private async Task<(string Id, bool Created)> UpdateOneAsync(
+    private async Task<(string Id, bool Created, bool ImagesHandled)> UpdateOneAsync(
         ImportPaper importPaper,
         string targetId,
         DataIoSettings settings,
@@ -206,7 +222,7 @@ internal sealed class ImportService
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”的更新目标已失效，已改为新建。");
             var fallbackId = await CreateOneAsync(importPaper, settings, result);
-            return (fallbackId, true);
+            return (fallbackId, true, false);
         }
 
         if (!string.IsNullOrWhiteSpace(importPaper.SafeTitle) &&
@@ -218,16 +234,22 @@ internal sealed class ImportService
 
         if (type == "note")
         {
-            return await UpdateNoteAsync(importPaper, targetId);
+            return await UpdateNoteAsync(
+                importPaper,
+                targetId,
+                result,
+                cancellationToken);
         }
 
         return await UpdateTodoPaperAsync(importPaper, targetId, settings, result, cancellationToken);
     }
 
     /// <summary>更新笔记纸片：整体替换正文，但绝不接受会把本地图片引用写坏的来源。</summary>
-    private async Task<(string Id, bool Created)> UpdateNoteAsync(
+    private async Task<(string Id, bool Created, bool ImagesHandled)> UpdateNoteAsync(
         ImportPaper importPaper,
-        string targetId)
+        string targetId,
+        ImportResult result,
+        CancellationToken cancellationToken)
     {
         var source = importPaper.Source;
 
@@ -266,7 +288,7 @@ internal sealed class ImportService
         {
             // 正文等价（忽略行尾空行与末尾分隔线）时不写回，
             // 避免 Markdown 往返产生的规范化差异被持久化。
-            return (targetId, false);
+            return (targetId, false, false);
         }
 
         // 确认期间本地内容被修改过：放弃覆盖，让用户重新导入并确认。
@@ -279,6 +301,38 @@ internal sealed class ImportService
                 "本地笔记在确认后已被修改，已跳过更新，请重新导入后确认。");
         }
 
+        // 图片必须能全部写回才允许替换正文：否则源工作区的 i:ID 可能指向本机另一张图，
+        // 相对链接则必然无法显示，两者都会把本地笔记改坏。
+        var imageBlocker = GetImageRestoreBlocker(importPaper);
+        if (imageBlocker != null)
+        {
+            throw new PaperTodoPluginException(
+                "images_unavailable",
+                $"{imageBlocker}，更新会破坏本地图片引用，已跳过该纸片；可改为“新增”后手动处理。");
+        }
+
+        // 有图片时先写图片、再一次性写入最终正文，避免出现“正文已替换、图片未恢复”的中间状态。
+        if (importPaper.Images.Count > 0 && importPaper.ResolvedImageReferences > 0)
+        {
+            var imagesHandled = await RestoreImagesAsync(
+                importPaper,
+                targetId,
+                createdNow: false,
+                result,
+                cancellationToken,
+                abortOnUpdate: true);
+            if (imagesHandled)
+            {
+                await HostGateway.YieldAsync();
+                return (targetId, false, true);
+            }
+
+            // 预检已通过，仍无法写回通常是权限变化或宿主拒绝；此时不能退回写入源正文。
+            throw new PaperTodoPluginException(
+                "image_restore_failed",
+                $"纸片“{DisplayTitle(importPaper)}”的图片未能写回，已取消更新，本地笔记保持不变。");
+        }
+
         await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
         {
             PaperId = targetId,
@@ -286,11 +340,11 @@ internal sealed class ImportService
             Mode = NoteWriteMode.Replace
         }));
         await HostGateway.YieldAsync();
-        return (targetId, false);
+        return (targetId, false, false);
     }
 
     /// <summary>更新待办纸片：先完整匹配并校验权限，再统一写入，避免“改一半才报失败”。</summary>
-    private async Task<(string Id, bool Created)> UpdateTodoPaperAsync(
+    private async Task<(string Id, bool Created, bool ImagesHandled)> UpdateTodoPaperAsync(
         ImportPaper importPaper,
         string targetId,
         DataIoSettings settings,
@@ -417,7 +471,7 @@ internal sealed class ImportService
         }
 
         await HostGateway.YieldAsync();
-        return (targetId, false);
+        return (targetId, false, false);
     }
 
     /// <summary>读取本地笔记正文；读取失败时返回 null，后续按普通更新处理。</summary>
@@ -517,31 +571,26 @@ internal sealed class ImportService
     /// 把压缩包内的图片写回笔记：先逐张追加拿到本机图片 ID，再整体替换正文。
     /// 单张追加失败只保留原引用；整体写入失败时会尝试清理本次追加的尾部引用。
     /// </summary>
-    private async Task RestoreImagesAsync(
+    private async Task<bool> RestoreImagesAsync(
         ImportPaper importPaper,
         string paperId,
         bool createdNow,
         ImportResult result,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool abortOnUpdate = false)
     {
-        var images = importPaper.Images;
+        // 只写回正文实际引用的图片，避免为清单里未被引用的图片留下孤儿资源。
+        var images = FilterReferencedImages(importPaper);
         if (images.Count == 0)
         {
-            return;
+            return false;
         }
 
         if (!string.Equals(importPaper.Source.Type, "note", StringComparison.OrdinalIgnoreCase) ||
             importPaper.Source.ContentAvailable != true)
         {
             result.SkippedImages += images.Count;
-            return;
-        }
-
-        if (importPaper.ResolvedImageReferences == 0)
-        {
-            // 正文没有引用这些图片，写回只会产生孤儿图片。
-            result.SkippedImages += images.Count;
-            return;
+            return false;
         }
 
         if (!_gateway.Can(PaperTodoPermissionNames.NotesAppend) ||
@@ -551,7 +600,7 @@ internal sealed class ImportService
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”包含 {images.Count} 张图片，" +
                 "但缺少 notes.append/notes.replace 权限，图片未写回。");
-            return;
+            return false;
         }
 
         try
@@ -562,7 +611,7 @@ internal sealed class ImportService
         {
             result.SkippedImages += images.Count;
             result.Warnings.Add("当前宿主不支持插件写入笔记图片，压缩包中的图片未写回。");
-            return;
+            return false;
         }
 
         var canReadImages = _gateway.Can(PaperTodoPermissionNames.NotesRead);
@@ -640,6 +689,17 @@ internal sealed class ImportService
         result.FailedImages += failed;
         result.SkippedImages += skipped;
 
+        // 更新笔记时不允许“部分图片成功”：失败或超限的引用会指向本机另一张图 / 死链，
+        // 回滚本次追加的图片引用并中止该纸片的更新，本地笔记保持原样。
+        if (abortOnUpdate && (failed > 0 || skipped > 0))
+        {
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            throw new PaperTodoPluginException(
+                "image_restore_failed",
+                $"纸片“{DisplayTitle(importPaper)}”有 {failed + skipped} 张图片无法写回，" +
+                "已取消更新，本地笔记保持不变。");
+        }
+
         if (newIds.Count == 0)
         {
             if (failed > 0)
@@ -674,10 +734,20 @@ internal sealed class ImportService
                 }
             }
 
-            return;
+            return false;
         }
 
         var finalContent = BuildContentWithNewImageIds(importPaper, newIds, idsByFile);
+        if (abortOnUpdate && HasUnresolvedImageReferences(importPaper, finalContent, newIds))
+        {
+            // 预检已覆盖可预见情况；这里是最后防线，绝不把仍含旧地址的正文写回本地。
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            throw new PaperTodoPluginException(
+                "image_restore_failed",
+                $"纸片“{DisplayTitle(importPaper)}”仍有图片引用未能解析，" +
+                "已取消更新，本地笔记保持不变。");
+        }
+
         try
         {
             // 全部图片都能复用且正文没有变化时，不触发无意义的保存。
@@ -710,7 +780,7 @@ internal sealed class ImportService
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”的图片已写入，但正文更新失败：" +
                 $"{ex.Message}；已尝试清理追加的图片引用。");
-            return;
+            return false;
         }
 
         if (failed > 0)
@@ -726,6 +796,108 @@ internal sealed class ImportService
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片超过 8 MiB，仅保留在压缩包中。");
         }
+
+        return true;
+    }
+
+    /// <summary>只保留正文实际引用的图片，未引用的清单条目不应写入图片库。</summary>
+    private static List<ImportImageAsset> FilterReferencedImages(ImportPaper paper)
+    {
+        var content = paper.Source.Content ?? "";
+        if (paper.UsesRelativeImageLinks)
+        {
+            var referenced = ImageReferenceScanner.EnumerateRelativeImageLinks(content)
+                .ToHashSet(StringComparer.Ordinal);
+            return paper.Images
+                .Where(image => referenced.Contains(image.File))
+                .ToList();
+        }
+
+        var ids = ImageReferenceScanner.Enumerate(content)
+            .Select(reference => reference.ImageId)
+            .ToHashSet(StringComparer.Ordinal);
+        return paper.Images
+            .Where(image => ids.Contains(image.SourceImageId))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 更新笔记前判断正文图片是否能全部安全写回；返回非空字符串表示阻止原因。
+    /// Markdown 包残留的 i: 引用来自导出时读取失败，无法保证在本机指向同一张图。
+    /// </summary>
+    internal static string? GetImageRestoreBlocker(ImportPaper paper)
+    {
+        var content = paper.Source.Content ?? "";
+        if (paper.UsesRelativeImageLinks)
+        {
+            if (ImageReferenceScanner.Enumerate(content).Count > 0)
+            {
+                return "压缩包未包含部分图片";
+            }
+
+            var byFile = new Dictionary<string, ImportImageAsset>(StringComparer.Ordinal);
+            foreach (var image in paper.Images)
+            {
+                byFile.TryAdd(image.File, image);
+            }
+
+            foreach (var link in ImageReferenceScanner.EnumerateRelativeImageLinks(content))
+            {
+                if (!byFile.TryGetValue(link, out var image))
+                {
+                    return "压缩包缺少正文引用的图片";
+                }
+
+                if (!image.Restorable)
+                {
+                    return "有图片超过 8 MiB 写入上限";
+                }
+            }
+
+            return null;
+        }
+
+        // 没有图片清单的普通 JSON 保留原 i: 引用（同一工作区通常仍然有效）。
+        if (paper.Images.Count == 0)
+        {
+            return null;
+        }
+
+        var byId = new Dictionary<string, ImportImageAsset>(StringComparer.Ordinal);
+        foreach (var image in paper.Images)
+        {
+            byId.TryAdd(image.SourceImageId, image);
+        }
+
+        foreach (var reference in ImageReferenceScanner.Enumerate(content))
+        {
+            if (!byId.TryGetValue(reference.ImageId, out var image))
+            {
+                return "压缩包缺少正文引用的图片";
+            }
+
+            if (!image.Restorable)
+            {
+                return "有图片超过 8 MiB 写入上限";
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>重写后的正文是否仍残留旧图片地址（相对链接，或未映射的 i:ID）。</summary>
+    private static bool HasUnresolvedImageReferences(
+        ImportPaper paper,
+        string finalContent,
+        IReadOnlyDictionary<string, string> newIds)
+    {
+        if (paper.UsesRelativeImageLinks)
+        {
+            return ImageReferenceScanner.EnumerateRelativeImageLinks(finalContent).Count > 0;
+        }
+
+        return ImageReferenceScanner.Enumerate(paper.Source.Content ?? "")
+            .Any(reference => !newIds.ContainsKey(reference.ImageId));
     }
 
     /// <summary>本地已有同一张笔记的同 ID 图片且字节完全一致时，可直接复用该 ID。</summary>
@@ -821,7 +993,10 @@ internal sealed class ImportService
     private async Task RepairAsync(
         ImportPaper importPaper,
         string newPaperId,
+        bool createdNow,
         DataIoSettings settings,
+        bool supportsPaperLinks,
+        bool supportsReminders,
         Dictionary<string, string> idMap,
         ImportResult result,
         CancellationToken cancellationToken)
@@ -907,13 +1082,41 @@ internal sealed class ImportService
             }
         }
 
-        if (settings.RestoreLinks)
+        if (settings.RestoreLinks && supportsPaperLinks)
         {
             var linksDisabled = false;
+            var cleared = 0;
             foreach (var (original, match) in matched)
             {
                 if (string.IsNullOrWhiteSpace(original.LinkedSourcePaperId))
                 {
+                    // 源文件没有关联：更新时同步清除本地多出的“关联纸片”。
+                    // 关联路径没有写入 API，无法还原，因此带路径的本地项保持不动，避免误删。
+                    if (createdNow || !CanClearLinkedPaper(match))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        await ClearLinkedPaperAsync(newPaperId, match.Id);
+                        cleared++;
+                    }
+                    catch (PaperTodoPluginException ex) when (ex.Code == "paper_links_disabled")
+                    {
+                        if (!linksDisabled)
+                        {
+                            linksDisabled = true;
+                            result.Warnings.Add("已关闭“启用待办关联纸片”，关联变更未生效。");
+                        }
+
+                        break;
+                    }
+                    catch (PaperTodoPluginException ex)
+                    {
+                        result.Warnings.Add($"待办“{Shorten(original.Text)}”的关联纸片未能清除：{ex.Message}");
+                    }
+
                     continue;
                 }
 
@@ -921,6 +1124,31 @@ internal sealed class ImportService
                     string.Equals(target, newPaperId, StringComparison.Ordinal))
                 {
                     result.Warnings.Add($"待办“{Shorten(original.Text)}”要关联的纸片不在导入文件中，关联已丢弃。");
+
+                    // 源文件要求关联但目标不在文件内：更新时应清掉本地旧关联，保持与文件一致。
+                    if (!createdNow && CanClearLinkedPaper(match))
+                    {
+                        try
+                        {
+                            await ClearLinkedPaperAsync(newPaperId, match.Id);
+                            cleared++;
+                        }
+                        catch (PaperTodoPluginException ex) when (ex.Code == "paper_links_disabled")
+                        {
+                            if (!linksDisabled)
+                            {
+                                linksDisabled = true;
+                                result.Warnings.Add("已关闭“启用待办关联纸片”，关联变更未生效。");
+                            }
+
+                            break;
+                        }
+                        catch (PaperTodoPluginException ex)
+                        {
+                            result.Warnings.Add($"待办“{Shorten(original.Text)}”的关联纸片未能清除：{ex.Message}");
+                        }
+                    }
+
                     continue;
                 }
 
@@ -948,14 +1176,58 @@ internal sealed class ImportService
                     result.Warnings.Add($"待办“{Shorten(original.Text)}”的关联纸片未还原：{ex.Message}");
                 }
             }
+
+            if (cleared > 0)
+            {
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”有 {cleared} 条待办的关联纸片在文件中不存在，已清除。");
+            }
         }
 
-        if (settings.RestoreReminders)
+        if (settings.RestoreReminders && supportsReminders)
         {
             var now = DateTimeOffset.Now;
+            var cleared = 0;
             foreach (var (original, match) in matched)
             {
-                if (original.Done || original.ReminderAt is not { } reminder || reminder <= now)
+                if (original.Done)
+                {
+                    continue;
+                }
+
+                if (original.ReminderAt is { } reminder)
+                {
+                    if (reminder <= now)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        await _gateway.OnUiAsync(() => _gateway.Context.Workspace.SetTodoReminder(
+                            new SetTodoReminderRequest
+                            {
+                                PaperId = newPaperId,
+                                TodoId = match.Id,
+                                ReminderAt = reminder
+                            }));
+                        result.RestoredReminders++;
+                    }
+                    catch (PaperTodoPluginException ex) when (ex.Code == "reminders_disabled")
+                    {
+                        result.Warnings.Add("提醒功能未开启，提醒未还原。");
+                        break;
+                    }
+                    catch (PaperTodoPluginException ex)
+                    {
+                        result.Warnings.Add($"待办“{Shorten(original.Text)}”的提醒未还原：{ex.Message}");
+                    }
+
+                    continue;
+                }
+
+                // 源文件没有提醒：更新时同步清除本地多出的提醒。
+                if (createdNow || match.ReminderAt is null || match.Done)
                 {
                     continue;
                 }
@@ -967,15 +1239,27 @@ internal sealed class ImportService
                         {
                             PaperId = newPaperId,
                             TodoId = match.Id,
-                            ReminderAt = reminder
+                            ReminderAt = null
                         }));
-                    result.RestoredReminders++;
+                    cleared++;
+                }
+                catch (PaperTodoPluginException ex) when (ex.Code == "reminders_disabled")
+                {
+                    result.Warnings.Add("提醒功能未开启，本地提醒未能清除。");
+                    break;
                 }
                 catch (PaperTodoPluginException ex)
                 {
-                    result.Warnings.Add($"待办“{Shorten(original.Text)}”的提醒未还原：{ex.Message}");
+                    result.Warnings.Add($"待办“{Shorten(original.Text)}”的提醒未能清除：{ex.Message}");
                 }
             }
+
+            if (cleared > 0)
+            {
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”有 {cleared} 条待办的提醒在文件中不存在，已清除。");
+            }
+
         }
 
         // 关联文件/文件夹没有写入 API，按纸片汇总一次提示。
@@ -986,6 +1270,20 @@ internal sealed class ImportService
                 $"纸片“{DisplayTitle(importPaper)}”中有 {pathLinks} 条待办关联的文件或文件夹，导入后未保留。");
         }
     }
+
+    /// <summary>本地是“关联纸片”而不是关联路径时，才能安全清除（清除会同时清掉路径）。</summary>
+    private static bool CanClearLinkedPaper(TodoSnapshot todo) =>
+        !string.IsNullOrWhiteSpace(todo.LinkedPaperId) &&
+        string.IsNullOrWhiteSpace(todo.LinkedPath);
+
+    private Task ClearLinkedPaperAsync(string paperId, string todoId) =>
+        _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
+        {
+            PaperId = paperId,
+            TodoId = todoId,
+            UpdateLinkedPaper = true,
+            LinkedPaperId = null
+        }));
 
     private static bool IsFatal(string code) => code is
         "session_closed" or

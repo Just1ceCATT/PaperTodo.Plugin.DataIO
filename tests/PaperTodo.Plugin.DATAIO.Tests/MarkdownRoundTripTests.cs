@@ -111,6 +111,30 @@ public sealed class MarkdownRoundTripTests
     }
 
     [Fact]
+    public void Unclosed_fence_does_not_swallow_following_papers()
+    {
+        var markdown = string.Join("\n", new[]
+        {
+            "<!-- papertodo-dataio:v2 type=note sourceId=a -->",
+            "# A",
+            "```",
+            "code",
+            "<!-- papertodo-dataio:v2 type=todo sourceId=b -->",
+            "# B",
+            "- [ ] 一项"
+        });
+
+        var document = MarkdownImportParser.Parse(markdown, "broken.md");
+
+        Assert.Equal(2, document.Papers.Count);
+        Assert.Equal("note", document.Papers[0].Type);
+        Assert.Contains("```", document.Papers[0].Content);
+        Assert.Equal("todo", document.Papers[1].Type);
+        Assert.Equal("b", document.Papers[1].SourceId);
+        Assert.Single(document.Papers[1].Todos!);
+    }
+
+    [Fact]
     public void Legacy_marker_is_still_supported()
     {
         var markdown = string.Join("\n", new[]

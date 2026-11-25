@@ -47,7 +47,13 @@ internal sealed class ImportIdentityService
     /// 为导入计划解析更新目标：命中映射且目标仍有效时写入 UpdateTargetId。
     /// 同时清理指向不存在/类型不符纸片的失效映射。
     /// </summary>
-    public async Task ResolveAsync(ImportPlan plan, CancellationToken cancellationToken)
+    public Task ResolveAsync(ImportPlan plan, CancellationToken cancellationToken) =>
+        ResolveAsync(plan, new DataIoSettings(), cancellationToken);
+
+    public async Task ResolveAsync(
+        ImportPlan plan,
+        DataIoSettings settings,
+        CancellationToken cancellationToken)
     {
         if (_state.ImportLinks.Count == 0 ||
             !_gateway.Can(PaperTodoPermissionNames.PapersRead))
@@ -120,6 +126,12 @@ internal sealed class ImportIdentityService
                         .OrderBy(todo => todo.Order)
                         .Select(todo => (todo.Text, todo.Done))));
                 paper.UpdateHasChanges = paper.UpdateDiff.Any(line => line.Kind is '-' or '+');
+                paper.UpdateHasMetaChanges = HasTodoMetaChanges(
+                    localTodos,
+                    paper.Source.Todos,
+                    settings,
+                    plan.SupportsPaperLinks,
+                    plan.SupportsReminders);
             }
             else
             {
@@ -161,17 +173,21 @@ internal sealed class ImportIdentityService
                 fingerprint = ComputeNoteFingerprint(note.Content);
                 paper.UpdateDiff = TextDiff.Compute(note.Content, paper.Source.Content ?? "");
 
-                // 等价判断忽略尾部空行与分隔线，与真正写回时的判断保持一致。
-                paper.UpdateHasChanges = !MarkdownNormalize.ContentEquivalent(
+                // Markdown 包的正文用 images/ 链接，本地用 i:ID；图片内容一致时只是写法不同。
+                // 等价判断同时忽略行尾空行、分隔线和图片地址格式，避免把“无变化”误报成待更新。
+                paper.UpdateHasChanges = !await NoteContentEquivalentAsync(
+                    target.Id,
                     note.Content,
-                    paper.Source.Content);
+                    paper);
 
                 // 本地仍有图片引用、而导入正文已是旧版“图片缺失”标记时，更新会破坏图片引用。
+                // 另外，压缩包缺少图片或图片超过写入上限时同样不能更新，否则源 ID 可能指向本机另一张图。
                 paper.TargetImagesAtRisk =
-                    ImageReferenceScanner.Count(note.Content) > 0 &&
-                    ImageReferenceScanner.ContainsMissingLabel(
-                        paper.Source.Content,
-                        MarkdownExportService.MissingImageLabel);
+                    (ImageReferenceScanner.Count(note.Content) > 0 &&
+                     ImageReferenceScanner.ContainsMissingLabel(
+                         paper.Source.Content,
+                         MarkdownExportService.MissingImageLabel)) ||
+                    ImportService.GetImageRestoreBlocker(paper) != null;
             }
 
             paper.UpdateTargetFingerprint = fingerprint;
@@ -482,6 +498,254 @@ internal sealed class ImportIdentityService
 
     private static string DisplayTitle(ImportPaper paper) =>
         string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title;
+
+    /// <summary>
+    /// 笔记等价判断：忽略图片地址写法（本地 i:ID / 文件 images/ 链接），
+    /// 并按出现顺序比较图片内容哈希。只有正文与图片都一致才算“无变化”。
+    /// </summary>
+    private async Task<bool> NoteContentEquivalentAsync(
+        string paperId,
+        string? localContent,
+        ImportPaper paper)
+    {
+        var source = paper.Source.Content ?? "";
+        localContent ??= "";
+        if (MarkdownNormalize.ContentEquivalent(localContent, source))
+        {
+            return true;
+        }
+
+        // 没有图片包时无法确认图片是否一致，保守地按有变化处理。
+        if (paper.Images.Count == 0)
+        {
+            return false;
+        }
+
+        if (!MarkdownNormalize.ContentEquivalent(
+                ImageReferenceScanner.NormalizeImageUrls(localContent),
+                ImageReferenceScanner.NormalizeImageUrls(source)))
+        {
+            return false;
+        }
+
+        if (!_gateway.Can(PaperTodoPermissionNames.NotesRead))
+        {
+            return false;
+        }
+
+        var sourceHashes = SourceImageHashes(paper);
+        if (sourceHashes is null)
+        {
+            return false;
+        }
+
+        var localHashes = await LocalImageHashesAsync(paperId, localContent);
+        return localHashes is not null &&
+               sourceHashes.SequenceEqual(localHashes, StringComparer.Ordinal);
+    }
+
+    /// <summary>按正文出现顺序列出文件内图片的内容哈希；有引用无法解析时返回 null。</summary>
+    private static List<string>? SourceImageHashes(ImportPaper paper)
+    {
+        var content = paper.Source.Content ?? "";
+        var result = new List<string>();
+        if (paper.UsesRelativeImageLinks)
+        {
+            var byFile = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var image in paper.Images)
+            {
+                byFile.TryAdd(image.File, Sha256(image.Bytes));
+            }
+
+            foreach (var link in ImageReferenceScanner.EnumerateRelativeImageLinks(content))
+            {
+                if (!byFile.TryGetValue(link, out var hash))
+                {
+                    return null;
+                }
+
+                result.Add(hash);
+            }
+
+            return result;
+        }
+
+        var byId = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var image in paper.Images)
+        {
+            byId.TryAdd(image.SourceImageId, Sha256(image.Bytes));
+        }
+
+        foreach (var reference in ImageReferenceScanner.Enumerate(content))
+        {
+            if (!byId.TryGetValue(reference.ImageId, out var hash))
+            {
+                return null;
+            }
+
+            result.Add(hash);
+        }
+
+        return result;
+    }
+
+    /// <summary>按正文出现顺序读取本地图片并计算哈希；读取失败或数量过多时返回 null。</summary>
+    private async Task<List<string>?> LocalImageHashesAsync(string paperId, string content)
+    {
+        const int maxImages = 40;
+        var references = ImageReferenceScanner.Enumerate(content);
+        if (references.Count > maxImages)
+        {
+            return null;
+        }
+
+        var cache = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var result = new List<string>(references.Count);
+        foreach (var reference in references)
+        {
+            if (!cache.TryGetValue(reference.ImageId, out var hash))
+            {
+                try
+                {
+                    var image = await _gateway.OnUiAsync(
+                        () => _gateway.Context.NoteAssets.ReadImage(paperId, reference.ImageId));
+                    hash = Sha256(image.Bytes);
+                }
+                catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+                {
+                    hash = null;
+                }
+
+                cache[reference.ImageId] = hash;
+            }
+
+            if (hash is null)
+            {
+                return null;
+            }
+
+            result.Add(hash);
+        }
+
+        return result;
+    }
+
+    private static string Sha256(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    /// <summary>
+    /// 待办文本/完成状态之外的差异：顺序、提醒、关联纸片。
+    /// 这些字段不在文本 diff 中，但更新时会被同步，因此不能仅凭 diff 判定“无变化”。
+    /// </summary>
+    internal static bool HasTodoMetaChanges(
+        IReadOnlyList<TodoSnapshot> localTodos,
+        IReadOnlyList<ExportTodo>? sourceTodos,
+        DataIoSettings settings,
+        bool supportsPaperLinks,
+        bool supportsReminders)
+    {
+        if (!settings.RestoreOrder && !settings.RestoreLinks && !settings.RestoreReminders)
+        {
+            return false;
+        }
+
+        var local = localTodos
+            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+            .OrderBy(todo => todo.Order)
+            .ToList();
+        var source = (sourceTodos ?? [])
+            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+            .OrderBy(todo => todo.Order)
+            .ToList();
+        if (source.Count == 0)
+        {
+            return false;
+        }
+
+        var queues = local
+            .GroupBy(todo => (todo.Text, todo.Done))
+            .ToDictionary(
+                group => group.Key,
+                group => new Queue<TodoSnapshot>(group.OrderBy(todo => todo.Order)));
+        var positions = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var index = 0; index < local.Count; index++)
+        {
+            positions[local[index].Id] = index;
+        }
+
+        var matched = new List<(ExportTodo Source, TodoSnapshot Local)>(source.Count);
+        var matchedPositions = new List<int>(source.Count);
+        foreach (var item in source)
+        {
+            if (!queues.TryGetValue((item.Text, item.Done), out var queue) || queue.Count == 0)
+            {
+                continue;
+            }
+
+            var match = queue.Dequeue();
+            matched.Add((item, match));
+            matchedPositions.Add(positions[match.Id]);
+        }
+
+        if (settings.RestoreOrder)
+        {
+            for (var index = 1; index < matchedPositions.Count; index++)
+            {
+                if (matchedPositions[index] < matchedPositions[index - 1])
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (settings.RestoreReminders && supportsReminders)
+        {
+            var now = DateTimeOffset.Now;
+            foreach (var (item, match) in matched)
+            {
+                if (item.Done || match.Done)
+                {
+                    continue;
+                }
+
+                if (item.ReminderAt is { } reminder)
+                {
+                    if (reminder > now && match.ReminderAt != reminder)
+                    {
+                        return true;
+                    }
+                }
+                else if (match.ReminderAt != null)
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (settings.RestoreLinks && supportsPaperLinks)
+        {
+            foreach (var (item, match) in matched)
+            {
+                if (!string.IsNullOrWhiteSpace(item.LinkedSourcePaperId))
+                {
+                    if (!string.Equals(
+                            match.LinkedPaperId,
+                            item.LinkedSourcePaperId,
+                            StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(match.LinkedPaperId) &&
+                         string.IsNullOrWhiteSpace(match.LinkedPath))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     public static string ComputeNoteFingerprint(string? content) =>
         Hash(content ?? "");
