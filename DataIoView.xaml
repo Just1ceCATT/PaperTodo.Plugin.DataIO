@@ -682,12 +682,19 @@
                            FontSize="{DynamicResource DataIoWeakFontSize}"
                            Foreground="{DynamicResource DataIoWeakBrush}" />
               </StackPanel>
-              <Button x:Name="ChooseFileButton"
-                      Grid.Column="2"
-                      Margin="10,0,0,0"
-                      VerticalAlignment="Center"
-                      Content="选择文件"
-                      Style="{StaticResource GhostButton}" />
+              <StackPanel Grid.Column="2"
+                          Margin="10,0,0,0"
+                          Orientation="Horizontal"
+                          VerticalAlignment="Center">
+                <Button x:Name="ChooseFileButton"
+                        Content="选择文件"
+                        Style="{StaticResource GhostButton}" />
+                <Button x:Name="ClearFileButton"
+                        Margin="6,0,0,0"
+                        Content="清除"
+                        Visibility="Collapsed"
+                        Style="{StaticResource GhostButton}" />
+              </StackPanel>
             </Grid>
           </Border>
           <TextBlock x:Name="ImageWarningText"

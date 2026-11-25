@@ -18,6 +18,15 @@ public partial class DataIoDialog : Window
     private readonly Color _tint;
     private readonly Dictionary<ImportPaper, ImportUpdateAction> _updateChoices = [];
 
+    /// <summary>每张更新卡片的三个选项按钮，供“全部更新/全部跳过”批量切换。</summary>
+    private readonly Dictionary<ImportPaper, Dictionary<ImportUpdateAction, RadioButton>> _choiceButtons = [];
+
+    /// <summary>更新预览的实时决策摘要与主按钮。</summary>
+    private TextBlock? _updateSummaryText;
+    private Button? _primaryButton;
+    private int _newPaperCount;
+    private IReadOnlyList<string> _unchangedTitles = [];
+
     public DataIoDialog(
         PaperBodyTheme theme,
         Color tint,
@@ -222,21 +231,42 @@ public partial class DataIoDialog : Window
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,
         bool canCreate,
+        int newPaperCount = 0,
+        IReadOnlyList<string>? unchangedTitles = null,
         IReadOnlyList<string>? warnings = null)
     {
         // 固定宽度，差异文本在剩余空间内自动换行。
         Width = 660;
         MinWidth = 660;
         MaxWidth = 660;
+        _newPaperCount = Math.Max(0, newPaperCount);
+        _unchangedTitles = unchangedTitles ?? [];
+
+        var intro =
+            "以下纸片匹配到本地已有内容。默认全部“跳过”，只有显式选择“更新”的纸片才会被覆盖。";
+        if (_newPaperCount > 0)
+        {
+            intro += $"本次还会新建 {_newPaperCount} 张未命中本地的纸片。";
+        }
+
+        if (_unchangedTitles.Count > 0)
+        {
+            intro += $"另有 {_unchangedTitles.Count} 张纸片内容没有任何变化，已从下方省略（按跳过处理）。";
+        }
 
         BodyPanel.Children.Add(new TextBlock
         {
-            Text = "以下纸片匹配到本地已有内容。默认全部“跳过”，只有显式选择“更新”的纸片才会被覆盖：",
+            Text = intro,
             TextWrapping = TextWrapping.Wrap,
             FontSize = 12.5 * _scale,
             Foreground = (Brush)Resources["DialogWeakBrush"],
             Margin = new Thickness(0, 0, 0, 8)
         });
+
+        if (_unchangedTitles.Count > 0)
+        {
+            BodyPanel.Children.Add(BuildUnchangedPanel());
+        }
 
         if (unrecoverable is { Count: > 0 })
         {
@@ -248,10 +278,137 @@ public partial class DataIoDialog : Window
             BodyPanel.Children.Add(BuildWarningsPanel(warnings));
         }
 
+        BodyPanel.Children.Add(BuildDecisionToolbar());
+
         for (var index = 0; index < papers.Count; index++)
         {
             BodyPanel.Children.Add(BuildUpdateCard(papers[index], index, canCreate));
         }
+
+        RefreshUpdateDecision();
+    }
+
+    /// <summary>被省略的“内容无变化”纸片标题，让用户明确知道哪些没有出现在差异列表里。</summary>
+    private FrameworkElement BuildUnchangedPanel()
+    {
+        var panel = new StackPanel();
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"内容无变化的纸片（{_unchangedTitles.Count} 张）：",
+            FontSize = 11.5 * _scale,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(0, 0, 0, 3)
+        });
+
+        foreach (var title in _unchangedTitles)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "· " + title,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 11.5 * _scale,
+                Foreground = (Brush)Resources["DialogWeakBrush"],
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+        }
+
+        return new Border
+        {
+            Background = TintBrush(14),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 7, 10, 7),
+            Margin = new Thickness(0, 0, 0, 10),
+            Child = panel
+        };
+    }
+
+    /// <summary>更新预览顶部的批量操作与实时摘要。</summary>
+    private FrameworkElement BuildDecisionToolbar()
+    {
+        _updateSummaryText = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12.0 * _scale,
+            Foreground = (Brush)Resources["DialogTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 0)
+        };
+
+        var updateAll = CreateMiniButton("全部更新");
+        updateAll.Click += (_, _) => SetAllChoices(ImportUpdateAction.Update);
+        var skipAll = CreateMiniButton("全部跳过");
+        skipAll.Margin = new Thickness(6, 0, 0, 0);
+        skipAll.Click += (_, _) => SetAllChoices(ImportUpdateAction.Skip);
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Children = { updateAll, skipAll }
+        };
+
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(buttons, 1);
+        grid.Children.Add(_updateSummaryText);
+        grid.Children.Add(buttons);
+        return grid;
+    }
+
+    private Button CreateMiniButton(string text)
+    {
+        var button = CreateButton(text, TintBrush(28));
+        button.MinWidth = 0;
+        button.Padding = new Thickness(10, 4, 10, 4);
+        button.FontSize = 11.5 * _scale;
+        return button;
+    }
+
+    private void SetAllChoices(ImportUpdateAction action)
+    {
+        foreach (var choices in _choiceButtons.Values)
+        {
+            if (choices.TryGetValue(action, out var button) && button.IsEnabled)
+            {
+                button.IsChecked = true;
+            }
+        }
+    }
+
+    /// <summary>按逐张选择实时更新摘要与主按钮文案，避免“继续导入”实际什么都不做。</summary>
+    private void RefreshUpdateDecision()
+    {
+        var update = _updateChoices.Count(pair => pair.Value == ImportUpdateAction.Update);
+        var create = _updateChoices.Count(pair => pair.Value == ImportUpdateAction.CreateNew);
+        var skip = _updateChoices.Count(pair => pair.Value == ImportUpdateAction.Skip);
+        var totalCreate = create + _newPaperCount;
+
+        if (_updateSummaryText != null)
+        {
+            var summary = $"将更新 {update} 张 · 新建 {totalCreate} 张 · 跳过 {skip} 张";
+            if (_unchangedTitles.Count > 0)
+            {
+                summary += $" · 省略 {_unchangedTitles.Count} 张无变化";
+            }
+
+            _updateSummaryText.Text = summary;
+        }
+
+        if (_primaryButton is null)
+        {
+            return;
+        }
+
+        // 全部跳过也是一个有效决定：允许继续，导入结果会显示“已跳过 N 张”。
+        // 不允许禁用主按钮，否则用户会被困在预览窗口里。
+        var actionable = update + create;
+        _primaryButton.IsEnabled = true;
+        _primaryButton.Content = actionable > 0
+            ? $"导入（更新 {update} · 新建 {totalCreate}）"
+            : "全部跳过并关闭";
     }
 
     /// <summary>文件层面无法完整还原的内容汇总，与更新卡片一起展示，避免用户只看逐条差异。</summary>
@@ -387,7 +544,7 @@ public partial class DataIoDialog : Window
             canCreate ? null : "缺少 papers.create 权限，无法新增纸片");
         card.Children.Add(choices);
 
-        card.Children.Add(BuildDiffPanel(paper.UpdateDiff));
+        card.Children.Add(BuildDiffPanel(paper.UpdateDiff, paper.UpdateHasMetaChanges));
         return card;
     }
 
@@ -413,11 +570,24 @@ public partial class DataIoDialog : Window
         };
         _updateChoices[paper] = ImportUpdateAction.Skip;
         ToolTipService.SetShowOnDisabled(radio, true);
-        radio.Checked += (_, _) => _updateChoices[paper] = action;
+        if (!_choiceButtons.TryGetValue(paper, out var choices))
+        {
+            choices = [];
+            _choiceButtons[paper] = choices;
+        }
+
+        choices[action] = radio;
+        radio.Checked += (_, _) =>
+        {
+            _updateChoices[paper] = action;
+            RefreshUpdateDecision();
+        };
         host.Children.Add(radio);
     }
 
-    private FrameworkElement BuildDiffPanel(IReadOnlyList<DiffLine>? diff)
+    private FrameworkElement BuildDiffPanel(
+        IReadOnlyList<DiffLine>? diff,
+        bool hasMetaChanges = false)
     {
         var panel = new StackPanel();
         var mono = new FontFamily("Consolas, Microsoft YaHei UI");
@@ -428,7 +598,10 @@ public partial class DataIoDialog : Window
         {
             panel.Children.Add(new TextBlock
             {
-                Text = "（内容无变化）",
+                Text = hasMetaChanges
+                    ? "（正文/待办内容无变化，但顺序、提醒或关联纸片与本地不同）"
+                    : "（内容无变化）",
+                TextWrapping = TextWrapping.Wrap,
                 FontSize = 11.5 * _scale,
                 Foreground = (Brush)Resources["DialogWeakBrush"]
             });
@@ -655,6 +828,7 @@ public partial class DataIoDialog : Window
         }
 
         var primary = CreateButton(primaryText, TintBrush(hasSecondary ? 44 : 28));
+        _primaryButton = primary;
         primary.IsDefault = true;
         if (hasSecondary)
         {

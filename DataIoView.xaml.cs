@@ -70,9 +70,13 @@ public partial class DataIoView : UserControl
     public event EventHandler? ExportFormatChanged;
     public event EventHandler? NoteSelectionChanged;
     public event EventHandler? TodoSelectionChanged;
+
+    /// <summary>整类型全选/清空（含被搜索隐藏的条目），Type 为 note/todo。</summary>
+    internal event EventHandler<(string Type, bool Select)>? TypeBatchSelectionRequested;
     public event EventHandler? SearchChanged;
     public event EventHandler? PrimaryActionRequested;
     public event EventHandler? ChooseImportFileRequested;
+    public event EventHandler? ClearImportFileRequested;
 
     /// <summary>当前搜索框内容；会话据此过滤列表。</summary>
     public string SearchText => SearchBox.Text;
@@ -466,6 +470,7 @@ public partial class DataIoView : UserControl
             ? "支持 PaperTodo JSON、Markdown 文档 (*.md) 或导出压缩包 (*.zip)"
             : status!;
         ChooseFileButton.Content = hasFile ? "重新选择" : "选择文件";
+        ClearFileButton.Visibility = hasFile ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>导入文件含图片引用时的醒目提示；null 表示隐藏。</summary>
@@ -487,6 +492,7 @@ public partial class DataIoView : UserControl
         BusyBar.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         PrimaryButton.IsEnabled = !busy && _primaryEnabled;
         ChooseFileButton.IsEnabled = !busy;
+        ClearFileButton.IsEnabled = !busy;
         NotesSelectAllButton.IsEnabled = !busy;
         NotesClearButton.IsEnabled = !busy;
         TodosSelectAllButton.IsEnabled = !busy;
@@ -624,6 +630,8 @@ public partial class DataIoView : UserControl
 
         _suppressSelectionEvents = false;
         RaiseSelectionChanged(type);
+        // 行级事件只同步可见行；这里再通知会话把同一类型隐藏的条目一起选中/清空。
+        TypeBatchSelectionRequested?.Invoke(this, (type, value));
     }
 
     private void InvertType(string type)
@@ -660,6 +668,7 @@ public partial class DataIoView : UserControl
 
         PrimaryButton.Click += (_, _) => PrimaryActionRequested?.Invoke(this, EventArgs.Empty);
         ChooseFileButton.Click += (_, _) => ChooseImportFileRequested?.Invoke(this, EventArgs.Empty);
+        ClearFileButton.Click += (_, _) => ClearImportFileRequested?.Invoke(this, EventArgs.Empty);
     }
 
     // ---------- 预览 ----------
@@ -1285,6 +1294,8 @@ public partial class DataIoView : UserControl
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,
         bool canCreate,
+        int newPaperCount,
+        IReadOnlyList<string>? unchangedTitles,
         IReadOnlyList<string>? warnings = null)
     {
         var dialog = new DataIoDialog(
@@ -1293,7 +1304,13 @@ public partial class DataIoView : UserControl
             "更新预览",
             "继续导入",
             "取消");
-        dialog.SetUpdatePreview(papers, unrecoverable, canCreate, warnings);
+        dialog.SetUpdatePreview(
+            papers,
+            unrecoverable,
+            canCreate,
+            newPaperCount,
+            unchangedTitles,
+            warnings);
         if (dialog.ShowModal(Window.GetWindow(this)) != true)
         {
             return null;
