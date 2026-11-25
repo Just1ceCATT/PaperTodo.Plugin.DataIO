@@ -229,10 +229,41 @@
       </Setter>
     </Style>
 
-    <Style x:Key="FormatChoice" TargetType="RadioButton" BasedOn="{StaticResource ModeCard}">
-      <Setter Property="Padding" Value="10,3" />
-      <Setter Property="FontSize" Value="{DynamicResource DataIoWeakFontSize}" />
+    <!-- 导出格式卡片：整块可点，选中时用强调色描边，未选中保持低调边框 -->
+    <Style x:Key="FormatCard" TargetType="RadioButton">
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="FocusVisualStyle" Value="{x:Null}" />
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
+      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="RadioButton">
+            <Border x:Name="Card"
+                    Padding="{TemplateBinding Padding}"
+                    CornerRadius="8"
+                    BorderThickness="1"
+                    Background="{DynamicResource DataIoSurfaceBrush}"
+                    BorderBrush="{DynamicResource DataIoDividerBrush}">
+              <ContentPresenter />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBorderBrush}" />
+              </Trigger>
+              <Trigger Property="IsChecked" Value="True">
+                <Setter TargetName="Card" Property="Background" Value="{DynamicResource DataIoAccentSurfaceBrush}" />
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBorderBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource DataIoAccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Card" Property="Opacity" Value="0.4" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
     </Style>
 
     <Style x:Key="PrimaryButton" TargetType="Button">
@@ -705,28 +736,79 @@
                      Visibility="Collapsed" />
         </StackPanel>
 
-        <!-- 导出格式放在导出内容之前 -->
-        <Grid x:Name="FormatRow" Margin="0,14,0,14">
-          <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="Auto" />
-          </Grid.ColumnDefinitions>
-          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" VerticalAlignment="Center" />
-          <StackPanel Grid.Column="1"
-                      Orientation="Horizontal"
-                      VerticalAlignment="Center">
+        <!-- 导出格式放在导出内容之前：大卡片选择，含图片时自动改为压缩包 -->
+        <StackPanel x:Name="FormatRow" Margin="0,14,0,14">
+          <TextBlock Text="导出格式" Style="{StaticResource SectionTitle}" />
+          <TextBlock Text="选择导出方式" Style="{StaticResource SectionHint}" />
+          <StackPanel Margin="0,8,0,0">
             <RadioButton x:Name="JsonFormatButton"
-                         Content="JSON"
                          GroupName="DataIoExportFormat"
-                         Style="{StaticResource FormatChoice}"
-                         IsChecked="True" />
+                         Style="{StaticResource FormatCard}"
+                         IsChecked="True">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="完整备份"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource DataIoTextBrush}" />
+                <Border Grid.Column="1"
+                        Margin="8,0,0,0"
+                        Padding="6,1"
+                        CornerRadius="4"
+                        VerticalAlignment="Center"
+                        Background="{DynamicResource DataIoAccentSurfaceBrush}">
+                  <TextBlock Text="推荐"
+                             FontSize="{DynamicResource DataIoWeakFontSize}"
+                             Foreground="{DynamicResource DataIoAccentBrush}" />
+                </Border>
+                <TextBlock Grid.Row="1"
+                           Grid.ColumnSpan="2"
+                           Margin="0,4,0,0"
+                           Text="保留全部数据、关联关系和图片，可用于迁移和恢复。"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource DataIoTextBrush}" />
+                <TextBlock Grid.Row="2"
+                           Grid.ColumnSpan="2"
+                           Margin="0,6,0,0"
+                           Text="JSON 完整数据"
+                           FontSize="{DynamicResource DataIoWeakFontSize}"
+                           Foreground="{DynamicResource DataIoWeakBrush}" />
+              </Grid>
+            </RadioButton>
             <RadioButton x:Name="MarkdownFormatButton"
-                         Content="Markdown"
                          GroupName="DataIoExportFormat"
-                         Style="{StaticResource FormatChoice}"
-                         Margin="6,0,0,0" />
+                         Style="{StaticResource FormatCard}"
+                         Margin="0,8,0,0">
+              <Grid>
+                <Grid.RowDefinitions>
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                  <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock Text="可读文档"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource DataIoTextBrush}" />
+                <TextBlock Grid.Row="1"
+                           Margin="0,4,0,0"
+                           Text="方便在 VS Code、Obsidian 等外部编辑器中阅读和修改。但是会丢失提醒、关联纸片和可见性等信息。"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource DataIoTextBrush}" />
+                <TextBlock Grid.Row="2"
+                           Margin="0,6,0,0"
+                           Text="Markdown 文档"
+                           FontSize="{DynamicResource DataIoWeakFontSize}"
+                           Foreground="{DynamicResource DataIoWeakBrush}" />
+              </Grid>
+            </RadioButton>
           </StackPanel>
-        </Grid>
+        </StackPanel>
 
         <!-- 搜索：按标题或待办文本过滤条目 -->
         <Border x:Name="SearchRow"
