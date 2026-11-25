@@ -105,6 +105,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本会话是否已尝试过一次“正文未挂载”自愈，避免重复重建。</summary>
     private bool _autoReloadRequested;
 
+    /// <summary>本会话是否已请求宿主重建“胶囊→展开”外形，避免重复抖动。</summary>
+    private bool _shellRestoreRequested;
+
     /// <summary>进程内自愈重建次数上限，防止宿主持续失败时反复重建。</summary>
     private static int _autoReloadCount;
     private const int MaxAutoReloads = 2;
@@ -151,6 +154,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.ChooseImportFileRequested += OnChooseImportFileRequested;
         _view.ClearImportFileRequested += OnClearImportFileRequested;
         _view.Loaded += OnViewLoaded;
+        _view.IsVisibleChanged += OnViewIsVisibleChanged;
 
         _view.ApplyTheme(_theme, context.Body.Controls);
         _view.SetMode(DataIoMode.Export);
@@ -229,11 +233,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         ScheduleRenderedCheck(0);
     }
 
+    /// <summary>正文从不可见恢复可见时重新复核尺寸，覆盖宿主稍后才展开外壳的时序。</summary>
+    private void OnViewIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is true)
+        {
+            ScheduleRenderedCheck(0);
+        }
+    }
+
     /// <summary>
     /// 分几次检查正文是否真的完成布局：隐藏纸片恢复、启动动画或工作区切换时，
     /// attach 当下尺寸可能还是 0，不能立即判定为空白。
     /// </summary>
-    private void ScheduleRenderedCheck(int attempt)
+    private void ScheduleRenderedCheck(int attempt, TimeSpan? delay = null)
     {
         if (_disposed || _autoReloadRequested)
         {
@@ -242,7 +255,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         var timer = new DispatcherTimer(DispatcherPriority.Background, _view.Dispatcher)
         {
-            Interval = TimeSpan.FromMilliseconds(attempt == 0 ? 180 : 420)
+            Interval = delay ?? TimeSpan.FromMilliseconds(attempt == 0 ? 180 : 420)
         };
         timer.Tick += (_, _) =>
         {
@@ -274,15 +287,39 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             return;
         }
 
-        // 窗口仍然隐藏时不判定尺寸，等下一次可见/激活事件。
+        // 正文已挂载却仍不可见：宿主恢复“折叠状态的纸片”时可能只把模型改成展开，
+        // 却没有执行展开过渡，正文会被留在 Collapsed 的外壳里。该状态不会再产生
+        // 可见性事件，因此必须在限次等待后主动请求宿主重建外形。
         if (!_view.IsVisible)
         {
+            if (attempt < 2)
+            {
+                ScheduleRenderedCheck(attempt + 1);
+                return;
+            }
+
+            if (!PaperShouldBeVisible())
+            {
+                return;
+            }
+
+            if (!_shellRestoreRequested)
+            {
+                TryRestoreCollapsedShell();
+            }
+            else
+            {
+                // 折叠→展开后仍未恢复：退回到正文重建。
+                TryAutoReloadBody();
+            }
+
             return;
         }
 
+        var clipped = IsViewClippedAway();
         if (_view.ActualWidth <= 1 ||
             _view.ActualHeight <= 1 ||
-            IsViewClippedAway())
+            clipped)
         {
             if (attempt < 2)
             {
@@ -317,6 +354,51 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
 
         return false;
+    }
+
+    /// <summary>宿主模型里这张纸片是否应为“可见且已展开”。</summary>
+    private bool PaperShouldBeVisible()
+    {
+        try
+        {
+            var paper = _context.Workspace.GetPaper(_context.PaperId);
+            return paper is { IsVisible: true, IsCollapsed: false };
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 正文不可见但纸片逻辑上是展开态：先折叠再展开，让宿主重新执行外形过渡，
+    /// 把仍停留在折叠状态的外壳展开。两者都走宿主演示 API，不直接改动任何窗口。
+    /// </summary>
+    private void TryRestoreCollapsedShell()
+    {
+        _shellRestoreRequested = true;
+
+        var presentation = _context.WorkspacePresentation;
+        if (presentation is null)
+        {
+            // 旧宿主没有演示 API，只能重建正文，至少排除会话侧原因。
+            TryAutoReloadBody();
+            return;
+        }
+
+        try
+        {
+            presentation.CollapsePaper(_context.PaperId);
+            presentation.ExpandPaper(_context.PaperId, activate: false);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            TryAutoReloadBody();
+            return;
+        }
+
+        // 过渡完成后复核；若仍不可见，再由下一轮检查退回到正文重建。
+        ScheduleRenderedCheck(0, TimeSpan.FromMilliseconds(700));
     }
 
     private void TryAutoReloadBody()
@@ -483,6 +565,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.ChooseImportFileRequested -= OnChooseImportFileRequested;
         _view.ClearImportFileRequested -= OnClearImportFileRequested;
         _view.Loaded -= OnViewLoaded;
+        _view.IsVisibleChanged -= OnViewIsVisibleChanged;
     }
 
     // ---------- 模式与刷新 ----------
