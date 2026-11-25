@@ -36,6 +36,9 @@ internal sealed class ImportPlan
     /// <summary>正文中有引用、但压缩包没有提供对应图片的数量。</summary>
     public int UnresolvedImageReferenceCount { get; set; }
 
+    /// <summary>压缩包内有、但没有任何正文引用的图片数量。</summary>
+    public int UnreferencedImageAssetCount { get; set; }
+
     /// <summary>正文含“图片缺失”标记的笔记张数（通常来自旧版 Markdown 导出）。</summary>
     public int LossyImageNotes { get; set; }
 

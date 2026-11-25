@@ -1424,45 +1424,59 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.SetPrimaryEnabled(selectedPapers.Count > 0);
     }
 
-    /// <summary>导入面板顶部的图片提示：区分压缩包内含图片与纯引用两种情况。</summary>
-    private static string? BuildImageWarning(ImportPlan plan)
+    /// <summary>
+    /// 导入面板顶部的图片状态：全部可导入时用灰色说明，缺失、未被引用或无法写入时用警告色。
+    /// 返回 null 表示没有图片相关信息可展示。
+    /// </summary>
+    internal static (string Text, bool IsWarning)? BuildImageStatus(ImportPlan plan)
     {
+        if (plan.ImageAssetCount == 0 && plan.ImageReferenceCount == 0)
+        {
+            return null;
+        }
+
+        // 图片本体在包内但无法写回：优先说明原因。
+        if (plan.UnrestorableImageCount > 0)
+        {
+            var reason = plan.CompressionFailedImageCount > 0
+                ? "格式不受支持或无法压缩到 8 MiB 以内"
+                : "超过插件 8 MiB 写入上限";
+            return ($"发现 {plan.UnrestorableImageCount} 张图片，但当前无法导入，{reason}", true);
+        }
+
+        // 正文引用了图片，但压缩包没有提供可用图片。
+        if (plan.UnresolvedImageReferenceCount > 0)
+        {
+            return (
+                $"{plan.NotesWithImages} 张纸片引用了 {plan.ImageReferenceCount} 张图片，" +
+                $"其中 {plan.UnresolvedImageReferenceCount} 张缺失",
+                true);
+        }
+
+        // 清单声明的图片文件缺失或校验失败（且没有被正文引用）。
+        if (plan.MissingImageAssetCount > 0)
+        {
+            return ($"压缩包内有 {plan.MissingImageAssetCount} 张图片缺失或校验失败", true);
+        }
+
+        // 压缩包里有图片，但没有任何正文引用它们。
+        if (plan.UnreferencedImageAssetCount > 0)
+        {
+            return ($"压缩包内有 {plan.UnreferencedImageAssetCount} 张未被引用的图片", true);
+        }
+
         if (plan.HasEmbeddedImages)
         {
-            var text =
-                $"文件中有 {plan.NotesWithImages} 张笔记包含 {plan.ImageReferenceCount} 处图片引用；" +
-                $"压缩包内含 {plan.ImageAssetCount} 张图片（{plan.RestorableImageCount} 张可写回）。";
-
-            if (plan.CompressedImageCount > 0)
-            {
-                text += $"{plan.CompressedImageCount} 张超过 8 MiB，将按宿主规则压缩后写回。";
-            }
-
-            if (plan.UnrestorableImageCount > 0)
-            {
-                text += $"{plan.UnrestorableImageCount} 张无法压缩到 8 MiB 以内，仅保留在压缩包中。";
-            }
-
-            if (plan.MissingImageAssetCount > 0)
-            {
-                text += $"{plan.MissingImageAssetCount} 张图片文件缺失或校验失败。";
-            }
-
-            if (plan.UnresolvedImageReferenceCount > 0)
-            {
-                text += $"{plan.UnresolvedImageReferenceCount} 处引用没有对应图片。";
-            }
-
-            return text;
+            return (
+                $"{plan.NotesWithImages} 张纸片引用了 {plan.ImageReferenceCount} 张图片，均可正常导入",
+                false);
         }
 
-        if (plan.ImageReferenceCount > 0)
-        {
-            return $"文件中有 {plan.NotesWithImages} 张笔记包含 {plan.ImageReferenceCount} 处图片引用。" +
-                   "文件未包含图片本体；导入到其他设备或原图已清理后将无法显示。";
-        }
-
-        return null;
+        // 只有图片引用、没有图片本体：换设备后无法显示，仍需提醒。
+        return (
+            $"{plan.NotesWithImages} 张纸片引用了 {plan.ImageReferenceCount} 张图片，" +
+            "文件未包含图片本体，导入后可能无法显示",
+            true);
     }
 
     private void UpdateImportSummary()
@@ -1473,11 +1487,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             _view.SetTypeAvailability(false, false);
             _view.SetEstimate("尚未选择导入文件", "选择 JSON 或 Markdown 文件后显示预估");
             _view.SetPrimaryEnabled(false);
-            _view.SetImageWarning(null);
+            _view.SetImageStatus(null, false);
             return;
         }
 
-        _view.SetImageWarning(BuildImageWarning(_importPlan));
+        var imageStatus = BuildImageStatus(_importPlan);
+        _view.SetImageStatus(imageStatus?.Text, imageStatus?.IsWarning ?? false);
 
         // 总数只统计当前可选择的条目，避免“已选 1 / 3”里混入根本无法导入的项。
         // 搜索只过滤列表显示，统计与导入范围保持全量，避免隐藏的勾选项被静默排除。

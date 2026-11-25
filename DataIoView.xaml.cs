@@ -473,12 +473,22 @@ public partial class DataIoView : UserControl
         ClearFileButton.Visibility = hasFile ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>导入文件含图片引用时的醒目提示；null 表示隐藏。</summary>
-    public void SetImageWarning(string? text)
+    /// <summary>
+    /// 导入文件的图片状态提示；null 表示隐藏。
+    /// 正常信息用弱化灰色，缺失、未被引用或无法写入时才用警告色。
+    /// </summary>
+    public void SetImageStatus(string? text, bool isWarning)
     {
         var hasText = !string.IsNullOrWhiteSpace(text);
         ImageWarningText.Text = hasText ? text! : "";
         ImageWarningText.Visibility = hasText ? Visibility.Visible : Visibility.Collapsed;
+        if (hasText)
+        {
+            // 用资源引用而不是固定画刷，切换主题时颜色会同步更新。
+            ImageWarningText.SetResourceReference(
+                TextBlock.ForegroundProperty,
+                isWarning ? "DataIoWarningBrush" : "DataIoWeakBrush");
+        }
     }
 
     public void SetBusy(bool busy)

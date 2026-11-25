@@ -234,6 +234,30 @@ public sealed class ImportPackageTests
         Assert.Equal("![a|50%](i:777777)", mappedMarkdown);
     }
 
+    [Fact]
+    public void Unreferenced_image_asset_is_counted_and_reported()
+    {
+        WithTempDirectory(directory =>
+        {
+            var image = CreateImage(restorable: true);
+            var document = CreateDocument("这张笔记没有引用任何图片。");
+            var path = WriteJsonPackage(directory, document, image);
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.Null(plan.FatalError);
+            Assert.Equal(1, plan.ImageAssetCount);
+            Assert.Equal(0, plan.ImageReferenceCount);
+            Assert.Equal(0, plan.NotesWithImages);
+            Assert.Equal(1, plan.UnreferencedImageAssetCount);
+
+            var status = DataIoSession.BuildImageStatus(plan);
+            Assert.NotNull(status);
+            Assert.True(status.Value.IsWarning);
+            Assert.Equal("压缩包内有 1 张未被引用的图片", status.Value.Text);
+        });
+    }
+
     private static CapturedExportImage CreateImage(bool restorable) => new(
         "p1",
         "123456",

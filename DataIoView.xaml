@@ -732,7 +732,7 @@
                      Margin="2,8,2,0"
                      TextWrapping="Wrap"
                      FontSize="{DynamicResource DataIoWeakFontSize}"
-                     Foreground="{DynamicResource DataIoWarningBrush}"
+                     Foreground="{DynamicResource DataIoWeakBrush}"
                      Visibility="Collapsed" />
         </StackPanel>
 

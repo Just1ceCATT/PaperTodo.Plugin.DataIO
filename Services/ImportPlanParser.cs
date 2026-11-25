@@ -403,7 +403,7 @@ internal static class ImportPlanParser
         foreach (var paper in notes)
         {
             paper.UsesRelativeImageLinks = usesRelativeLinks;
-            CountImageReferences(paper, usesRelativeLinks);
+            plan.UnreferencedImageAssetCount += CountImageReferences(paper, usesRelativeLinks);
             plan.UnresolvedImageReferenceCount += paper.UnresolvedImageReferences;
         }
 
@@ -439,7 +439,8 @@ internal static class ImportPlanParser
         }
     }
 
-    private static void CountImageReferences(ImportPaper paper, bool usesRelativeLinks)
+    /// <summary>统计正文引用，并返回压缩包里没有任何正文引用的图片数量。</summary>
+    private static int CountImageReferences(ImportPaper paper, bool usesRelativeLinks)
     {
         var content = paper.Source.Content;
         if (usesRelativeLinks)
@@ -447,11 +448,13 @@ internal static class ImportPlanParser
             var files = paper.Images
                 .Select(image => image.File)
                 .ToHashSet(StringComparer.Ordinal);
+            var referenced = new HashSet<string>(StringComparer.Ordinal);
             foreach (var link in ImageReferenceScanner.EnumerateRelativeImageLinks(content))
             {
                 if (files.Contains(link))
                 {
                     paper.ResolvedImageReferences++;
+                    referenced.Add(link);
                 }
                 else
                 {
@@ -461,23 +464,27 @@ internal static class ImportPlanParser
 
             // Markdown 包里未被改写的 i: 引用来自导出时读取失败的图片，无法在本机还原。
             paper.UnresolvedImageReferences += ImageReferenceScanner.Enumerate(content).Count;
-            return;
+            return paper.Images.Count(image => !referenced.Contains(image.File));
         }
 
         var imageIds = paper.Images
             .Select(image => image.SourceImageId)
             .ToHashSet(StringComparer.Ordinal);
+        var referencedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var reference in ImageReferenceScanner.Enumerate(content))
         {
             if (imageIds.Contains(reference.ImageId))
             {
                 paper.ResolvedImageReferences++;
+                referencedIds.Add(reference.ImageId);
             }
             else
             {
                 paper.UnresolvedImageReferences++;
             }
         }
+
+        return paper.Images.Count(image => !referencedIds.Contains(image.SourceImageId));
     }
 
     /// <summary>压缩包内的图片路径必须是 images/ 下的普通相对路径。</summary>
