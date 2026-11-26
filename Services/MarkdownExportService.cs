@@ -81,7 +81,8 @@ internal static class MarkdownExportService
 
     private static void AppendTodos(StringBuilder builder, ExportPaper paper)
     {
-        // 不丢弃空白待办：JSON 会保留它们，Markdown 往返也应保持同样的条目数量。
+        // 空白待办仍原样导出（与 JSON 一致）。宿主拒绝创建空文本待办，
+        // 因此导入端会丢弃它们；这类占位条目无法在往返后保留。
         var todos = paper.Todos?
             .OrderBy(todo => todo.Order)
             .ToArray() ?? [];
