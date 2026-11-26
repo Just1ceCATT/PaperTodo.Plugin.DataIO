@@ -17,12 +17,47 @@ internal static class ImportPlanParser
     public const int MaxTodoTextChars = 5_000;
     public const int MaxTodosPerPaper = 200;
 
-    /// <summary>压缩包解压后允许的总字节数；与导出的图片总量上限保持一致。</summary>
-    public const long MaxPackageExpandedBytes = ExportService.MaxEmbeddedImageBytes;
+    /// <summary>
+    /// 压缩包解压后允许的总字节数。导出端图片上限更小（为正文与清单预留空间），
+    /// 保证任何合法导出包都能通过这里的整包校验。
+    /// </summary>
+    public const long MaxPackageExpandedBytes = 512L * 1024 * 1024;
 
     private const int MaxPackageEntries = 5_000;
     private const int MaxPackageImages = 2_000;
     private const long MaxImageEntryBytes = IPaperNoteAssetsApi.MaximumImageBytes;
+
+    /// <summary>压缩包文件本身的读取上限；没有上限时超大归档会在打开阶段就占用大量内存。</summary>
+    private const long MaxArchiveFileBytes = 512L * 1024 * 1024;
+
+    /// <summary>
+    /// 解压总预算：按实际读出的字节累计，而不是信任 zip 中央目录声明的长度。
+    /// 恶意压缩包可以把每个条目的声明长度写成 1 字节、实际解出 16 MiB，
+    /// 只校验声明值会让宿主在预览阶段就被几十 GiB 内存拖垮。
+    /// </summary>
+    private sealed class EntryReadBudget
+    {
+        private readonly long _limit;
+        private long _used;
+
+        public EntryReadBudget(long limit) => _limit = limit;
+
+        public bool TryConsume(long bytes)
+        {
+            _used += bytes;
+            return _used <= _limit;
+        }
+    }
+
+    /// <summary>实际解压量超过总预算时抛出，由 ParsePackage 转换为“整体拒绝”的致命错误。</summary>
+    private sealed class PackageExpandedTooLargeException : Exception
+    {
+        public PackageExpandedTooLargeException()
+            : base("压缩包解压后超过 512 MiB 上限。")
+        {
+        }
+    }
+
 
     public static ImportPlan ParseFile(string path)
     {
@@ -72,6 +107,11 @@ internal static class ImportPlanParser
     {
         try
         {
+            if (new FileInfo(path).Length > MaxArchiveFileBytes)
+            {
+                return Fatal("压缩包文件超过 512 MiB 上限，已拒绝导入。");
+            }
+
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             return ParseArchive(archive, path);
@@ -79,6 +119,10 @@ internal static class ImportPlanParser
         catch (InvalidDataException)
         {
             return Fatal("压缩包已损坏或不是有效的 zip 文件。");
+        }
+        catch (PackageExpandedTooLargeException ex)
+        {
+            return Fatal(ex.Message);
         }
         catch (IOException ex)
         {
@@ -112,10 +156,18 @@ internal static class ImportPlanParser
             }
         }
 
-        var jsonEntry = UniqueEntry(archive, ExportPackageService.JsonEntryName);
+        // 声明长度只用于快速失败；真正的防护在每次读取时按实际字节累计预算。
+        var budget = new EntryReadBudget(MaxPackageExpandedBytes);
+
+        var jsonEntry = UniqueEntry(archive, ExportPackageService.JsonEntryName, out var jsonDuplicate);
+        if (jsonDuplicate)
+        {
+            return Fatal("压缩包包含重复的导出 JSON 条目，已拒绝导入。");
+        }
+
         if (jsonEntry != null)
         {
-            var json = ReadEntryText(jsonEntry, JsonFiles.MaxImportBytes);
+            var json = ReadEntryText(jsonEntry, JsonFiles.MaxImportBytes, budget);
             if (json is null)
             {
                 return Fatal("压缩包中的导出 JSON 过大或无法读取。");
@@ -128,14 +180,19 @@ internal static class ImportPlanParser
             }
 
             plan.ContainerFormat = "JSON 压缩包";
-            AttachImages(plan, ReadJsonImageManifest(json), archive, usesRelativeLinks: false);
+            AttachImages(plan, ReadJsonImageManifest(json), archive, usesRelativeLinks: false, budget);
             return plan;
         }
 
-        var markdownEntry = UniqueEntry(archive, ExportPackageService.MarkdownEntryName);
+        var markdownEntry = UniqueEntry(archive, ExportPackageService.MarkdownEntryName, out var markdownDuplicate);
+        if (markdownDuplicate)
+        {
+            return Fatal("压缩包包含重复的导出 Markdown 条目，已拒绝导入。");
+        }
+
         if (markdownEntry != null)
         {
-            var markdown = ReadEntryText(markdownEntry, JsonFiles.MaxImportBytes);
+            var markdown = ReadEntryText(markdownEntry, JsonFiles.MaxImportBytes, budget);
             if (markdown is null)
             {
                 return Fatal("压缩包中的 Markdown 正文过大或无法读取。");
@@ -153,13 +210,21 @@ internal static class ImportPlanParser
                 plan.Warnings.Add("Markdown 文件不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。");
             }
 
-            var manifestEntry = UniqueEntry(archive, ExportPackageService.MarkdownManifestEntryName);
-            var images = manifestEntry is null
+            var manifestEntry = UniqueEntry(
+                archive,
+                ExportPackageService.MarkdownManifestEntryName,
+                out var manifestDuplicate);
+            if (manifestDuplicate)
+            {
+                plan.Warnings.Add("压缩包含有重复的图片清单，已忽略图片清单。");
+            }
+
+            var images = manifestEntry is null || manifestDuplicate
                 ? null
-                : ReadMarkdownImageManifest(ReadEntryText(manifestEntry, 16L * 1024 * 1024));
+                : ReadMarkdownImageManifest(ReadEntryText(manifestEntry, 16L * 1024 * 1024, budget));
             if (plan.FatalError == null)
             {
-                AttachImages(plan, images, archive, usesRelativeLinks: true);
+                AttachImages(plan, images, archive, usesRelativeLinks: true, budget);
             }
 
             return plan;
@@ -192,8 +257,22 @@ internal static class ImportPlanParser
         error = null;
         try
         {
+            if (new FileInfo(path).Length > MaxArchiveFileBytes)
+            {
+                error = "压缩包文件超过 512 MiB 上限，已拒绝读取。";
+                return false;
+            }
+
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+
+            // 备份包同样受条目数上限约束：构造 ZipArchive 会按中央目录创建全部条目对象，
+            // 没有上限时几十万条目的归档足以让选择文件阶段卡死。
+            if (archive.Entries.Count > MaxPackageEntries)
+            {
+                error = $"备份压缩包条目过多（{archive.Entries.Count} 个），已拒绝读取。";
+                return false;
+            }
 
             // DataIO 导出压缩包优先按导出格式解析；即使同时含根级 dataN.json 也不当作备份弹选择框。
             if (archive.Entries.Any(entry =>
@@ -210,9 +289,10 @@ internal static class ImportPlanParser
             }
 
             var list = new List<CoreBackupWorkspace>(entries.Count);
+            var budget = new EntryReadBudget(MaxPackageExpandedBytes);
             foreach (var (number, name, entry) in entries)
             {
-                var json = ReadEntryText(entry, JsonFiles.MaxImportBytes);
+                var json = ReadEntryText(entry, JsonFiles.MaxImportBytes, budget);
                 if (json is null)
                 {
                     list.Add(new CoreBackupWorkspace(number, name, 0, 0, 0, 0, false));
@@ -243,6 +323,11 @@ internal static class ImportPlanParser
             workspaces = list;
             return true;
         }
+        catch (PackageExpandedTooLargeException ex)
+        {
+            error = ex.Message;
+            return false;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             error = $"读取备份压缩包失败：{ex.Message}";
@@ -257,8 +342,18 @@ internal static class ImportPlanParser
     {
         try
         {
+            if (new FileInfo(path).Length > MaxArchiveFileBytes)
+            {
+                return Fatal("压缩包文件超过 512 MiB 上限，已拒绝导入。");
+            }
+
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            if (archive.Entries.Count > MaxPackageEntries)
+            {
+                return Fatal($"备份压缩包条目过多（{archive.Entries.Count} 个），已拒绝导入。");
+            }
+
             TryCollectCoreEntries(archive, out var entries, out var duplicate);
             if (duplicate || entries.Count == 0)
             {
@@ -277,6 +372,10 @@ internal static class ImportPlanParser
         catch (InvalidDataException)
         {
             return Fatal("压缩包已损坏或不是有效的 zip 文件。");
+        }
+        catch (PackageExpandedTooLargeException ex)
+        {
+            return Fatal(ex.Message);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -325,10 +424,11 @@ internal static class ImportPlanParser
         var entryWarnings = new List<string>();
         var skippedPluginBodies = 0;
         var missingSourceIds = 0;
+        var budget = new EntryReadBudget(MaxPackageExpandedBytes);
 
         foreach (var (_, name, entry) in entries)
         {
-            var json = ReadEntryText(entry, JsonFiles.MaxImportBytes);
+            var json = ReadEntryText(entry, JsonFiles.MaxImportBytes, budget);
             if (json is null)
             {
                 entryWarnings.Add($"{name} 无法读取或超过单次导入大小上限，已跳过。");
@@ -434,9 +534,16 @@ internal static class ImportPlanParser
 
     private static ImportPlan Fatal(string message) => new() { FatalError = message };
 
-    /// <summary>只接受唯一同名条目；重复条目视为不可信，返回 null。</summary>
-    private static ZipArchiveEntry? UniqueEntry(ZipArchive archive, string name)
+    /// <summary>
+    /// 只接受唯一同名条目。duplicate 为 true 表示存在多个同名条目：
+    /// 调用方需要区分“缺失”和“重复”，否则会把重复文件误报成格式不完整。
+    /// </summary>
+    private static ZipArchiveEntry? UniqueEntry(
+        ZipArchive archive,
+        string name,
+        out bool duplicate)
     {
+        duplicate = false;
         ZipArchiveEntry? found = null;
         foreach (var entry in archive.Entries)
         {
@@ -447,6 +554,7 @@ internal static class ImportPlanParser
 
             if (found != null)
             {
+                duplicate = true;
                 return null;
             }
 
@@ -456,22 +564,34 @@ internal static class ImportPlanParser
         return found;
     }
 
-    private static string? ReadEntryText(ZipArchiveEntry entry, long maxBytes)
+    private static string? ReadEntryText(
+        ZipArchiveEntry entry,
+        long maxBytes,
+        EntryReadBudget? budget = null)
     {
-        var bytes = ReadEntryBytes(entry, maxBytes);
+        var bytes = ReadEntryBytes(entry, maxBytes, budget);
         if (bytes is null)
         {
             return null;
         }
 
-        var text = Encoding.UTF8.GetString(bytes);
-        return text.Length > 0 && text[0] == '﻿' ? text[1..] : text;
+        // 自动识别 UTF-8 / UTF-16 LE / UTF-16 BE 的 BOM。
+        // 压缩包内的 Markdown 可能来自其它编辑器，按 UTF-8 硬解会静默变成乱码。
+        using var reader = new StreamReader(
+            new MemoryStream(bytes, writable: false),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
     }
 
     /// <summary>
     /// 有上限地读取压缩包条目；不信任中央目录声明的长度，实际读取超过上限即失败。
+    /// budget 非空时按实际读出的字节累计，超过整包预算会抛出 PackageExpandedTooLargeException。
     /// </summary>
-    private static byte[]? ReadEntryBytes(ZipArchiveEntry entry, long maxBytes)
+    private static byte[]? ReadEntryBytes(
+        ZipArchiveEntry entry,
+        long maxBytes,
+        EntryReadBudget? budget = null)
     {
         if (entry.Length > maxBytes)
         {
@@ -491,6 +611,11 @@ internal static class ImportPlanParser
                 if (total > maxBytes)
                 {
                     return null;
+                }
+
+                if (budget is not null && !budget.TryConsume(read))
+                {
+                    throw new PackageExpandedTooLargeException();
                 }
 
                 buffer.Write(chunk, 0, read);
@@ -542,7 +667,8 @@ internal static class ImportPlanParser
         ImportPlan plan,
         List<ExportImage>? manifest,
         ZipArchive archive,
-        bool usesRelativeLinks)
+        bool usesRelativeLinks,
+        EntryReadBudget? budget = null)
     {
         var notes = plan.Papers
             .Where(paper => string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase))
@@ -571,7 +697,12 @@ internal static class ImportPlanParser
             var missing = 0;
             foreach (var image in manifest)
             {
-                if (!IsSafeImageEntryPath(image.File) ||
+                // 清单来自外部文件，数组可能含 null 元素或 null 字段；
+                // 直接解引用会抛出未捕获的 NullReferenceException。
+                if (image is null ||
+                    string.IsNullOrWhiteSpace(image.PaperSourceId) ||
+                    string.IsNullOrWhiteSpace(image.ImageId) ||
+                    !IsSafeImageEntryPath(image.File) ||
                     !bySourceId.TryGetValue(image.PaperSourceId, out var paper))
                 {
                     missing++;
@@ -597,8 +728,9 @@ internal static class ImportPlanParser
                     continue;
                 }
 
-                var bytes = ReadEntryBytes(entry, MaxImageEntryBytes);
+                var bytes = ReadEntryBytes(entry, MaxImageEntryBytes, budget);
                 if (bytes is null || bytes.Length == 0 ||
+                    !ImageCompressionService.HasRecognizedImageSignature(bytes) ||
                     (image.ByteLength > 0 && image.ByteLength != bytes.Length) ||
                     (!string.IsNullOrEmpty(image.Sha256) &&
                      !string.Equals(
@@ -769,7 +901,14 @@ internal static class ImportPlanParser
 
         var segments = path.Split('/');
         return segments.All(segment =>
-            segment.Length > 0 && segment is not "." and not "..");
+            segment.Length > 0 &&
+            segment is not "." and not ".." &&
+            !segment.EndsWith(' ') &&
+            !segment.EndsWith('.') &&
+            segment.All(character =>
+                character >= 0x20 &&
+                character != 0x7f &&
+                character is not ('*' or '?' or '"' or '<' or '>' or '|')));
     }
 
     private static ImportPlan ParseMarkdown(string markdown, string path)
