@@ -9,29 +9,32 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static partial class ImageReferenceScanner
 {
-    // 与 PaperTodo 一致：图片 ID 为 3～8 位数字。统计规则必须与采集/改写一致，
-    // 否则界面显示“有图片”但导出时不会采集，跨机恢复时图片丢失。
-    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{3,8}\s*\)", RegexOptions.CultureInvariant)]
+    // 与 PaperTodo 一致：图片 ID 为 3～8 位数字，标签内允许出现 ]。
+    // PaperTodo 以第一个 "](" 作为标签结束位置（IndexOf("](", 2)），
+    // 因此这里用非贪婪的 [^\r\n]*? 而不是排除 ]：
+    // 否则 ![a]b](i:123456) 这类合法引用会被漏扫，导出时静默丢掉图片。
+    // 统计规则必须与采集/改写一致，否则界面显示“有图片”但导出时不会采集，跨机恢复时图片丢失。
+    [GeneratedRegex(@"!\[[^\r\n]*?\]\(\s*i:\d{3,8}\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferencePattern();
 
-    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:(\d{3,8})\s*\)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"!\[[^\r\n]*?\]\(\s*i:(\d{3,8})\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferenceWithIdPattern();
 
     /// <summary>带 span 的引用匹配；url 组覆盖 i:ID 本身，方便只替换地址、保留标签与宽度。</summary>
     [GeneratedRegex(
-        @"!\[[^\]\r\n]*\]\(\s*(?<url>i:(?<id>\d{3,8}))\s*\)",
+        @"!\[[^\r\n]*?\]\(\s*(?<url>i:(?<id>\d{3,8}))\s*\)",
         RegexOptions.CultureInvariant)]
     private static partial Regex RewritePattern();
 
     /// <summary>Markdown 压缩包使用的相对图片链接，例如 ![说明](images/abc/123456.png)。</summary>
     [GeneratedRegex(
-        @"!\[[^\]\r\n]*\]\(\s*(?<url>images/[^)\s]+)\s*\)",
+        @"!\[[^\r\n]*?\]\(\s*(?<url>images/[^)\s]+)\s*\)",
         RegexOptions.CultureInvariant)]
     private static partial Regex RelativeLinkPattern();
 
     /// <summary>只改写地址、保留标签的图片引用匹配；用于比较不同来源地址是否等价。</summary>
     [GeneratedRegex(
-        @"(?<prefix>!\[[^\]\r\n]*\]\()\s*(?:i:\d{3,8}|images/[^)\s]+)\s*(?<suffix>\))",
+        @"(?<prefix>!\[[^\r\n]*?\]\()\s*(?:i:\d{3,8}|images/[^)\s]+)\s*(?<suffix>\))",
         RegexOptions.CultureInvariant)]
     private static partial Regex ImageUrlPattern();
 
@@ -102,7 +105,7 @@ internal static partial class ImageReferenceScanner
     }
 
     [GeneratedRegex(
-        @"!\[[^\]\r\n]*\]\(\s*(?<url>i:\d{3,8}|images/[^)\s]+)\s*\)",
+        @"!\[[^\r\n]*?\]\(\s*(?<url>i:\d{3,8}|images/[^)\s]+)\s*\)",
         RegexOptions.CultureInvariant)]
     private static partial Regex AnyReferencePattern();
 

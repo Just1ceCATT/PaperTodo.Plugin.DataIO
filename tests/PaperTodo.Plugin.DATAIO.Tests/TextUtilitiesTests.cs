@@ -218,6 +218,23 @@ public sealed class TextUtilitiesTests
         Assert.Equal(0, ImageReferenceScanner.Count("![a](https://example.com/i:123)"));
     }
 
+    [Fact]
+    public void Image_label_may_contain_closing_bracket_like_the_host()
+    {
+        // PaperTodo 以第一个 "](" 作为标签结束位置，标签内允许出现 ];
+        // 扫描器必须同样识别，否则导出时会静默漏掉图片本体。
+        const string content = "![a]b](i:123456)";
+
+        Assert.Equal(1, ImageReferenceScanner.Count(content));
+        var reference = Assert.Single(ImageReferenceScanner.Enumerate(content));
+        Assert.Equal("123456", reference.ImageId);
+
+        var rewritten = ImageReferenceScanner.RewriteReferences(
+            content,
+            _ => "images/p1/123456.png");
+        Assert.Equal("![a]b](images/p1/123456.png)", rewritten);
+    }
+
     private static PaperTodo.Plugin.TodoSnapshot CreateTodo(
         string id,
         string text,
