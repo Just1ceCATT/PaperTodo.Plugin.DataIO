@@ -66,8 +66,7 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         {
             // 等宿主完成启动纸片恢复与首帧展示。
             await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-            if (!AutoStartEnabled(context.Settings.Json) ||
-                context.Workspace is not IPaperWorkspacePresentationApi presentation)
+            if (context.Workspace is not IPaperWorkspacePresentationApi presentation)
             {
                 return;
             }
@@ -97,26 +96,6 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         catch (Exception)
         {
             // 启动补建只是兜底；宿主关闭或权限变化时静默放弃。
-        }
-    }
-
-    /// <summary>读取插件设置中的“启动后自动打开”；缺失时按 plugin.json 的默认值 true 处理。</summary>
-    private static bool AutoStartEnabled(string? settingsJson)
-    {
-        if (string.IsNullOrWhiteSpace(settingsJson))
-        {
-            return true;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(settingsJson);
-            return !document.RootElement.TryGetProperty("autoStart", out var value) ||
-                   value.ValueKind != JsonValueKind.False;
-        }
-        catch (JsonException)
-        {
-            return true;
         }
     }
 

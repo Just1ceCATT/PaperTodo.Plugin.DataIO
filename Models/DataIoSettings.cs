@@ -7,18 +7,21 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal sealed class DataIoSettings
 {
-    public bool AutoStart { get; init; } = true;
     public bool IncludeTodoPapers { get; init; } = true;
     public bool IncludeNotePapers { get; init; } = true;
     public bool ImportShowCreated { get; init; } = true;
+
+    /// <summary>新建的纸片是否以折叠的胶囊状态出现，而不是直接展开在桌面上。</summary>
+    public bool CollapseImportedPapers { get; init; } = true;
+
     public bool ConfirmBeforeImport { get; init; } = true;
     public bool RestoreOrder { get; init; } = true;
     public bool RestoreLinks { get; init; } = true;
     public bool RestoreReminders { get; init; } = true;
     public bool UpdateImportedPapers { get; init; } = true;
 
-    /// <summary>待办纸片“更新”时是否删除文件中不存在的本地待办。</summary>
-    public bool DeleteMissingTodos { get; init; } = true;
+    /// <summary>待办纸片“更新”时是否删除文件中不存在的本地待办。默认关闭以保护本地数据。</summary>
+    public bool DeleteMissingTodos { get; init; }
 
     public static DataIoSettings Parse(string? json)
     {
@@ -38,16 +41,16 @@ internal sealed class DataIoSettings
 
             return new DataIoSettings
             {
-                AutoStart = ReadBool(root, "autoStart", true),
                 IncludeTodoPapers = ReadBool(root, "includeTodoPapers", true),
                 IncludeNotePapers = ReadBool(root, "includeNotePapers", true),
                 ImportShowCreated = ReadBool(root, "importShowCreated", true),
+                CollapseImportedPapers = ReadBool(root, "collapseImportedPapers", true),
                 ConfirmBeforeImport = ReadBool(root, "confirmBeforeImport", true),
                 RestoreOrder = ReadBool(root, "restoreOrder", true),
                 RestoreLinks = ReadBool(root, "restoreLinks", true),
                 RestoreReminders = ReadBool(root, "restoreReminders", true),
                 UpdateImportedPapers = ReadBool(root, "updateImportedPapers", true),
-                DeleteMissingTodos = ReadBool(root, "deleteMissingTodos", true)
+                DeleteMissingTodos = ReadBool(root, "deleteMissingTodos", false)
             };
         }
         catch (JsonException)

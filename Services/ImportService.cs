@@ -14,6 +14,9 @@ internal sealed class ImportService
     private readonly HostGateway _gateway;
     private readonly IProgress<string>? _progress;
 
+    /// <summary>折叠失败（如宿主未开启胶囊模式）后，本次导入不再对后续纸片重试折叠。</summary>
+    private bool _capsuleCollapseUnavailable;
+
     public ImportService(HostGateway gateway, IProgress<string>? progress = null)
     {
         _gateway = gateway;
@@ -558,21 +561,28 @@ internal sealed class ImportService
                 .ToArray()
             : null;
 
+        // 胶囊模式：先以隐藏方式创建，创建后折叠再按需显示，避免导入的纸片直接展开铺满桌面。
+        var shouldShow = settings.ImportShowCreated || source.Show;
+        var presentation = _gateway.Context.Workspace as IPaperWorkspacePresentationApi;
+        var useCapsule = settings.CollapseImportedPapers && presentation is not null && !_capsuleCollapseUnavailable;
+
         var request = new CreatePaperRequest
         {
             Type = type,
             Title = importPaper.SafeTitle,
-            Show = settings.ImportShowCreated || source.Show,
+            Show = useCapsule ? false : shouldShow,
             Content = type == "note" ? BuildCreateContent(importPaper) : null,
             Todos = todos
         };
 
+        string paperId;
         for (var attempt = 0; ; attempt++)
         {
             try
             {
                 var mutated = await _gateway.OnUiAsync(() => _gateway.Context.Workspace.CreatePaper(request));
-                return mutated.PaperId;
+                paperId = mutated.PaperId;
+                break;
             }
             catch (PaperTodoPluginException ex) when (
                 attempt < 2 &&
@@ -588,6 +598,62 @@ internal sealed class ImportService
                 result.Warnings.Add($"标题“{normalized}”超过标题上限，已截断为“{truncated}”。");
                 request = request with { Title = truncated.Length == 0 ? null : truncated };
             }
+        }
+
+        if (useCapsule)
+        {
+            await ApplyCreatedCapsuleAsync(presentation!, paperId, shouldShow, result);
+        }
+
+        return paperId;
+    }
+
+    /// <summary>
+    /// 把刚创建的纸片折叠成胶囊，再按需显示，避免它直接展开在桌面上。
+    /// 宿主未开启胶囊模式时无法折叠，退回普通显示，并让后续纸片不再重试。
+    /// </summary>
+    private async Task ApplyCreatedCapsuleAsync(
+        IPaperWorkspacePresentationApi presentation,
+        string paperId,
+        bool shouldShow,
+        ImportResult result)
+    {
+        try
+        {
+            await _gateway.OnUiAsync(() => presentation.CollapsePaper(paperId));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _capsuleCollapseUnavailable = true;
+            result.Warnings.Add(
+                $"未能把新纸片折叠为胶囊（{ex.Message}）。请确认 PaperTodo 已开启胶囊模式；" +
+                "本次其余纸片将按普通方式显示。");
+            if (shouldShow)
+            {
+                await TryShowCreatedAsync(presentation, paperId, result);
+            }
+
+            return;
+        }
+
+        if (shouldShow)
+        {
+            await TryShowCreatedAsync(presentation, paperId, result);
+        }
+    }
+
+    private async Task TryShowCreatedAsync(
+        IPaperWorkspacePresentationApi presentation,
+        string paperId,
+        ImportResult result)
+    {
+        try
+        {
+            await _gateway.OnUiAsync(() => presentation.ShowPaper(paperId, activate: false));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            result.Warnings.Add($"纸片已导入，但未能自动显示：{ex.Message}");
         }
     }
 

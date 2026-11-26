@@ -37,22 +37,9 @@
     {
       "name": "导入",
       "column": "left"
-    },
-    {
-      "name": "界面",
-      "column": "right"
     }
   ],
   "settings": [
-    {
-      "id": "autoStart",
-      "type": "boolean",
-      "name": "启动后自动打开",
-      "description": "自动创建或恢复一张“DataIO”工具纸片。",
-      "default": true,
-      "quick": true,
-      "category": "界面"
-    },
     {
       "id": "includeTodoPapers",
       "type": "boolean",
@@ -78,6 +65,14 @@
       "category": "导入"
     },
     {
+      "id": "collapseImportedPapers",
+      "type": "boolean",
+      "name": "导入后收起为胶囊",
+      "description": "导入新建的纸片不会展开到桌面，而是折叠成贴边胶囊。需要 PaperTodo 已开启胶囊模式；未开启时按普通方式显示。",
+      "default": true,
+      "category": "导入"
+    },
+    {
       "id": "updateImportedPapers",
       "type": "boolean",
       "name": "更新已导入的纸片",
@@ -89,8 +84,8 @@
       "id": "deleteMissingTodos",
       "type": "boolean",
       "name": "更新时删除文件中不存在的待办",
-      "description": "仅影响待办纸片的“更新”，不影响新建。\n开启时，再次导入同一来源文件并选择“更新”，本地存在但文件中没有的待办会被删除，使纸片与文件完全一致。\n关闭后只新增和修改，不删除本地待办；源文件中删除的待办也不会同步删除，需要手动处理。",
-      "default": true,
+      "description": "仅影响待办纸片的“更新”，不影响新建。\n默认关闭以优先保护本地数据。\n开启时，再次导入同一来源文件并选择“更新”，本地存在但文件中没有的待办会被删除，使纸片与文件完全一致。\n关闭后只新增和修改，不删除本地待办；源文件中删除的待办也不会同步删除，需要手动处理。",
+      "default": false,
       "category": "导入"
     },
     {
@@ -125,11 +120,5 @@
       "default": true,
       "category": "导入"
     }
-  ],
-  "startupPaper": {
-    "enabledSetting": "autoStart",
-    "instanceKey": "main",
-    "presentation": "expanded",
-    "title": "DataIO"
-  }
+  ]
 }

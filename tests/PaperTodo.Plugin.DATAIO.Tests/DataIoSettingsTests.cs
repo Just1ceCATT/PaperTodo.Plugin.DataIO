@@ -6,21 +6,29 @@ namespace PaperTodo.Plugin.DataIo.Tests;
 public sealed class DataIoSettingsTests
 {
     [Fact]
-    public void Delete_missing_todos_defaults_to_enabled()
+    public void Delete_missing_todos_defaults_to_disabled()
     {
-        Assert.True(DataIoSettings.Parse(null).DeleteMissingTodos);
-        Assert.True(DataIoSettings.Parse("{}").DeleteMissingTodos);
+        Assert.False(DataIoSettings.Parse(null).DeleteMissingTodos);
+        Assert.False(DataIoSettings.Parse("{}").DeleteMissingTodos);
     }
 
     [Fact]
-    public void Delete_missing_todos_can_be_disabled()
+    public void Delete_missing_todos_can_be_enabled()
     {
-        Assert.False(DataIoSettings.Parse("{\"deleteMissingTodos\":false}").DeleteMissingTodos);
+        Assert.True(DataIoSettings.Parse("{\"deleteMissingTodos\":true}").DeleteMissingTodos);
+    }
+
+    [Fact]
+    public void Collapse_imported_papers_defaults_to_enabled()
+    {
+        Assert.True(DataIoSettings.Parse(null).CollapseImportedPapers);
+        Assert.True(DataIoSettings.Parse("{}").CollapseImportedPapers);
+        Assert.False(DataIoSettings.Parse("{\"collapseImportedPapers\":false}").CollapseImportedPapers);
     }
 
     [Fact]
     public void Non_boolean_value_falls_back_to_default()
     {
-        Assert.True(DataIoSettings.Parse("{\"deleteMissingTodos\":\"no\"}").DeleteMissingTodos);
+        Assert.False(DataIoSettings.Parse("{\"deleteMissingTodos\":\"no\"}").DeleteMissingTodos);
     }
 }
