@@ -61,6 +61,78 @@ public sealed class TextUtilitiesTests
     }
 
     [Fact]
+    public void Diff_shows_deletions_before_additions_for_a_changed_block()
+    {
+        var diff = TextDiff.Compute("a\nb\nc", "a\nx\ny\nc").ToList();
+
+        var removed = diff.FindIndex(line => line.Kind == '-' && line.Text == "b");
+        var addedX = diff.FindIndex(line => line.Kind == '+' && line.Text == "x");
+        var addedY = diff.FindIndex(line => line.Kind == '+' && line.Text == "y");
+
+        Assert.True(removed >= 0 && addedX > removed && addedY > addedX);
+    }
+
+    [Fact]
+    public void Diff_pure_insertion_has_no_removed_lines()
+    {
+        var diff = TextDiff.Compute("a\nc", "a\nb\nc").ToList();
+
+        Assert.DoesNotContain(diff, line => line.Kind == '-');
+        var added = Assert.Single(diff, line => line.Kind == '+');
+        Assert.Equal("b", added.Text);
+        Assert.Equal(2, added.NewLine);
+    }
+
+    [Fact]
+    public void Diff_pure_deletion_has_no_added_lines()
+    {
+        var diff = TextDiff.Compute("a\nb\nc", "a\nc").ToList();
+
+        Assert.DoesNotContain(diff, line => line.Kind == '+');
+        var removed = Assert.Single(diff, line => line.Kind == '-');
+        Assert.Equal("b", removed.Text);
+        Assert.Equal(2, removed.OldLine);
+    }
+
+    [Fact]
+    public void Diff_groups_distant_changes_into_separate_hunks()
+    {
+        var oldLines = Enumerable.Range(1, 12).Select(i => $"line{i}").ToArray();
+        var newLines = (string[])oldLines.Clone();
+        newLines[1] = "changed2";
+        newLines[10] = "changed11";
+
+        var diff = TextDiff.Compute(string.Join("\n", oldLines), string.Join("\n", newLines)).ToList();
+
+        var firstRemoved = diff.FindIndex(line => line.Kind == '-' && line.Text == "line2");
+        var gap = diff.FindIndex(line => line.Kind == '…');
+        var secondRemoved = diff.FindIndex(line => line.Kind == '-' && line.Text == "line11");
+
+        // 两处修改之间应当出现省略行，而不是把中间所有内容都列出来。
+        Assert.True(firstRemoved >= 0);
+        Assert.True(gap > firstRemoved);
+        Assert.True(secondRemoved > gap);
+        Assert.DoesNotContain(diff, line => line.Kind == ' ' && line.Text == "line6");
+    }
+
+    [Fact]
+    public void Diff_keeps_context_lines_around_each_change()
+    {
+        var oldLines = Enumerable.Range(1, 10).Select(i => $"line{i}").ToArray();
+        var newLines = (string[])oldLines.Clone();
+        newLines[4] = "changed5";
+
+        var diff = TextDiff.Compute(string.Join("\n", oldLines), string.Join("\n", newLines)).ToList();
+
+        Assert.Contains(diff, line => line.Kind == ' ' && line.Text == "line3");
+        Assert.Contains(diff, line => line.Kind == ' ' && line.Text == "line4");
+        Assert.Contains(diff, line => line.Kind == ' ' && line.Text == "line6");
+        Assert.Contains(diff, line => line.Kind == ' ' && line.Text == "line7");
+        Assert.DoesNotContain(diff, line => line.Kind == ' ' && line.Text == "line1");
+        Assert.DoesNotContain(diff, line => line.Kind == ' ' && line.Text == "line10");
+    }
+
+    [Fact]
     public void Content_equivalence_ignores_trailing_blank_lines_and_separator()
     {
         Assert.True(MarkdownNormalize.ContentEquivalent("正文\n\n---\n\n", "正文"));
