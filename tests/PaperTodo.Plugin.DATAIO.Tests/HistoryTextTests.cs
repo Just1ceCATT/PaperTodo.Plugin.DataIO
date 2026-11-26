@@ -115,6 +115,18 @@ public sealed class HistoryTextTests
     }
 
     [Fact]
+    public void Stopped_import_without_counts_is_not_shown_as_unchanged()
+    {
+        var entry = new DataIoHistoryEntry
+        {
+            Kind = DataIoHistoryKinds.Import,
+            StoppedEarly = true
+        };
+
+        Assert.Equal("未完成", Assert.Single(DataIoHistoryText.Badges(entry)).Text);
+    }
+
+    [Fact]
     public void Compact_file_name_keeps_head_and_extension()
     {
         var compact = DataIoHistoryText.CompactFileName(

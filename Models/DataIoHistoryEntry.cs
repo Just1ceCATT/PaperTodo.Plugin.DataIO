@@ -129,7 +129,11 @@ internal static class DataIoHistoryText
 
         if (badges.Count == 0)
         {
-            badges.Add(new("无变化", DataIoHistoryBadgeTone.Neutral));
+            // 没有成功/跳过/失败计数但有 StoppedEarly，代表这次导入根本没有执行，
+            // 不能显示成“无变化”误导用户以为文件与本地一致。
+            badges.Add(entry.StoppedEarly
+                ? new("未完成", DataIoHistoryBadgeTone.Warning)
+                : new("无变化", DataIoHistoryBadgeTone.Neutral));
         }
 
         return badges;

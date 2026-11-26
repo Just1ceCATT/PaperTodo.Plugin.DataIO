@@ -39,6 +39,7 @@ internal sealed class ImportService
             if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
             {
                 result.FatalError = "缺少 papers.create 权限，无法新建纸片；如需仅更新已导入纸片，请取消勾选新纸片。";
+                result.StoppedEarly = true;
                 return result;
             }
 
@@ -51,6 +52,7 @@ internal sealed class ImportService
             catch (PaperTodoPluginException ex)
             {
                 result.FatalError = $"读取现有纸片失败：{ex.Message}";
+                result.StoppedEarly = true;
                 return result;
             }
 
@@ -58,6 +60,7 @@ internal sealed class ImportService
             {
                 result.FatalError =
                     $"当前已有 {existingCount} 张纸片，再新建 {newPaperCount} 张将超过 {MaxPapers} 张上限。";
+                result.StoppedEarly = true;
                 return result;
             }
         }

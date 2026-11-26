@@ -2770,7 +2770,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             lines.Add("导入被中断：已完成的部分已写入且不会回滚，请检查纸片内容后再继续。");
         }
 
-        if (result.StoppedEarly && result.FatalError != null)
+        // 致命错误必须出现在结果详情里，不能只在状态栏一闪而过。
+        if (result.FatalError != null)
         {
             lines.Add(result.FatalError);
         }
@@ -2792,11 +2793,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         var title = result.Cancelled
             ? "导入已中断（部分完成）"
-            : result.StoppedEarly
-                ? "部分导入完成"
-                : result.FailedPapers > 0
-                    ? "导入完成，有失败项"
-                    : "导入完成";
+            : result.FatalError != null
+                ? (result.CreatedPapers + result.UpdatedPapers > 0
+                    ? "部分导入完成"
+                    : "导入已中止")
+                : result.StoppedEarly
+                    ? "部分导入完成"
+                    : result.FailedPapers > 0
+                        ? "导入完成，有失败项"
+                        : "导入完成";
 
         _view.ShowResultDialog(
             title,
