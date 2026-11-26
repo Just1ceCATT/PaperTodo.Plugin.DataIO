@@ -839,8 +839,9 @@ internal static class ImportPlanParser
         if (plan.UnrestorableImageCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.UnrestorableImageCount} 张图片无法压缩到 8 MiB 以内" +
-                "（例如 GIF/TIFF 或解码失败），只保留在压缩包中，导入时不会写回笔记。");
+                $"{plan.UnrestorableImageCount} 张图片无法按宿主规则压缩到可写回的大小" +
+                "（例如需要压缩的 GIF/TIFF、尺寸超过 4096 像素、压缩后仍超限或解码失败），" +
+                "只保留在压缩包中，导入时不会写回笔记。");
         }
 
         if (plan.MissingImageAssetCount > 0)

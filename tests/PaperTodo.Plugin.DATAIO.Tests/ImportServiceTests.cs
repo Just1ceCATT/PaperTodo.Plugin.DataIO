@@ -20,6 +20,34 @@ public sealed class ImportServiceTests
     }
 
     [Fact]
+    public void Declared_unavailable_references_are_detected_for_updates()
+    {
+        var paper = new ImportPaper
+        {
+            Source = new ExportPaper
+            {
+                Type = "note",
+                Content = "![a](i:123456) 和 ![b](i:654321)"
+            }
+        };
+
+        Assert.False(ImportService.HasUnrestorableDeclaredReferences(paper));
+
+        paper.UnavailableImageIds.Add("123456");
+        Assert.True(ImportService.HasUnrestorableDeclaredReferences(paper));
+
+        // 清单声明过、但正文没有引用的坏图片不需要触发“有变化”。
+        paper.Source.Content = "没有图片引用";
+        Assert.False(ImportService.HasUnrestorableDeclaredReferences(paper));
+
+        // Markdown 包使用相对链接。
+        paper.Source.Content = "![a](images/p/1.png)";
+        paper.UsesRelativeImageLinks = true;
+        paper.UnavailableImageFiles.Add("images/p/1.png");
+        Assert.True(ImportService.HasUnrestorableDeclaredReferences(paper));
+    }
+
+    [Fact]
     public void Clearing_update_targets_resets_all_derived_state()
     {
         var paper = new ImportPaper

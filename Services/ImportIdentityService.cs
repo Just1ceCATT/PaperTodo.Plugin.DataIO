@@ -517,7 +517,9 @@ internal sealed class ImportIdentityService
         localContent ??= "";
         if (MarkdownNormalize.ContentEquivalent(localContent, source))
         {
-            return true;
+            // 文件声明过、但无法写回的图片引用需要由“更新”移除；
+            // 否则逐字相同的正文会被当成无变化，坏引用永远留在本地。
+            return !ImportService.HasUnrestorableDeclaredReferences(paper);
         }
 
         // 没有图片包时无法确认图片是否一致，保守地按有变化处理。

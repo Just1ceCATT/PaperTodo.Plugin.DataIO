@@ -73,7 +73,7 @@ internal static class ImportSummaryBuilder
             if (unrestorableImages > 0)
             {
                 problems.Add(
-                    $"{unrestorableImages} 张图片无法压缩到 8 MiB 以内，仅保留在压缩包中，不会写回笔记");
+                    $"{unrestorableImages} 张图片无法按宿主规则压缩到可写回的大小，仅保留在压缩包中，不会写回笔记");
             }
 
             if (unresolvedReferences > 0)

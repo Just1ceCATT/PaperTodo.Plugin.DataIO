@@ -1650,7 +1650,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         if (plan.UnrestorableImageCount > 0)
         {
             var reason = plan.CompressionFailedImageCount > 0
-                ? "格式不受支持或无法压缩到 8 MiB 以内"
+                ? "格式不受支持或无法按宿主规则压缩到可写回的大小"
                 : "超过插件 8 MiB 写入上限";
             return ($"发现 {plan.UnrestorableImageCount} 张图片，但当前无法导入，{reason}", true);
         }
@@ -2627,15 +2627,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             if (nonRestorableImages > 0)
             {
                 result.Warnings.Add(
-                    $"{nonRestorableImages} 张图片无法压缩到 8 MiB 以内，" +
+                    $"{nonRestorableImages} 张图片无法按宿主规则压缩到可写回的大小，" +
                     "仅保留在压缩包中，未写回笔记。");
             }
 
             if (_importPlan.MissingImageAssetCount > 0)
             {
                 result.Warnings.Add(
-                    $"压缩包中有 {_importPlan.MissingImageAssetCount} 张图片文件缺失或校验失败，" +
-                    "相关引用保持原样。");
+                    $"压缩包中有 {_importPlan.MissingImageAssetCount} 张图片文件缺失或校验失败：" +
+                    "新建的纸片保留原引用，更新的纸片会移除这些引用。");
             }
 
             // 导入已经写入宿主，映射必须登记——即使用户在导入过程中关闭了 DataIO 纸片。

@@ -311,10 +311,14 @@ internal sealed class ImportService
                 "无法读取本地笔记正文，已跳过更新。");
         }
 
-        if (MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
+        // 正文逐字等价时通常可以直接返回，避免把 Markdown 往返的规范化差异持久化。
+        // 但文件声明了无法写回的图片资产时，更新需要移除坏引用，
+        // 不能把“正文相同”当成“无事可做”，否则这些引用永远不会被清理；
+        // 同理，有随包图片时也要走图片写回/复用流程。
+        if (importPaper.Images.Count == 0 &&
+            !HasUnrestorableDeclaredReferences(importPaper) &&
+            MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
         {
-            // 正文等价（忽略行尾空行与末尾分隔线）时不写回，
-            // 避免 Markdown 往返产生的规范化差异被持久化。
             return (targetId, false, false);
         }
 
@@ -370,6 +374,12 @@ internal sealed class ImportService
             }
         }
 
+        // 没有任何引用需要移除时不必重写正文（例如正文等价、图片全部失败但清单为空）。
+        if (string.Equals(content, current.Content, StringComparison.Ordinal))
+        {
+            return (targetId, false, false);
+        }
+
         // 图片写回期间用户可能仍在编辑；兜底写入前重新读取并复核指纹，
         // 避免用文件正文覆盖写回窗口内的本地修改。
         var latest = await TryGetNoteAsync(targetId);
@@ -397,6 +407,22 @@ internal sealed class ImportService
         }));
         await HostGateway.YieldAsync();
         return (targetId, false, false);
+    }
+
+    /// <summary>正文是否引用了清单声明过、但无法写回的图片；更新需要移除这些引用。</summary>
+    internal static bool HasUnrestorableDeclaredReferences(ImportPaper paper)
+    {
+        if (paper.UnavailableImageIds.Count == 0 && paper.UnavailableImageFiles.Count == 0)
+        {
+            return false;
+        }
+
+        var content = paper.Source.Content ?? "";
+        return paper.UsesRelativeImageLinks
+            ? ImageReferenceScanner.EnumerateRelativeImageLinks(content)
+                .Any(paper.UnavailableImageFiles.Contains)
+            : ImageReferenceScanner.Enumerate(content)
+                .Any(reference => paper.UnavailableImageIds.Contains(reference.ImageId));
     }
 
     /// <summary>移除没有可用资产、确定无法写回的图片引用；保留其余正文。</summary>
@@ -1089,8 +1115,8 @@ internal sealed class ImportService
         if (skipped > 0)
         {
             result.Warnings.Add(abortOnUpdate
-                ? $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法压缩到 8 MiB 以内，已移除对应引用并更新其余正文。"
-                : $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法压缩到 8 MiB 以内，仅保留在压缩包中。");
+                ? $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按宿主规则压缩到可写回的大小，已移除对应引用并更新其余正文。"
+                : $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按宿主规则压缩到可写回的大小，仅保留在压缩包中。");
         }
 
         return true;
@@ -1148,7 +1174,7 @@ internal sealed class ImportService
 
                 if (!image.Restorable)
                 {
-                    return "有图片无法压缩到 8 MiB 以内";
+                    return "有图片无法按宿主规则压缩到可写回的大小";
                 }
             }
 
@@ -1203,11 +1229,7 @@ internal sealed class ImportService
             return new Dictionary<string, byte[]>(StringComparer.Ordinal);
         }
 
-        if (references.Count > maxImages)
-        {
-            return null;
-        }
-
+        // 按去重后的图片数判断上限：同一张图在正文里出现多次不应挤占额度。
         var map = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         long totalBytes = 0;
         foreach (var reference in references)
@@ -1217,14 +1239,22 @@ internal sealed class ImportService
                 continue;
             }
 
+            if (map.Count >= maxImages)
+            {
+                break;
+            }
+
             try
             {
                 var image = await _gateway.OnUiAsync(
                     () => _gateway.Context.NoteAssets.ReadImage(paperId, reference.ImageId));
                 totalBytes += image.Bytes.LongLength;
+
+                // 超过总量阈值后停止继续读取，但已读到的图片仍然参与复用：
+                // 整体放弃复用会让每张图都重新追加，正是需要避免的膨胀。
                 if (totalBytes > maxTotalBytes)
                 {
-                    return null;
+                    break;
                 }
 
                 map[reference.ImageId] = image.Bytes;
@@ -1466,21 +1496,26 @@ internal sealed class ImportService
                     continue;
                 }
 
-                if (!idMap.TryGetValue(original.LinkedSourcePaperId, out var target) ||
-                    string.Equals(target, newPaperId, StringComparison.Ordinal))
+                var hasTarget = idMap.TryGetValue(original.LinkedSourcePaperId, out var target);
+                var selfLink = hasTarget &&
+                               string.Equals(target, newPaperId, StringComparison.Ordinal);
+                if (!hasTarget || selfLink)
                 {
-                    // 目标纸片在文件里存在、只是本轮没有导入（未勾选、内容无变化被跳过或导入失败）：
-                    // 本地关联仍然有效，不能按“文件中已不存在”清除。
-                    if (fileSourceIds.Contains(original.LinkedSourcePaperId))
+                    if (!selfLink &&
+                        fileSourceIds.Contains(original.LinkedSourcePaperId))
                     {
+                        // 目标纸片在文件里存在、只是本轮没有导入（未勾选、内容无变化被跳过或导入失败）：
+                        // 本地关联仍然有效，不能按“文件中已不存在”清除。
                         result.Warnings.Add(
                             $"待办“{Shorten(original.Text)}”要关联的纸片本轮未导入，本地关联保持不变。");
                         continue;
                     }
 
-                    result.Warnings.Add($"待办“{Shorten(original.Text)}”要关联的纸片不在导入文件中，关联已丢弃。");
+                    result.Warnings.Add(selfLink
+                        ? $"待办“{Shorten(original.Text)}”要关联的纸片是它自身，关联已丢弃。"
+                        : $"待办“{Shorten(original.Text)}”要关联的纸片不在导入文件中，关联已丢弃。");
 
-                    // 源文件要求关联但目标不在文件内：更新时应清掉本地旧关联，保持与文件一致。
+                    // 自关联没有意义；目标不在文件内时则同步清除本地旧关联，保持与文件一致。
                     if (!createdNow && CanClearLinkedPaper(match))
                     {
                         try
