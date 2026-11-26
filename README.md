@@ -417,7 +417,7 @@ PaperTodo 没有重命名普通纸片的公开 API，因此更新只同步内容
 
 - 技术栈：.NET 10 + WPF 原生插件。
 - 构建安装脚本：`scripts\Build-And-Install.ps1`。
-- 详细契约、JSON 结构、权限和构建说明见 [开发说明](docs/开发说明.md)。
+- 插件契约、JSON 结构、权限和构建说明以宿主 PaperTodo 的插件开发文档为准。
 - 原生插件不支持热重载；更新插件文件后需要退出并重启 PaperTodo。
 
 欢迎通过 GitHub Issues 反馈问题和建议。
