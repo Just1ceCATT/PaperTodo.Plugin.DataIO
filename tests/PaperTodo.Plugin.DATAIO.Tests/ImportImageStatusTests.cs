@@ -86,7 +86,7 @@ public sealed class ImportImageStatusTests
         Assert.NotNull(compressionFailed);
         Assert.True(compressionFailed.Value.IsWarning);
         Assert.Equal(
-            "发现 2 张图片，但当前无法导入，格式不受支持或无法按宿主规则压缩到可写回的大小",
+            "发现 2 张图片，但当前无法导入，格式不受支持或无法按 PaperTodo 规则压缩到可写回的大小",
             compressionFailed.Value.Text);
 
         var oversized = DataIoSession.BuildImageStatus(new ImportPlan

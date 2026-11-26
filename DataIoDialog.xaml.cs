@@ -9,7 +9,7 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 与宿主 PaperNoticeDialog 同款的原生风格模态对话框：
+/// 与 PaperTodo PaperNoticeDialog 同款的原生风格模态对话框：
 /// 圆角卡片、纸面色、Tint 半透明按钮，无图标与标题栏关闭按钮。
 /// </summary>
 public partial class DataIoDialog : Window
@@ -259,7 +259,7 @@ public partial class DataIoDialog : Window
             string.Equals(workspace.Name, currentWorkspaceName, StringComparison.OrdinalIgnoreCase));
 
         // 已知当前工作区名称却找不到对应条目时，退化为勾选全部可读项；
-        // 名称未知（宿主不支持或读取失败）时不预勾选，防止直接回车误合并全部工作区。
+        // 名称未知（PaperTodo 不支持或读取失败）时不预勾选，防止直接回车误合并全部工作区。
         var selectAll = current is null && !string.IsNullOrWhiteSpace(currentWorkspaceName);
 
         BodyPanel.Children.Add(new TextBlock
@@ -366,7 +366,7 @@ public partial class DataIoDialog : Window
         return panel;
     }
 
-    /// <summary>与宿主待办勾选框一致：圆角方框、选中后填充强调色并显示对勾。</summary>
+    /// <summary>与 PaperTodo 待办勾选框一致：圆角方框、选中后填充强调色并显示对勾。</summary>
     private Style WorkspaceCheckBoxStyle()
     {
         if (_workspaceCheckBoxStyle is not null)

@@ -8,7 +8,7 @@ using System.Windows.Media.Imaging;
 
 namespace PaperTodo.Plugin.DataIo;
 
-/// <summary>预览用的配色与排版参数，由预览窗口按宿主主题构建。</summary>
+/// <summary>预览用的配色与排版参数，由预览窗口按 PaperTodo 主题构建。</summary>
 internal sealed record PreviewPalette(
     Brush TextBrush,
     Brush WeakBrush,
@@ -346,7 +346,7 @@ internal static class MarkdownPreview
     }
 
     /// <summary>
-    /// 解析独占一行的图片引用。宿主只把整行引用渲染为图片，
+    /// 解析独占一行的图片引用。 PaperTodo 只把整行引用渲染为图片，
     /// 因此这里同样只接受“整行只有图片标记”（可带 {width=…} 属性）。
     /// </summary>
     private static bool TryParseImageLine(string trimmed, out MarkdownImageLine image)
@@ -737,7 +737,7 @@ internal static class MarkdownPreview
         return block;
     }
 
-    /// <summary>与宿主一致的宽度规则：属性优先，其次 |百分比、|宽x高，最后按原始尺寸且不超过容器。</summary>
+    /// <summary>与 PaperTodo 一致的宽度规则：属性优先，其次 |百分比、|宽x高，最后按原始尺寸且不超过容器。</summary>
     private static double ResolveImageDisplayWidth(
         string label,
         string attributeText,

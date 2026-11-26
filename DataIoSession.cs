@@ -12,7 +12,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 工具纸片会话：负责生命周期、事件订阅以及导出/导入双模式的编排。
-/// 内容类型行就地展开具体纸片并多选；所有宿主数据调用都经 HostGateway 切回 UI 线程。
+/// 内容类型行就地展开具体纸片并多选；所有 PaperTodo 数据调用都经 HostGateway 切回 UI 线程。
 /// </summary>
 internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 {
@@ -31,10 +31,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     private readonly DataIoState _state;
     private DataIoSettings _settings;
 
-    /// <summary>最近一次宿主下发的主题；悬停面板重新可见时用它重绘。</summary>
+    /// <summary>最近一次 PaperTodo 下发的主题；悬停面板重新可见时用它重绘。</summary>
     private PaperBodyTheme _theme;
 
-    /// <summary>宿主缓存的悬停面板；为空表示尚未创建或创建失败。</summary>
+    /// <summary>PaperTodo 缓存的悬停面板；为空表示尚未创建或创建失败。</summary>
     private DataIoMiniView? _miniView;
 
     private List<PaperSnapshot> _papers = [];
@@ -66,10 +66,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>缓存代次：清理后递增，阻止刷新前发出的异步读取把旧内容写回缓存。</summary>
     private int _previewGeneration;
 
-    /// <summary>上一次刷新看到的数据指纹；未变化时保留预览缓存，避免每次宿主事件都重读。</summary>
+    /// <summary>上一次刷新看到的数据指纹；未变化时保留预览缓存，避免每次 PaperTodo 事件都重读。</summary>
     private string _dataSignature = "";
 
-    /// <summary>宿主报告过笔记正文变化，需要失效笔记预览缓存。</summary>
+    /// <summary>PaperTodo 报告过笔记正文变化，需要失效笔记预览缓存。</summary>
     private bool _noteContentDirty;
 
     private CancellationTokenSource? _operation;
@@ -126,16 +126,16 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本会话是否已尝试过一次“正文未挂载”自愈，避免重复重建。</summary>
     private bool _autoReloadRequested;
 
-    /// <summary>本会话是否已请求宿主重建“胶囊→展开”外形，避免重复抖动。</summary>
+    /// <summary>本会话是否已请求 PaperTodo 重建“胶囊→展开”外形，避免重复抖动。</summary>
     private bool _shellRestoreRequested;
 
-    /// <summary>进程内自愈重建次数上限，防止宿主持续失败时反复重建。</summary>
+    /// <summary>进程内自愈重建次数上限，防止 PaperTodo 持续失败时反复重建。</summary>
     private static int _autoReloadCount;
     private const int MaxAutoReloads = 2;
 
     /// <summary>
     /// 工作区数据文件名（data.json / data2.json）。只在会话存活期间可读：
-    /// 会话销毁后宿主 API 会拒绝调用，必须在构造时缓存，否则销毁后写待推送日志
+    /// 会话销毁后 PaperTodo API 会拒绝调用，必须在构造时缓存，否则销毁后写待推送日志
     /// 会落到 “default” 键，永远不会被任何 Runtime 读取。
     /// </summary>
     private readonly string? _workspaceFileName;
@@ -231,7 +231,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// </summary>
     public bool OnRuntimeMessage(JsonElement message)
     {
-        // 会话销毁后宿主仍可能送达在途消息；继续应用会把旧快照写进已失效的会话，
+        // 会话销毁后 PaperTodo 仍可能送达在途消息；继续应用会把旧快照写进已失效的会话，
         // 甚至经 SaveWorkspaceState 反向覆盖新会话的映射。
         if (_disposed)
         {
@@ -257,7 +257,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
     public void CancelInteractions()
     {
-        // 宿主在纸片失焦、隐藏或形态切换时会调用 CancelInteractions，用于中止拖拽/输入等
+        // PaperTodo 在纸片失焦、隐藏或形态切换时会调用 CancelInteractions，用于中止拖拽/输入等
         // 瞬态交互。导入过程中创建并显示新纸片会让工具纸片失焦，因此这里绝不能取消导入任务；
         // 导入只在会话 Dispose 时中止。
     }
@@ -265,7 +265,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     public void OnActivated()
     {
         ScheduleRefresh();
-        // 宿主在极少数启动/工作区切换时序下会保留会话但让正文脱离可视树，
+        // PaperTodo 在极少数启动/工作区切换时序下会保留会话但让正文脱离可视树，
         // 表现为纸片空白。用户激活纸片时补一次重建，避免必须删除纸片才能恢复。
         if (PresentationSource.FromVisual(_view) is null)
         {
@@ -283,7 +283,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         ScheduleRenderedCheck(0);
     }
 
-    /// <summary>正文从不可见恢复可见时重新复核尺寸，覆盖宿主稍后才展开外壳的时序。</summary>
+    /// <summary>正文从不可见恢复可见时重新复核尺寸，覆盖 PaperTodo 稍后才展开外壳的时序。</summary>
     private void OnViewIsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (e.NewValue is true)
@@ -337,9 +337,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             return;
         }
 
-        // 正文已挂载却仍不可见：宿主恢复“折叠状态的纸片”时可能只把模型改成展开，
+        // 正文已挂载却仍不可见：PaperTodo 恢复“折叠状态的纸片”时可能只把模型改成展开，
         // 却没有执行展开过渡，正文会被留在 Collapsed 的外壳里。该状态不会再产生
-        // 可见性事件，因此必须在限次等待后主动请求宿主重建外形。
+        // 可见性事件，因此必须在限次等待后主动请求 PaperTodo 重建外形。
         if (!_view.IsVisible)
         {
             if (attempt < 2)
@@ -383,7 +383,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     }
 
     /// <summary>
-    /// 宿主会把插件正文放进一个带圆角裁剪的容器。极少数启动时序下裁剪几何为 0，
+    /// PaperTodo 会把插件正文放进一个带圆角裁剪的容器。极少数启动时序下裁剪几何为 0，
     /// 正文虽然已挂载且有尺寸却完全不可见；沿可视树向上检查一层即可识别。
     /// </summary>
     private bool IsViewClippedAway()
@@ -406,7 +406,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         return false;
     }
 
-    /// <summary>宿主模型里这张纸片是否应为“可见且已展开”。</summary>
+    /// <summary>PaperTodo 模型里这张纸片是否应为“可见且已展开”。</summary>
     private bool PaperShouldBeVisible()
     {
         try
@@ -421,8 +421,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     }
 
     /// <summary>
-    /// 正文不可见但纸片逻辑上是展开态：先折叠再展开，让宿主重新执行外形过渡，
-    /// 把仍停留在折叠状态的外壳展开。两者都走宿主演示 API，不直接改动任何窗口。
+    /// 正文不可见但纸片逻辑上是展开态：先折叠再展开，让 PaperTodo 重新执行外形过渡，
+    /// 把仍停留在折叠状态的外壳展开。两者都走 PaperTodo 演示 API，不直接改动任何窗口。
     /// </summary>
     private void TryRestoreCollapsedShell()
     {
@@ -431,7 +431,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         var presentation = _context.WorkspacePresentation;
         if (presentation is null)
         {
-            // 旧宿主没有演示 API，只能重建正文，至少排除会话侧原因。
+            // 旧 PaperTodo 没有演示 API，只能重建正文，至少排除会话侧原因。
             TryAutoReloadBody();
             return;
         }
@@ -493,7 +493,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             return;
         }
 
-        // 宿主只在工具纸片可见时投递变更事件，隐藏期间的笔记正文变化收不到 NoteChangedEvent；
+        // PaperTodo 只在工具纸片可见时投递变更事件，隐藏期间的笔记正文变化收不到 NoteChangedEvent；
         // 恢复可见时强制失效预览缓存，避免悬停预览继续显示旧正文。
         _noteContentDirty = true;
         ScheduleRefresh();
@@ -518,12 +518,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
     // ---------- 贴边胶囊悬停面板 ----------
 
-    /// <summary>面板尺寸包含宿主外框与关闭区；与 plugin.json 声明的 miniMaxSize 保持一致。</summary>
+    /// <summary>面板尺寸包含 PaperTodo 外框与关闭区；与 plugin.json 声明的 miniMaxSize 保持一致。</summary>
     public PaperMiniViewSize PreferredMiniViewSize => new(340, 260);
 
     /// <summary>
-    /// 宿主在胶囊贴边时按需创建。返回值必须是全新、未挂载的纯 WPF 控件树；
-    /// 面板只读取插件状态里的历史记录，不访问宿主数据。
+    /// PaperTodo 在胶囊贴边时按需创建。返回值必须是全新、未挂载的纯 WPF 控件树；
+    /// 面板只读取插件状态里的历史记录，不访问 PaperTodo 数据。
     /// </summary>
     public FrameworkElement? CreateMiniView(PaperMiniViewContext context)
     {
@@ -558,7 +558,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     {
         if (!_disposed && !_view.Dispatcher.CheckAccess())
         {
-            // 宿主可能在后台线程投递设置变更；界面与选中状态只能在 UI 线程修改。
+            // PaperTodo 可能在后台线程投递设置变更；界面与选中状态只能在 UI 线程修改。
             _view.Dispatcher.BeginInvoke(() => OnSettingsChanged(settingsJson));
             return;
         }
@@ -862,12 +862,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     }
 
     /// <summary>
-    /// 用刚拉取的纸片列表对账导入映射。宿主在工具纸片隐藏期间会丢弃变更事件，
+    /// 用刚拉取的纸片列表对账导入映射。 PaperTodo 在工具纸片隐藏期间会丢弃变更事件，
     /// 删除可能从未送达，因此每次刷新列表时主动校验一次映射目标。
     /// </summary>
     private void ReconcileImportLinks()
     {
-        // 工具纸片自身也在列表中，列表为空只可能是宿主数据尚未就绪的瞬态。
+        // 工具纸片自身也在列表中，列表为空只可能是 PaperTodo 数据尚未就绪的瞬态。
         // 此时绝不能把全部映射判定为失效，等待下次刷新再对账。
         if (_papers.Count == 0)
         {
@@ -1230,7 +1230,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
     }
 
-    /// <summary>导出检索：匹配标题或待办文本（笔记正文需读取宿主才可知，不参与过滤）。</summary>
+    /// <summary>导出检索：匹配标题或待办文本（笔记正文需读取 PaperTodo 才可知，不参与过滤）。</summary>
     private bool MatchesExportSearch(PaperSnapshot paper)
     {
         if (_searchQuery.Length == 0)
@@ -1650,7 +1650,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         if (plan.UnrestorableImageCount > 0)
         {
             var reason = plan.CompressionFailedImageCount > 0
-                ? "格式不受支持或无法按宿主规则压缩到可写回的大小"
+                ? "格式不受支持或无法按 PaperTodo 规则压缩到可写回的大小"
                 : "超过插件 8 MiB 写入上限";
             return ($"发现 {plan.UnrestorableImageCount} 张图片，但当前无法导入，{reason}", true);
         }
@@ -2157,7 +2157,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             {
                 details.Add(
                     $"{imageCapture.OversizedImages} 张图片超过插件直接写入上限（8 MiB），" +
-                    "导入时会按宿主规则压缩到 8 MiB 以内；" +
+                    "导入时会按 PaperTodo 规则压缩到 8 MiB 以内；" +
                     "GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。");
             }
 
@@ -2627,7 +2627,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             if (nonRestorableImages > 0)
             {
                 result.Warnings.Add(
-                    $"{nonRestorableImages} 张图片无法按宿主规则压缩到可写回的大小，" +
+                    $"{nonRestorableImages} 张图片无法按 PaperTodo 规则压缩到可写回的大小，" +
                     "仅保留在压缩包中，未写回笔记。");
             }
 
@@ -2638,7 +2638,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                     "新建的纸片保留原引用，更新的纸片会移除这些引用。");
             }
 
-            // 导入已经写入宿主，映射必须登记——即使用户在导入过程中关闭了 DataIO 纸片。
+            // 导入已经写入 PaperTodo，映射必须登记——即使用户在导入过程中关闭了 DataIO 纸片。
             // 只跳过弹窗和历史界面操作；否则下次导入会把已创建的纸片当成新建副本。
             try
             {
@@ -2743,7 +2743,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         return;
                     }
 
-                    // 宿主可能在后台线程投递事件；映射、状态与界面只能在 UI 线程修改，
+                    // PaperTodo 可能在后台线程投递事件；映射、状态与界面只能在 UI 线程修改，
                     // 否则会和导入/刷新的字典枚举并发冲突。
                     if (_view.Dispatcher.CheckAccess())
                     {
@@ -2772,7 +2772,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
     }
 
-    /// <summary>在 UI 线程处理宿主变更事件。</summary>
+    /// <summary>在 UI 线程处理 PaperTodo 变更事件。</summary>
     private void HandlePaperEvent(PaperTodoEvent evt)
     {
         // 笔记正文不在纸片/待办指纹里，单独标记以便下次刷新失效笔记预览。

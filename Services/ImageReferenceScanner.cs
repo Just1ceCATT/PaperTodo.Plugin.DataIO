@@ -9,7 +9,7 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static partial class ImageReferenceScanner
 {
-    // 与宿主一致：图片 ID 为 3～8 位数字。统计规则必须与采集/改写一致，
+    // 与 PaperTodo 一致：图片 ID 为 3～8 位数字。统计规则必须与采集/改写一致，
     // 否则界面显示“有图片”但导出时不会采集，跨机恢复时图片丢失。
     [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{3,8}\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferencePattern();
@@ -38,7 +38,7 @@ internal static partial class ImageReferenceScanner
     public static int Count(string? markdown) =>
         string.IsNullOrEmpty(markdown) ? 0 : ReferencePattern().Matches(markdown).Count;
 
-    /// <summary>按出现顺序枚举正文里合法的图片引用；ID 规则与宿主一致（3～8 位数字）。</summary>
+    /// <summary>按出现顺序枚举正文里合法的图片引用；ID 规则与 PaperTodo 一致（3～8 位数字）。</summary>
     public static IReadOnlyList<ImageReferenceMatch> Enumerate(string? markdown)
     {
         if (string.IsNullOrEmpty(markdown))

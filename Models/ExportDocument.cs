@@ -53,7 +53,7 @@ internal sealed class ExportImage
 
     /// <summary>
     /// false 表示图片超过插件直接追加的单图上限（8 MiB）。
-    /// 导入时会先按宿主规则压缩再写回；GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。
+    /// 导入时会先按 PaperTodo 规则压缩再写回；GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。
     /// </summary>
     public bool Restorable { get; set; } = true;
 }
@@ -79,7 +79,7 @@ internal sealed class ExportSource
 
 internal sealed class ExportPaper
 {
-    /// <summary>导出时的宿主纸片 ID，仅用于溯源与同一文件内关联纸片还原。</summary>
+    /// <summary>导出时的 PaperTodo 纸片 ID，仅用于溯源与同一文件内关联纸片还原。</summary>
     public string SourceId { get; set; } = "";
     public string Type { get; set; } = "todo";
     public string Title { get; set; } = "";
@@ -96,7 +96,7 @@ internal sealed class ExportTodo
     public int Order { get; set; }
     public DateTimeOffset? ReminderAt { get; set; }
     public string? LinkedSourcePaperId { get; set; }
-    /// <summary>待办关联的文件/文件夹仅作参考，宿主无写入 API。</summary>
+    /// <summary>待办关联的文件/文件夹仅作参考，PaperTodo 无写入 API。</summary>
     public string? LinkedPath { get; set; }
     public bool? LinkedPathIsDirectory { get; set; }
 }
@@ -111,7 +111,7 @@ internal static class ExportJson
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         MaxDepth = 64,
-        // 与宿主读取 data.json 的容错保持一致：允许注释和尾随逗号。
+        // 与 PaperTodo 读取 data.json 的容错保持一致：允许注释和尾随逗号。
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
         // 保留中文原文，避免 \uXXXX 让导出文件难以阅读。

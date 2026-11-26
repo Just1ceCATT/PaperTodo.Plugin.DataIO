@@ -4,9 +4,9 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 宿主 API 的统一调用入口：
-/// 1) 集中判断权限；2) 所有宿主数据调用都切回 WPF UI 线程。
-/// 宿主 PaperBodyPluginHostApi 的多数方法不自行切换线程，后台线程直接调用会破坏宿主状态。
+/// PaperTodo API 的统一调用入口：
+/// 1) 集中判断权限；2) 所有 PaperTodo 数据调用都切回 WPF UI 线程。
+/// PaperTodo PaperBodyPluginHostApi 的多数方法不自行切换线程，后台线程直接调用会破坏 PaperTodo 状态。
 /// </summary>
 internal sealed class HostGateway
 {

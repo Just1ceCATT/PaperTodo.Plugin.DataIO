@@ -3,7 +3,7 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 构建预览快照：导出模式通过宿主只读读取，导入模式直接使用文件内容。
+/// 构建预览快照：导出模式通过 PaperTodo 只读读取，导入模式直接使用文件内容。
 /// 与会话解耦，避免会话类继续膨胀，也便于单独测试文本格式化。
 /// </summary>
 internal static class PreviewFactory

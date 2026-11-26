@@ -7,8 +7,8 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 贴边胶囊悬停时的迷你面板：只读展示最近的导入/导出记录。
-/// 宿主要求 CreateMiniView 返回独立的纯 WPF 控件树，因此这里不引用正文视图的任何元素。
-/// 面板不捕获键盘焦点，也不放交互控件；点击空白处仍由宿主打开完整纸片。
+/// PaperTodo 要求 CreateMiniView 返回独立的纯 WPF 控件树，因此这里不引用正文视图的任何元素。
+/// 面板不捕获键盘焦点，也不放交互控件；点击空白处仍由 PaperTodo 打开完整纸片。
 /// </summary>
 internal sealed class DataIoMiniView : Grid
 {
@@ -42,7 +42,7 @@ internal sealed class DataIoMiniView : Grid
         SnapsToDevicePixels = true;
         AutomationProperties.SetName(this, "DataIO 导入导出记录");
 
-        // 宿主会把迷你视图自身的 Margin 归零，内边距必须放在内部容器上。
+        // PaperTodo 会把迷你视图自身的 Margin 归零，内边距必须放在内部容器上。
         var content = new Grid { Margin = new Thickness(12, 9, 12, 9) };
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         content.RowDefinitions.Add(new RowDefinition());
@@ -102,7 +102,7 @@ internal sealed class DataIoMiniView : Grid
     }
 
     /// <summary>
-    /// 用最新历史与主题重建内容。宿主会缓存控件树，因此会话在记录变化、
+    /// 用最新历史与主题重建内容。 PaperTodo 会缓存控件树，因此会话在记录变化、
     /// 主题变化和面板重新可见时都会调用这里，而不是每次重新创建控件。
     /// </summary>
     public void Update(IReadOnlyList<DataIoHistoryEntry>? entries, PaperBodyTheme theme)

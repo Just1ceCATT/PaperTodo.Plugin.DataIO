@@ -2,7 +2,7 @@ using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
-/// <summary>通过宿主逻辑数据 API 采集快照并组装导出文档。</summary>
+/// <summary>通过 PaperTodo 逻辑数据 API 采集快照并组装导出文档。</summary>
 internal sealed class ExportService
 {
     /// <summary>
@@ -20,7 +20,7 @@ internal sealed class ExportService
     }
 
     /// <summary>
-    /// 在 UI 线程读取宿主数据并组装文档（不含图片本体）。
+    /// 在 UI 线程读取 PaperTodo 数据并组装文档（不含图片本体）。
     /// 调用方可以先用正文里的图片引用决定保存格式，再按需读取图片。
     /// </summary>
     public async Task<ExportDocument> CaptureDocumentAsync(
@@ -166,7 +166,7 @@ internal sealed class ExportService
         }
         catch (InvalidOperationException)
         {
-            // 旧宿主没有图片读取能力；正文照常导出。
+            // 旧 PaperTodo 没有图片读取能力；正文照常导出。
             return false;
         }
     }

@@ -13,9 +13,9 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 与宿主 PaperNoticeDialog 同款视觉的预览窗口：顶部元信息、可滚动正文、
+/// 与 PaperTodo PaperNoticeDialog 同款视觉的预览窗口：顶部元信息、可滚动正文、
 /// 底部上下条导航与“加入/移出导出（导入）”快捷操作。
-/// 正文按需异步加载，窗口本身不直接访问宿主 API。
+/// 正文按需异步加载，窗口本身不直接访问 PaperTodo API。
 /// </summary>
 internal partial class PaperPreviewWindow : Window
 {
@@ -87,7 +87,7 @@ internal partial class PaperPreviewWindow : Window
         _setSelected = setSelected;
 
         ApplyTheme(theme);
-        // 先按主屏工作区给一个初始值；ShowModal 拿到宿主后会按所在显示器重新计算。
+        // 先按主屏工作区给一个初始值；ShowModal 拿到 PaperTodo 后会按所在显示器重新计算。
         var work = SystemParameters.WorkArea;
         SizeToWorkArea(work.Width, work.Height);
 
@@ -189,7 +189,7 @@ internal partial class PaperPreviewWindow : Window
 
     private string? CurrentKey => _keys.Count == 0 ? null : _keys[_index];
 
-    /// <summary>按宿主风格居中显示；宿主窗口不可见时退化为屏幕居中。</summary>
+    /// <summary>按 PaperTodo 风格居中显示；PaperTodo 窗口不可见时退化为屏幕居中。</summary>
     public void ShowModal(Window? owner)
     {
         if (owner is { IsVisible: true })
@@ -198,7 +198,7 @@ internal partial class PaperPreviewWindow : Window
             Topmost = owner.Topmost;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-            // 预览跟随宿主所在显示器，避免副屏尺寸不同时超出工作区。
+            // 预览跟随 PaperTodo 所在显示器，避免副屏尺寸不同时超出工作区。
             if (TryGetOwnerWorkArea(owner) is { } area)
             {
                 SizeToWorkArea(area.Width, area.Height);
@@ -221,7 +221,7 @@ internal partial class PaperPreviewWindow : Window
             Math.Max(320, workHeight) * 0.85);
     }
 
-    /// <summary>读取宿主窗口所在显示器的工作区（DIP）。失败时返回 null，回退到主屏。</summary>
+    /// <summary>读取 PaperTodo 窗口所在显示器的工作区（DIP）。失败时返回 null，回退到主屏。</summary>
     private static (double Width, double Height)? TryGetOwnerWorkArea(Window owner)
     {
         try

@@ -212,7 +212,7 @@ public sealed class TextUtilitiesTests
     public void Image_reference_scanner_counts_host_style_references()
     {
         Assert.Equal(1, ImageReferenceScanner.Count("![图片](i:123456)"));
-        // 宿主只识别 3～8 位图片 ID；统计规则必须与采集/改写一致。
+        // PaperTodo 只识别 3～8 位图片 ID；统计规则必须与采集/改写一致。
         Assert.Equal(0, ImageReferenceScanner.Count("![a](i:1) ![b](i:123456789012)"));
         Assert.Equal(1, ImageReferenceScanner.Count("![a](i:12345678)"));
         Assert.Equal(0, ImageReferenceScanner.Count("![a](https://example.com/i:123)"));

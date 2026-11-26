@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 宿主绘制的插件设置。字段与 plugin.json 中的设置 id 一一对应，缺失时使用默认值。
+/// PaperTodo 绘制的插件设置。字段与 plugin.json 中的设置 id 一一对应，缺失时使用默认值。
 /// </summary>
 internal sealed class DataIoSettings
 {

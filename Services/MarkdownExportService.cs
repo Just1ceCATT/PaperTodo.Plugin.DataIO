@@ -3,7 +3,7 @@ using System.Text;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 把导出文档写成与宿主原生导出一致的 Markdown：
+/// 把导出文档写成与 PaperTodo 原生导出一致的 Markdown：
 /// 待办为 - [ ] / - [x] 列表，笔记保留原始 Markdown，多张纸片按标题分节。
 /// Markdown 不包含提醒、关联纸片、可见性等 PaperTodo 专有数据。
 /// </summary>
@@ -81,7 +81,7 @@ internal static class MarkdownExportService
 
     private static void AppendTodos(StringBuilder builder, ExportPaper paper)
     {
-        // 空白待办仍原样导出（与 JSON 一致）。宿主拒绝创建空文本待办，
+        // 空白待办仍原样导出（与 JSON 一致）。 PaperTodo 拒绝创建空文本待办，
         // 因此导入端会丢弃它们；这类占位条目无法在往返后保留。
         var todos = paper.Todos?
             .OrderBy(todo => todo.Order)
@@ -98,7 +98,7 @@ internal static class MarkdownExportService
             var todo = todos[index];
             builder.Append(todo.Done ? "- [x] " : "- [ ] ");
 
-            // 与宿主剪贴板/原生导出保持一致：多行待办用 4 个空格续行。
+            // 与 PaperTodo 剪贴板/原生导出保持一致：多行待办用 4 个空格续行。
             var lines = todo.Text
                 .Replace("\r\n", "\n", StringComparison.Ordinal)
                 .Replace('\r', '\n')
@@ -126,7 +126,7 @@ internal static class MarkdownExportService
         if (paper.ContentAvailable == false)
         {
             // 用独立标记表达“正文不可读取”，导入端据此保留 ContentAvailable=false，
-            // 不会把下面的占位文案当作真正的笔记正文写回宿主。
+            // 不会把下面的占位文案当作真正的笔记正文写回 PaperTodo。
             builder.Append("<!-- ").Append(MarkdownImportParser.ContentUnavailableMarker).AppendLine(" -->");
             builder.AppendLine("（正文不可读取，未导出）");
             return;
@@ -189,7 +189,7 @@ internal static class MarkdownExportService
         }
     }
 
-    /// <summary>按宿主原生导出规则转义会改变 Markdown 结构的字符。</summary>
+    /// <summary>按 PaperTodo 原生导出规则转义会改变 Markdown 结构的字符。</summary>
     private static void AppendEscapedLine(StringBuilder builder, string line)
     {
         var firstContent = 0;

@@ -6,7 +6,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 执行导入：第一遍逐纸片创建，第二遍还原顺序、待办关联纸片与提醒。
-/// 第一遍不把关联纸片和提醒放进初始待办，避免宿主校验失败导致整张纸片创建失败。
+/// 第一遍不把关联纸片和提醒放进初始待办，避免 PaperTodo 校验失败导致整张纸片创建失败。
 /// </summary>
 internal sealed class ImportService
 {
@@ -15,7 +15,7 @@ internal sealed class ImportService
     private readonly HostGateway _gateway;
     private readonly IProgress<string>? _progress;
 
-    /// <summary>折叠失败（如宿主未开启胶囊模式）后，本次导入不再对后续纸片重试折叠。</summary>
+    /// <summary>折叠失败（如 PaperTodo 未开启胶囊模式）后，本次导入不再对后续纸片重试折叠。</summary>
     private bool _capsuleCollapseUnavailable;
 
     public ImportService(HostGateway gateway, IProgress<string>? progress = null)
@@ -204,7 +204,7 @@ internal sealed class ImportService
                     }
                     catch (Exception ex) when (ex is not OutOfMemoryException)
                     {
-                        // 第一遍已经写入纸片；第二遍的宿主异常不能冲出 ImportAsync，
+                        // 第一遍已经写入纸片；第二遍的 PaperTodo 异常不能冲出 ImportAsync，
                         // 否则调用方拿不到 ImportResult，用户只看到“操作失败”却已有半写入数据。
                         result.Warnings.Add(
                             $"纸片“{DisplayTitle(paper)}”的顺序/关联/提醒还原失败：{ex.Message}");
@@ -216,7 +216,7 @@ internal sealed class ImportService
         }
         catch (OperationCanceledException)
         {
-            // 宿主没有事务回滚能力：已完成的部分已经写入，必须如实标记为“部分完成”，
+            // PaperTodo 没有事务回滚能力：已完成的部分已经写入，必须如实标记为“部分完成”，
             // 由调用方提示用户，而不是让取消看起来像什么都没发生。
             result.Cancelled = true;
         }
@@ -226,7 +226,7 @@ internal sealed class ImportService
 
     /// <summary>
     /// 更新身份映射命中的本地纸片：笔记整体替换，待办按文本做增删改。
-    /// 标题、类型等宿主不支持的字段保持不变，并在标题不一致时提示。
+    /// 标题、类型等 PaperTodo 不支持的字段保持不变，并在标题不一致时提示。
     /// 所有可预见的失败（权限、内容不可用、破坏性差异）都在写入前判定，避免部分生效。
     /// </summary>
     private async Task<(string Id, bool Created, bool ImagesHandled)> UpdateOneAsync(
@@ -350,7 +350,7 @@ internal sealed class ImportService
                 return (targetId, false, true);
             }
 
-            // 图片完全没能写回（权限变化、宿主不支持等）：只移除清单中确认无法写回的引用；
+            // 图片完全没能写回（权限变化、 PaperTodo 不支持等）：只移除清单中确认无法写回的引用；
             // 用户手写链接以及本机可能仍然有效的引用保持原样。
             (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "");
             if (removed > 0)
@@ -508,7 +508,7 @@ internal sealed class ImportService
 
     /// <summary>
     /// 判断当前正文是否只比基线多了本次追加的图片引用。
-    /// 宿主追加引用时可能补充换行，因此逐条从尾部剥离后按正文等价比较。
+    /// PaperTodo 追加引用时可能补充换行，因此逐条从尾部剥离后按正文等价比较。
     /// </summary>
     private static bool HasOnlyOurAppendedChanges(
         string? current,
@@ -744,7 +744,7 @@ internal sealed class ImportService
                 ex.Code == "invalid_params" &&
                 TitleSanitizer.TryParseTitleLimit(ex.Message, out var limit))
             {
-                // 宿主标题上限可按用户设置变化，从错误文案解析后截断重试。
+                // PaperTodo 标题上限可按用户设置变化，从错误文案解析后截断重试。
                 var normalized = TitleSanitizer.Normalize(request.Title);
                 var truncated = TitleSanitizer.TruncateByDisplayWidth(
                     normalized,
@@ -765,7 +765,7 @@ internal sealed class ImportService
 
     /// <summary>
     /// 把刚创建的纸片折叠成胶囊，再按需显示，避免它直接展开在桌面上。
-    /// 宿主未开启胶囊模式时无法折叠，退回普通显示，并让后续纸片不再重试。
+    /// PaperTodo 未开启胶囊模式时无法折叠，退回普通显示，并让后续纸片不再重试。
     /// </summary>
     private async Task ApplyCreatedCapsuleAsync(
         IPaperWorkspacePresentationApi presentation,
@@ -873,14 +873,14 @@ internal sealed class ImportService
         catch (InvalidOperationException)
         {
             result.SkippedImages += images.Count;
-            result.Warnings.Add("当前宿主不支持插件写入笔记图片，压缩包中的图片未写回。");
+            result.Warnings.Add("当前 PaperTodo 不支持插件写入笔记图片，压缩包中的图片未写回。");
             return false;
         }
 
         var canReadImages = _gateway.Can(PaperTodoPermissionNames.NotesRead);
 
         // 更新时按本地正文里的图片逐张比对字节，复用内容一致的本机图片。
-        // 不能用来源图片 ID 直接读取：首次导入时宿主会分配新的图片 ID，
+        // 不能用来源图片 ID 直接读取：首次导入时 PaperTodo 会分配新的图片 ID，
         // 来源 ID 在本机通常不存在，按 ID 复用永远失败并导致每次导入都追加副本。
         var reusableLocalImages = canReadImages && expectedLocalContent is not null
             ? await ReadLocalImageBytesAsync(paperId, expectedLocalContent)
@@ -935,7 +935,7 @@ internal sealed class ImportService
                 }
                 catch (PaperTodoPluginException ex) when (ex.Code == "image_reference_not_renderable")
                 {
-                    // 宿主拒绝在未闭合代码块后追加图片；沿用宿主文案，继续保留正文文本。
+                    // PaperTodo 拒绝在未闭合代码块后追加图片；沿用 PaperTodo 文案，继续保留正文文本。
                     failed += images.Count - index;
                     firstFailure ??= ex.Message;
                     break;
@@ -1115,8 +1115,8 @@ internal sealed class ImportService
         if (skipped > 0)
         {
             result.Warnings.Add(abortOnUpdate
-                ? $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按宿主规则压缩到可写回的大小，已移除对应引用并更新其余正文。"
-                : $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按宿主规则压缩到可写回的大小，仅保留在压缩包中。");
+                ? $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按 PaperTodo 规则压缩到可写回的大小，已移除对应引用并更新其余正文。"
+                : $"纸片“{DisplayTitle(importPaper)}”有 {skipped} 张图片无法按 PaperTodo 规则压缩到可写回的大小，仅保留在压缩包中。");
         }
 
         return true;
@@ -1174,7 +1174,7 @@ internal sealed class ImportService
 
                 if (!image.Restorable)
                 {
-                    return "有图片无法按宿主规则压缩到可写回的大小";
+                    return "有图片无法按 PaperTodo 规则压缩到可写回的大小";
                 }
             }
 
@@ -1410,7 +1410,7 @@ internal sealed class ImportService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        // 按 (文本, 完成状态) 建立队列，避免宿主自动清除/置底后按索引错配。
+        // 按 (文本, 完成状态) 建立队列，避免 PaperTodo 自动清除/置底后按索引错配。
         var queues = actual
             .Where(a => !string.IsNullOrWhiteSpace(a.Text))
             .GroupBy(a => (a.Text, a.Done))

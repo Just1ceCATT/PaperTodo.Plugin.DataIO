@@ -8,7 +8,7 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 读取并校验导入文件。整个过程只处理内存数据，不接触宿主 API，可安全地在后台线程运行。
+/// 读取并校验导入文件。整个过程只处理内存数据，不接触 PaperTodo API，可安全地在后台线程运行。
 /// </summary>
 internal static class ImportPlanParser
 {
@@ -28,8 +28,8 @@ internal static class ImportPlanParser
     /// <summary>压缩包图片数量上限；导出端也必须按同一上限截断，否则产物无法导入。</summary>
     internal const int MaxPackageImages = 2_000;
     /// <summary>
-    /// 压缩包单张图片读取上限：与宿主输入上限一致（32 MiB）。
-    /// 超过 8 MiB 的图片会在解析时按宿主规则压缩后再写回。
+    /// 压缩包单张图片读取上限：与 PaperTodo 输入上限一致（32 MiB）。
+    /// 超过 8 MiB 的图片会在解析时按 PaperTodo 规则压缩后再写回。
     /// </summary>
     private const long MaxImageEntryBytes = 32L * 1024 * 1024;
 
@@ -39,7 +39,7 @@ internal static class ImportPlanParser
     /// <summary>
     /// 解压总预算：按实际读出的字节累计，而不是信任 zip 中央目录声明的长度。
     /// 恶意压缩包可以把每个条目的声明长度写成 1 字节、实际解出 16 MiB，
-    /// 只校验声明值会让宿主在预览阶段就被几十 GiB 内存拖垮。
+    /// 只校验声明值会让 PaperTodo 在预览阶段就被几十 GiB 内存拖垮。
     /// </summary>
     private sealed class EntryReadBudget
     {
@@ -765,7 +765,7 @@ internal static class ImportPlanParser
                 var storedMime = image.Mime;
                 bool restorable;
 
-                // 宿主对超过 8 MiB 或最长边超过 2048 的图片会自动重编码。
+                // PaperTodo 对超过 8 MiB 或最长边超过 2048 的图片会自动重编码。
                 // 插件必须先按同一规则处理：写回后的存储字节才是确定的，
                 // 再次导入时才能按字节复用图片，而不是每次追加一份新副本。
                 if (ImageCompressionService.TryPrepareForHost(
@@ -832,14 +832,14 @@ internal static class ImportPlanParser
         if (plan.CompressedImageCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.CompressedImageCount} 张超过宿主自动压缩阈值（8 MiB 或最长边 2048 像素）的图片" +
-                "已按宿主规则压缩，导入时写回压缩后的版本；原始图片仍保留在压缩包中。");
+                $"{plan.CompressedImageCount} 张超过 PaperTodo 自动压缩阈值（8 MiB 或最长边 2048 像素）的图片" +
+                "已按 PaperTodo 规则压缩，导入时写回压缩后的版本；原始图片仍保留在压缩包中。");
         }
 
         if (plan.UnrestorableImageCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.UnrestorableImageCount} 张图片无法按宿主规则压缩到可写回的大小" +
+                $"{plan.UnrestorableImageCount} 张图片无法按 PaperTodo 规则压缩到可写回的大小" +
                 "（例如需要压缩的 GIF/TIFF、尺寸超过 4096 像素、压缩后仍超限或解码失败），" +
                 "只保留在压缩包中，导入时不会写回笔记。");
         }
@@ -966,7 +966,7 @@ internal static class ImportPlanParser
         JsonDocument document;
         try
         {
-            // 与宿主读取 data.json 的容错保持一致：允许注释和尾随逗号。
+            // 与 PaperTodo 读取 data.json 的容错保持一致：允许注释和尾随逗号。
             document = JsonDocument.Parse(json, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
@@ -1262,7 +1262,7 @@ internal static class ImportPlanParser
         // 不向用户暴露底层解析器的英文错误；直接说明可能原因与处理方式。
         FatalError =
             "无法读取该文件：内容不是有效的 JSON。\n"
-            + "请选择由本插件导出的 .json、PaperTodo 主数据文件 data.json；" +
+            + "请选择由本插件导出的 .json、 PaperTodo 主数据文件 data.json；" +
             "如果是 Markdown 笔记，请确认文件扩展名为 .md 后重新导入。"
     };
 
@@ -1270,7 +1270,7 @@ internal static class ImportPlanParser
     {
         FatalError =
             "该文件不是可导入的数据文件。\n"
-            + "请选择由本插件导出的 JSON、PaperTodo 主数据文件 data.json，或 Markdown 文件。"
+            + "请选择由本插件导出的 JSON、 PaperTodo 主数据文件 data.json，或 Markdown 文件。"
     };
 
     /// <summary>校验内存中的导出文档并生成导入计划（JSON 与 Markdown 共用）。</summary>

@@ -4,15 +4,15 @@ using System.Text.RegularExpressions;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 与宿主 PaperTitles 保持一致的标题处理：去控制字符，按“显示宽度”截断。
-/// 宿主以全角字符为单位限制标题，CJK/全角算 2，拉丁/半角算 1。
+/// 与 PaperTodo PaperTitles 保持一致的标题处理：去控制字符，按“显示宽度”截断。
+/// PaperTodo 以全角字符为单位限制标题，CJK/全角算 2，拉丁/半角算 1。
 /// </summary>
 internal static class TitleSanitizer
 {
-    /// <summary>宿主标题上限的最大可配置值（全角字符数）。</summary>
+    /// <summary>PaperTodo 标题上限的最大可配置值（全角字符数）。</summary>
     public const int MaxConfiguredTitleLength = 20;
 
-    /// <summary>导出/导入时先按宿主最大上限预截断，避免明显超长。</summary>
+    /// <summary>导出/导入时先按 PaperTodo 最大上限预截断，避免明显超长。</summary>
     public const int PreTruncateDisplayWidth = MaxConfiguredTitleLength * 2;
 
     private static readonly Regex TitleLimitPattern = new(
@@ -64,7 +64,7 @@ internal static class TitleSanitizer
         return text;
     }
 
-    /// <summary>从宿主的 invalid_params 文案中解析实际标题上限，用于超长后重试。</summary>
+    /// <summary>从 PaperTodo 的 invalid_params 文案中解析实际标题上限，用于超长后重试。</summary>
     public static bool TryParseTitleLimit(string? message, out int limit)
     {
         limit = 0;

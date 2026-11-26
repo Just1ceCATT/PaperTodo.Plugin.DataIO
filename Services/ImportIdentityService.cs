@@ -321,7 +321,7 @@ internal sealed class ImportIdentityService
     }
 
     /// <summary>
-    /// 宿主删除纸片后清理对应映射。若删除的是当前目标，则回退到最近一个仍存在的历史副本，
+    /// PaperTodo 删除纸片后清理对应映射。若删除的是当前目标，则回退到最近一个仍存在的历史副本，
     /// 这样“选择新增后删除新副本，再导入同一文件”仍能匹配到原副本并显示差异。
     /// </summary>
     public void RemoveByLocalPaperId(string paperId)
@@ -397,7 +397,7 @@ internal sealed class ImportIdentityService
 
     /// <summary>
     /// 用当前纸片列表对账映射：目标或历史副本已被删除时回退或清理。
-    /// 宿主只在工具纸片可见时投递变更事件，纸片隐藏期间的删除可能从未送达，
+    /// PaperTodo 只在工具纸片可见时投递变更事件，纸片隐藏期间的删除可能从未送达，
     /// 因此每次刷新列表时主动校验一次，而不是完全依赖删除事件。
     /// 类型与正文 provider 的校验仍留给导入时的 <see cref="ResolveAsync"/>，那里能给出明确提示。
     /// </summary>

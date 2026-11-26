@@ -1,6 +1,6 @@
 namespace PaperTodo.Plugin.DataIo;
 
-/// <summary>解析并校验后的导入计划，所有数据都在内存中，不引用宿主对象。</summary>
+/// <summary>解析并校验后的导入计划，所有数据都在内存中，不引用 PaperTodo 对象。</summary>
 internal sealed class ImportPlan
 {
     public List<ImportPaper> Papers { get; } = [];
@@ -31,7 +31,7 @@ internal sealed class ImportPlan
     /// <summary>超过插件追加上限、且无法压缩到 8 MiB 以内，只能保留在压缩包中的图片数量。</summary>
     public int UnrestorableImageCount { get; set; }
 
-    /// <summary>超过 8 MiB、已按宿主规则压缩后写回的图片数量。</summary>
+    /// <summary>超过 8 MiB、已按 PaperTodo 规则压缩后写回的图片数量。</summary>
     public int CompressedImageCount { get; set; }
 
     /// <summary>超过 8 MiB 且无法安全压缩的图片数量（GIF/TIFF、解码失败等）。</summary>
@@ -112,7 +112,7 @@ internal sealed class ImportPaper
 {
     public required ExportPaper Source { get; init; }
 
-    /// <summary>已清洗并预截断的标题；null 表示交给宿主生成默认标题。</summary>
+    /// <summary>已清洗并预截断的标题；null 表示交给 PaperTodo 生成默认标题。</summary>
     public string? SafeTitle { get; init; }
 
     /// <summary>命中身份映射时的本地更新目标；null 表示新建。</summary>

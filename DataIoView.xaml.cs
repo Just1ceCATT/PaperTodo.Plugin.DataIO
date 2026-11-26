@@ -14,7 +14,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 工具纸片主体界面：导出/导入双模式、点击内容类型就地展开并多选。
-/// 只负责展示和收集用户输入，不直接调用宿主写 API。
+/// 只负责展示和收集用户输入，不直接调用 PaperTodo 写 API。
 /// </summary>
 public partial class DataIoView : UserControl
 {
@@ -58,8 +58,8 @@ public partial class DataIoView : UserControl
     public DataIoExportFormat ExportFormat { get; private set; } = DataIoExportFormat.Json;
 
     /// <summary>
-    /// 由会话注入的按需读取器：导出模式经宿主 API 读取，导入模式读取文件内容。
-    /// 视图不直接访问宿主数据，预览与悬停卡片都只消费这个委托。
+    /// 由会话注入的按需读取器：导出模式经 PaperTodo API 读取，导入模式读取文件内容。
+    /// 视图不直接访问 PaperTodo 数据，预览与悬停卡片都只消费这个委托。
     /// </summary>
     internal Func<string, Task<PreviewContent?>>? PreviewLoader { get; set; }
 
@@ -421,7 +421,7 @@ public partial class DataIoView : UserControl
     // ---------- 最近操作 ----------
 
     /// <summary>
-    /// 刷新历史记录页。记录由会话从插件状态读取后注入，视图不直接访问宿主或文件；
+    /// 刷新历史记录页。记录由会话从插件状态读取后注入，视图不直接访问 PaperTodo 或文件；
     /// 列表最多 20 条，全部显示，不再做折叠。
     /// </summary>
     internal void SetRecentOperations(IReadOnlyList<DataIoHistoryEntry>? entries)
@@ -891,7 +891,7 @@ public partial class DataIoView : UserControl
         _hostWindow = window;
         if (_hostWindow is not null)
         {
-            // 宿主纸片失去焦点时收起悬停卡片，避免卡片残留到其他窗口上方。
+            // PaperTodo 纸片失去焦点时收起悬停卡片，避免卡片残留到其他窗口上方。
             _hostWindow.Deactivated += OnHostWindowDeactivated;
         }
     }
@@ -1211,7 +1211,7 @@ public partial class DataIoView : UserControl
         Resources["DataIoDividerMargin"] = new Thickness(0, compact ? 12 : 18, 0, 4);
         Resources["DataIoPrimaryHeight"] = compact ? 40.0 : 46.0;
 
-        // 勾选框尺寸跟随宿主整体 UI 缩放（AppTypography.Scale），与原生待办勾选框一致。
+        // 勾选框尺寸跟随 PaperTodo 整体 UI 缩放（AppTypography.Scale），与原生待办勾选框一致。
         Resources["DataIoCheckSize"] = 16.0 * themeScale;
         Resources["DataIoCheckBorderThickness"] = new Thickness(1.5 * themeScale);
         Resources["DataIoCheckCornerRadius"] = new CornerRadius(4 * themeScale);
@@ -1256,7 +1256,7 @@ public partial class DataIoView : UserControl
         "Microsoft YaHei UI",
         1.0);
 
-    /// <summary>宿主 PaperNoticeDialog 使用的 Tint 颜色（从窗口资源 HoverBrushKey 提取）。</summary>
+    /// <summary>PaperTodo PaperNoticeDialog 使用的 Tint 颜色（从窗口资源 HoverBrushKey 提取）。</summary>
     private Color ResolveTintColor()
     {
         if (TryFindResource("HoverBrushKey") is SolidColorBrush hover)

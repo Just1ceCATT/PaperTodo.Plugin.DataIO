@@ -154,7 +154,7 @@ public sealed class ImportPackageTests
             Assert.Equal(1, plan.UnrestorableImageCount);
             var paper = Assert.Single(plan.Papers);
             Assert.False(Assert.Single(paper.Images).Restorable);
-            Assert.Contains(plan.Warnings, warning => warning.Contains("无法按宿主规则压缩"));
+            Assert.Contains(plan.Warnings, warning => warning.Contains("无法按 PaperTodo 规则压缩"));
         });
     }
 

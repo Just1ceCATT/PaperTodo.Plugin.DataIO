@@ -320,7 +320,7 @@ public sealed class MarkdownRoundTripTests
     [Fact]
     public void Blank_todo_text_is_written_to_markdown()
     {
-        // 宿主不允许追加空文本待办，导入端会跳过它；但导出文件应保留该条目，
+        // PaperTodo 不允许追加空文本待办，导入端会跳过它；但导出文件应保留该条目，
         // 让其它 Markdown 工具看到完整内容，而不是在导出时直接丢失。
         var document = new ExportDocument
         {

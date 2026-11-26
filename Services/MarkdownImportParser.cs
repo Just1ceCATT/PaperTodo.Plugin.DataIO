@@ -289,7 +289,7 @@ internal static partial class MarkdownImportParser
                 continue;
             }
 
-            // 续行缩进 4 个空格（或 1 个 Tab），与宿主原生导出保持一致。
+            // 续行缩进 4 个空格（或 1 个 Tab），与 PaperTodo 原生导出保持一致。
             if (current != null && IsContinuation(line))
             {
                 current.Text += "\n" + Unescape(line[line[0] == '\t' ? 1.. : 4..]);

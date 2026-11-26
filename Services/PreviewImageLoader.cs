@@ -3,7 +3,7 @@ using PaperTodo.Plugin;
 namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
-/// 为预览窗口准备正文图片：导出模式只读访问宿主图片库，导入模式复用压缩包内已读入内存的图片。
+/// 为预览窗口准备正文图片：导出模式只读访问 PaperTodo 图片库，导入模式复用压缩包内已读入内存的图片。
 /// 预览只是辅助功能，任何单张图片读取失败都不应影响正文显示。
 /// </summary>
 internal static class PreviewImageLoader
@@ -14,7 +14,7 @@ internal static class PreviewImageLoader
     /// <summary>导出预览额外复制的图片总字节上限；导入包内的图片与导入计划共享引用，不计入此限。</summary>
     internal const long MaxExportBytes = 32L * 1024 * 1024;
 
-    /// <summary>导出预览：按正文出现顺序读取宿主图片库，键统一为 i:图片ID。</summary>
+    /// <summary>导出预览：按正文出现顺序读取 PaperTodo 图片库，键统一为 i:图片ID。</summary>
     public static async Task<IReadOnlyDictionary<string, PreviewImage>> LoadExportAsync(
         HostGateway gateway,
         string paperId,
@@ -29,7 +29,7 @@ internal static class PreviewImageLoader
             return images;
         }
 
-        // 旧宿主没有图片读取能力时直接跳过，正文照常预览。
+        // 旧 PaperTodo 没有图片读取能力时直接跳过，正文照常预览。
         var supported = await gateway.OnUiAsync(() =>
         {
             try

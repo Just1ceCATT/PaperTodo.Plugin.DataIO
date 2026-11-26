@@ -7,7 +7,7 @@ using Xunit;
 
 namespace PaperTodo.Plugin.DataIo.Tests;
 
-/// <summary>超过 8 MiB 的图片按宿主规则压缩后写回。</summary>
+/// <summary>超过 8 MiB 的图片按 PaperTodo 规则压缩后写回。</summary>
 public sealed class ImageCompressionTests
 {
     [Fact]
@@ -164,7 +164,7 @@ public sealed class ImageCompressionTests
     {
         RunSta(() => WithTempDirectory(directory =>
         {
-            // 复现“重复导入图片膨胀”的根因：图片小于 8 MiB，但宿主会因最长边超过 2048
+            // 复现“重复导入图片膨胀”的根因：图片小于 8 MiB，但 PaperTodo 会因最长边超过 2048
             // 自动重编码。插件必须同样处理，写回的字节才是确定的。
             var source = CreateNoisePng(2600, 120, PixelFormats.Bgr24);
             Assert.True(source.Length < ImageCompressionService.MaxImageBytes);
@@ -215,7 +215,7 @@ public sealed class ImageCompressionTests
     {
         RunSta(() =>
         {
-            // 小于 8 MiB、但最长边超过 2048：宿主会自动重编码，插件必须给出确定的结果，
+            // 小于 8 MiB、但最长边超过 2048：PaperTodo 会自动重编码，插件必须给出确定的结果，
             // 否则再次导入时字节对不上，无法复用图片。
             var source = CreateNoisePng(2600, 120, PixelFormats.Bgr24);
             Assert.True(source.Length < ImageCompressionService.MaxImageBytes);

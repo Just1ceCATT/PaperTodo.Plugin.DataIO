@@ -8,10 +8,10 @@ public sealed class PaperRowItem : INotifyPropertyChanged
 {
     private bool _isSelected;
 
-    /// <summary>稳定标识：导出时为宿主纸片 ID，导入时为计划内序号。</summary>
+    /// <summary>稳定标识：导出时为 PaperTodo 纸片 ID，导入时为计划内序号。</summary>
     public required string Key { get; init; }
     public required string Title { get; init; }
-    /// <summary>宿主类型：todo 或 note。</summary>
+    /// <summary>PaperTodo 类型：todo 或 note。</summary>
     public required string Type { get; init; }
     public required string TypeLabel { get; init; }
     public string Summary { get; init; } = "";

@@ -1,25 +1,25 @@
 ﻿param(
-    # 宿主仓库根目录，构建脚本会安装到 <PaperTodoRoot>\plugins\<插件 id>\
+    # PaperTodo 仓库根目录，构建脚本会安装到 <PaperTodoRoot>\plugins\<插件 id>\
     [string]$PaperTodoRoot = "Z:\tool\PaperTodo-dev",
 
-    # 可选：宿主若从发布目录运行，把产物同步到该目录的 plugins 根。
+    # 可选：PaperTodo 若从发布目录运行，把产物同步到该目录的 plugins 根。
     # 例如 "Z:\tool\PaperTodo-dev\输出\PaperTodo-v4.0.0-beta2\plugins"
     [string]$AdditionalPluginsRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-# 复用宿主提供的共享构建/安装脚本，保证产物清理和部署规则与官方一致。
+# 复用 PaperTodo 提供的共享构建/安装脚本，保证产物清理和部署规则与官方一致。
 $sharedScript = Join-Path $PaperTodoRoot "plugin-samples\Build-And-Install-NativePlugin.ps1"
 if (-not (Test-Path -LiteralPath $sharedScript -PathType Leaf)) {
-    throw "未找到宿主构建脚本：$sharedScript"
+    throw "未找到 PaperTodo 构建脚本：$sharedScript"
 }
 
 $projectPath = Join-Path $PSScriptRoot "..\PaperTodo.Plugin.DATAIO.csproj"
 
 & $sharedScript -ProjectPath $projectPath -PaperTodoRoot $PaperTodoRoot
 
-# 宿主运行时从自身目录的 plugins/ 加载插件；发布目录不会自动同步仓库 plugins/。
+# PaperTodo 运行时从自身目录的 plugins/ 加载插件；发布目录不会自动同步仓库 plugins/。
 if (-not [string]::IsNullOrWhiteSpace($AdditionalPluginsRoot)) {
     $manifestPath = Join-Path $PSScriptRoot "..\plugin.json"
     $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json

@@ -8,11 +8,11 @@ namespace PaperTodo.Plugin.DataIo;
 /// <summary>压缩后的图片字节与格式。</summary>
 internal sealed record CompressedImage(byte[] Bytes, string Mime, int Width, int Height);
 
-/// <summary>按宿主规则预处理后的图片；Compressed 表示是否发生了重编码。</summary>
+/// <summary>按 PaperTodo 规则预处理后的图片；Compressed 表示是否发生了重编码。</summary>
 internal sealed record PreparedHostImage(byte[] Bytes, string Mime, int Width, int Height, bool Compressed);
 
 /// <summary>
-/// 与宿主 NoteImageStore 一致的自动压缩规则：
+/// 与 PaperTodo NoteImageStore 一致的自动压缩规则：
 /// 超过 8 MiB 时把最长边缩到 2048，JPEG 保持 JPEG 质量 82；
 /// 其他格式先编码 PNG，PNG 仍超限且没有透明通道时改用 JPEG（取更小者）。
 /// GIF/TIFF 会丢失动画或额外帧，因此不做压缩。
@@ -28,17 +28,17 @@ internal static class ImageCompressionService
     public static bool RequiresCompression(int byteLength) => byteLength > MaxImageBytes;
 
     /// <summary>
-    /// 宿主实际会触发自动压缩的条件：超过 8 MiB，或任一方向超过 2048 像素。
-    /// 插件必须按同一条件预处理图片，否则宿主的重编码会让本地存储字节与文件中的
+    /// PaperTodo 实际会触发自动压缩的条件：超过 8 MiB，或任一方向超过 2048 像素。
+    /// 插件必须按同一条件预处理图片，否则 PaperTodo 的重编码会让本地存储字节与文件中的
     /// 原始字节不一致，导致重复导入时无法复用图片、并误判“图片有变化”。
     /// </summary>
     public static bool RequiresHostCompression(int byteLength, int width, int height) =>
         byteLength > MaxImageBytes || width > AutoCompressedDimension || height > AutoCompressedDimension;
 
     /// <summary>
-    /// 预测并生成宿主保存的图片字节：宿主会重编码的图片由插件先按同样规则处理，
+    /// 预测并生成 PaperTodo 保存的图片字节：PaperTodo 会重编码的图片由插件先按同样规则处理，
     /// 这样写回后的存储字节就是确定的，再次导入时可按字节复用。
-    /// 返回 false 表示宿主会拒绝这张图片（尺寸超过 4096、GIF/TIFF 需压缩、压缩失败等）。
+    /// 返回 false 表示 PaperTodo 会拒绝这张图片（尺寸超过 4096、GIF/TIFF 需压缩、压缩失败等）。
     /// </summary>
     public static bool TryPrepareForHost(
         byte[] source,
@@ -51,7 +51,7 @@ internal static class ImageCompressionService
 
         if (!TryReadDimensions(source, out var width, out var height))
         {
-            // 无法读取尺寸时无法预测宿主行为，按原字节透传，由宿主在写入时决定；
+            // 无法读取尺寸时无法预测 PaperTodo 行为，按原字节透传，由 PaperTodo 在写入时决定；
             // 不能因为读不出尺寸就在插件层提前拒绝图片。
             result = new PreparedHostImage(source, NormalizeMime(mime), 0, 0, false);
             return true;
@@ -165,7 +165,7 @@ internal static class ImageCompressionService
         return TryCompressCore(source, mime, out result, out failureReason);
     }
 
-    /// <summary>核心压缩逻辑，不预设“超过 8 MiB”门槛（宿主按尺寸触发时也会用到）。</summary>
+    /// <summary>核心压缩逻辑，不预设“超过 8 MiB”门槛（PaperTodo 按尺寸触发时也会用到）。</summary>
     private static bool TryCompressCore(
         byte[] source,
         string? mime,
@@ -365,7 +365,7 @@ internal static class ImageCompressionService
 
     /// <summary>
     /// 只按文件头判断是否为常见图片格式。图片清单来自外部文件，
-    /// 仅校验大小与清单自报字段会让任意载荷以“图片”身份进入宿主图片库。
+    /// 仅校验大小与清单自报字段会让任意载荷以“图片”身份进入 PaperTodo 图片库。
     /// </summary>
     public static bool HasRecognizedImageSignature(ReadOnlySpan<byte> bytes)
     {

@@ -358,7 +358,7 @@
       </Setter>
     </Style>
 
-    <!-- 与宿主原生待办勾选框一致：直接复用 PaperWindow 的主题资源键 -->
+    <!-- 与 PaperTodo 原生待办勾选框一致：直接复用 PaperWindow 的主题资源键 -->
     <Style TargetType="CheckBox">
       <Setter Property="Foreground" Value="{DynamicResource DataIoTextBrush}" />
       <Setter Property="Cursor" Value="Hand" />
@@ -383,7 +383,7 @@
                       Background="Transparent"
                       VerticalAlignment="Center"
                       SnapsToDevicePixels="True">
-                <!-- 与宿主原生一致：不固定宽高，按几何自然尺寸居中，再整体缩放 -->
+                <!-- 与 PaperTodo 原生一致：不固定宽高，按几何自然尺寸居中，再整体缩放 -->
                 <Path x:Name="CheckMark"
                       Data="M 3,7.5 L 6.5,11 L 13,4"
                       Stroke="{DynamicResource PaperBrushKey}"

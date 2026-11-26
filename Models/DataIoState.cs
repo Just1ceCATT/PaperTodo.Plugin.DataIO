@@ -5,7 +5,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 每个工具纸片的私有状态，只保存轻量 UI 偏好，不保存勾选状态或任何文件内容。
-/// 由宿主通过 PaperBodyContext.StateJson / SaveStateJson 托管持久化。
+/// 由 PaperTodo 通过 PaperBodyContext.StateJson / SaveStateJson 托管持久化。
 /// </summary>
 internal sealed class DataIoState
 {
@@ -78,7 +78,7 @@ internal sealed class DataIoState
         }
     }
 
-    /// <summary>宿主在 stateVersion 升级时调用；当前只有 v1，主要做字段归一化。</summary>
+    /// <summary>PaperTodo 在 stateVersion 升级时调用；当前只有 v1，主要做字段归一化。</summary>
     public static string Migrate(string? stateJson, int fromVersion)
     {
         var state = Parse(stateJson, out var recovered);

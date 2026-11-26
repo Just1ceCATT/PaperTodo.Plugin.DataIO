@@ -2,7 +2,7 @@ namespace PaperTodo.Plugin.DataIo;
 
 /// <summary>
 /// 导入前的确认文案与“无法完整还原”汇总。
-/// 纯函数，不依赖宿主状态，便于单独测试与复用。
+/// 纯函数，不依赖 PaperTodo 状态，便于单独测试与复用。
 /// </summary>
 internal static class ImportSummaryBuilder
 {
@@ -73,7 +73,7 @@ internal static class ImportSummaryBuilder
             if (unrestorableImages > 0)
             {
                 problems.Add(
-                    $"{unrestorableImages} 张图片无法按宿主规则压缩到可写回的大小，仅保留在压缩包中，不会写回笔记");
+                    $"{unrestorableImages} 张图片无法按 PaperTodo 规则压缩到可写回的大小，仅保留在压缩包中，不会写回笔记");
             }
 
             if (unresolvedReferences > 0)
