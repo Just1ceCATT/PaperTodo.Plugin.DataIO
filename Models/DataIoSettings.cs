@@ -23,8 +23,12 @@ internal sealed class DataIoSettings
     /// <summary>待办纸片“更新”时是否删除文件中不存在的本地待办。默认关闭以保护本地数据。</summary>
     public bool DeleteMissingTodos { get; init; }
 
-    public static DataIoSettings Parse(string? json)
+    public static DataIoSettings Parse(string? json) => Parse(json, out _);
+
+    /// <summary>解析设置；corrupted 为 true 表示 JSON 无效、已回退默认值。</summary>
+    public static DataIoSettings Parse(string? json, out bool corrupted)
     {
+        corrupted = false;
         if (string.IsNullOrWhiteSpace(json))
         {
             return new DataIoSettings();
@@ -36,6 +40,7 @@ internal sealed class DataIoSettings
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
+                corrupted = true;
                 return new DataIoSettings();
             }
 
@@ -55,6 +60,7 @@ internal sealed class DataIoSettings
         }
         catch (JsonException)
         {
+            corrupted = true;
             return new DataIoSettings();
         }
     }

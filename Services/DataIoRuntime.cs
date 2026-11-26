@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Windows;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -14,6 +15,7 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
     private readonly object _gate = new();
     private readonly RuntimeWorkspaceState _state;
     private readonly IDisposable _subscription;
+    private volatile bool _disposed;
 
     public DataIoRuntime(PaperPluginRuntimeContext context)
     {
@@ -57,45 +59,67 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
 
         // 宿主以折叠/胶囊状态恢复工具纸片时会延迟构建正文外壳，展开后可能只留下空白窗口。
         // Runtime 比 Body 更早稳定，启动后主动请求一次“展开”，强制宿主走正常的正文构建路径。
-        _ = Task.Run(() => NormalizeStartupPresentationAsync(context));
+        _ = Task.Run(() => NormalizeStartupPresentationAsync());
     }
 
-    private static async Task NormalizeStartupPresentationAsync(PaperPluginRuntimeContext context)
+    private async Task NormalizeStartupPresentationAsync()
     {
         try
         {
             // 等宿主完成启动纸片恢复与首帧展示。
             await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-            if (context.Workspace is not IPaperWorkspacePresentationApi presentation)
+            if (_disposed)
             {
                 return;
             }
 
-            foreach (var paper in context.Workspace.ListPapers())
+            // 宿主 API 不自行切线程，必须在 UI 线程调用；
+            // Runtime 没有 Body 上下文里的 Dispatcher，使用应用主 Dispatcher。
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher is null)
             {
-                if (!paper.IsVisible ||
-                    !string.Equals(paper.Type, "note", StringComparison.Ordinal) ||
-                    !string.Equals(
-                        paper.BodyProviderId,
-                        context.ProviderId,
-                        StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    presentation.ExpandPaper(paper.Id, activate: false);
-                }
-                catch (PaperTodoPluginException)
-                {
-                    // 单个纸片不可展示时继续处理其它纸片。
-                }
+                return;
             }
+
+            await dispatcher.InvokeAsync(NormalizeStartupPresentation);
         }
         catch (Exception)
         {
             // 启动补建只是兜底；宿主关闭或权限变化时静默放弃。
+        }
+    }
+
+    private void NormalizeStartupPresentation()
+    {
+        if (_disposed || _context.Workspace is not IPaperWorkspacePresentationApi presentation)
+        {
+            return;
+        }
+
+        foreach (var paper in _context.Workspace.ListPapers())
+        {
+            if (_disposed ||
+                !paper.IsVisible ||
+                // 用户主动折叠成胶囊的纸片不展开：启动补建只修复“本应展开”的空白外壳，
+                // 不能覆盖宿主持久化的折叠状态。
+                paper.IsCollapsed ||
+                !string.Equals(paper.Type, "note", StringComparison.Ordinal) ||
+                !string.Equals(
+                    paper.BodyProviderId,
+                    _context.ProviderId,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                presentation.ExpandPaper(paper.Id, activate: false);
+            }
+            catch (PaperTodoPluginException)
+            {
+                // 单个纸片不可展示时继续处理其它纸片。
+            }
         }
     }
 
@@ -187,5 +211,9 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
     private void SaveLocked() =>
         _context.State.Save(RuntimeLinkProtocol.SerializeState(_state));
 
-    public void Dispose() => _subscription.Dispose();
+    public void Dispose()
+    {
+        _disposed = true;
+        _subscription.Dispose();
+    }
 }

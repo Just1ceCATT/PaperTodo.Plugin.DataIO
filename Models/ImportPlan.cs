@@ -57,6 +57,45 @@ internal sealed class ImportPlan
     public string? FatalError { get; set; }
 
     public bool IsUsable => FatalError is null && Papers.Count > 0;
+
+    /// <summary>
+    /// 按用户勾选范围生成新的导入计划。文件格式能力标志（提醒/关联纸片）和
+    /// 统计字段必须一并复制：这些字段决定更新时能否清除本地数据，
+    /// 遗漏会把 Markdown 的“不携带”误判为“文件中没有，应删除本地项”。
+    /// </summary>
+    public ImportPlan WithPapers(IReadOnlyCollection<ImportPaper> papers)
+    {
+        var filtered = new ImportPlan
+        {
+            TodoCount = papers.Sum(paper => paper.Source.Todos?.Count ?? 0),
+            TruncatedTitles = TruncatedTitles,
+            UnresolvedLinks = UnresolvedLinks,
+            DroppedReminders = DroppedReminders,
+            PathLinkCount = PathLinkCount,
+            NotesWithImages = NotesWithImages,
+            ImageReferenceCount = ImageReferenceCount,
+            ImageAssetCount = ImageAssetCount,
+            RestorableImageCount = RestorableImageCount,
+            UnrestorableImageCount = UnrestorableImageCount,
+            CompressedImageCount = CompressedImageCount,
+            CompressionFailedImageCount = CompressionFailedImageCount,
+            MissingImageAssetCount = MissingImageAssetCount,
+            UnresolvedImageReferenceCount = UnresolvedImageReferenceCount,
+            UnreferencedImageAssetCount = UnreferencedImageAssetCount,
+            LossyImageNotes = LossyImageNotes,
+            SupportsReminders = SupportsReminders,
+            SupportsPaperLinks = SupportsPaperLinks,
+            ContainerFormat = ContainerFormat
+        };
+
+        foreach (var paper in papers)
+        {
+            filtered.Papers.Add(paper);
+        }
+
+        filtered.Warnings.AddRange(Warnings);
+        return filtered;
+    }
 }
 
 internal sealed class ImportPaper

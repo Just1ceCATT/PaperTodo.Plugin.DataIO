@@ -81,7 +81,14 @@ internal sealed class DataIoState
     /// <summary>宿主在 stateVersion 升级时调用；当前只有 v1，主要做字段归一化。</summary>
     public static string Migrate(string? stateJson, int fromVersion)
     {
-        var state = Parse(stateJson);
+        var state = Parse(stateJson, out var recovered);
+        if (recovered)
+        {
+            // 原样返回损坏内容：会话创建时才会备份原始状态并提示用户。
+            // 先回退成默认值再序列化会静默丢掉全部导入映射，且没有备份可恢复。
+            return stateJson ?? "";
+        }
+
         state.Version = CurrentVersion;
         state.LastExportDirectory ??= "";
         state.LastImportDirectory ??= "";

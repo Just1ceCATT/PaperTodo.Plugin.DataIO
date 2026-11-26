@@ -82,6 +82,14 @@ internal static class RuntimeLinkProtocol
             try
             {
                 workspace = workspaceElement.Deserialize<RuntimeWorkspaceState>(Options);
+                if (workspace is not null)
+                {
+                    // 外部消息中的集合字段可能显式为 null；不归一化会在合并历史时抛异常。
+                    workspace.ImportLinks = DataIoState.NormalizeImportLinks(workspace.ImportLinks);
+                    workspace.History = DataIoState.NormalizeHistory(workspace.History);
+                    workspace.LastExportDirectory ??= "";
+                    workspace.LastImportDirectory ??= "";
+                }
             }
             catch (JsonException)
             {
@@ -282,10 +290,19 @@ internal static class RuntimeLinkProtocol
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var json = SerializeState(new RuntimeWorkspaceState
+
+            // 日志文件由所有工作区共享：先合并已有内容再写，避免后写的工作区覆盖先写的数据。
+            var merged = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
+            if (TryReadPendingLinks() is { } existing)
             {
-                ImportLinks = new Dictionary<string, ImportIdentityLink>(links, StringComparer.Ordinal)
-            });
+                ImportLinkMerge.MergeInto(merged, existing);
+            }
+
+            ImportLinkMerge.MergeInto(
+                merged,
+                new Dictionary<string, ImportIdentityLink>(links, StringComparer.Ordinal));
+
+            var json = SerializeState(new RuntimeWorkspaceState { ImportLinks = merged });
             var temp = path + ".tmp";
             File.WriteAllText(temp, json);
             File.Move(temp, path, overwrite: true);
