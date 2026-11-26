@@ -219,6 +219,13 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// </summary>
     public bool OnRuntimeMessage(JsonElement message)
     {
+        // 会话销毁后宿主仍可能送达在途消息；继续应用会把旧快照写进已失效的会话，
+        // 甚至经 SaveWorkspaceState 反向覆盖新会话的映射。
+        if (_disposed)
+        {
+            return false;
+        }
+
         if (!RuntimeLinkProtocol.TryRead(
                 message,
                 out var type,
@@ -947,6 +954,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         await _linkSyncLock.WaitAsync(cancellationToken);
         try
         {
+            if (_disposed)
+            {
+                return false;
+            }
+
             for (var attempt = 0; attempt < 2 && !_context.Runtime.IsAvailable; attempt++)
             {
                 await Task.Delay(120, cancellationToken);
@@ -1056,7 +1068,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     private void PushWorkspaceState()
     {
         // 没有成功拿到权威快照前，不能反向覆盖 Runtime；先落盘待推送日志。
-        if (!_context.Runtime.IsAvailable || !_linkSynced)
+        // 会话已销毁时同样只能合并日志：新会话可能已登记新映射，
+        // 用旧会话的整表替换会把这些映射删掉。
+        if (_disposed || !_context.Runtime.IsAvailable || !_linkSynced)
         {
             MarkPushPending();
             return;
