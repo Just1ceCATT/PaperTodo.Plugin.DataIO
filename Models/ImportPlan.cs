@@ -152,6 +152,18 @@ internal sealed class ImportPaper
     /// <summary>随压缩包提供、属于这张笔记的图片。</summary>
     public List<ImportImageAsset> Images { get; } = [];
 
+    /// <summary>
+    /// 清单为这张笔记登记过图片（即使全部条目校验失败）。
+    /// 更新时据此区分“文件声明了但找不到图片”和“普通 JSON 没有图片包”。
+    /// </summary>
+    public bool HasImageManifest { get; set; }
+
+    /// <summary>清单登记过、但文件缺失或校验失败而无法写回的相对链接路径。</summary>
+    public HashSet<string> UnavailableImageFiles { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>清单登记过、但文件缺失或校验失败而无法写回的来源图片 ID。</summary>
+    public HashSet<string> UnavailableImageIds { get; } = new(StringComparer.Ordinal);
+
     /// <summary>压缩包正文使用 images/ 相对链接（Markdown 包），否则使用 i: 引用。</summary>
     public bool UsesRelativeImageLinks { get; set; }
 

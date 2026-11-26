@@ -380,8 +380,10 @@ internal sealed class ImportService
     {
         if (paper.UsesRelativeImageLinks)
         {
+            // 清单登记过但校验失败的图片也算“清单里的引用”：它确实无法写回，必须移除。
             var manifestFiles = paper.Images
                 .Select(image => image.File)
+                .Concat(paper.UnavailableImageFiles)
                 .ToHashSet(StringComparer.Ordinal);
             var restorableFiles = paper.Images
                 .Where(image => image.Restorable)
@@ -395,14 +397,16 @@ internal sealed class ImportService
                 url => !manifestFiles.Contains(url) || restorableFiles.Contains(url));
         }
 
-        // 没有随包图片的普通 JSON：引用可能在本机仍然有效，不擅自删除。
-        if (paper.Images.Count == 0)
+        // 普通 JSON（没有图片清单）：引用可能在本机仍然有效，不擅自删除。
+        // 但压缩包声明过图片、只是全部校验失败时，仍要按清单移除坏引用。
+        if (!paper.HasImageManifest && paper.Images.Count == 0)
         {
             return (content, 0);
         }
 
         var manifestIds = paper.Images
             .Select(image => image.SourceImageId)
+            .Concat(paper.UnavailableImageIds)
             .ToHashSet(StringComparer.Ordinal);
         var restorableIds = paper.Images
             .Where(image => image.Restorable)
@@ -949,9 +953,11 @@ internal sealed class ImportService
             var resolvedFiles = idsByFile.Keys.ToHashSet(StringComparer.Ordinal);
             var manifestFiles = importPaper.Images
                 .Select(image => image.File)
+                .Concat(importPaper.UnavailableImageFiles)
                 .ToHashSet(StringComparer.Ordinal);
             var manifestIds = importPaper.Images
                 .Select(image => image.SourceImageId)
+                .Concat(importPaper.UnavailableImageIds)
                 .ToHashSet(StringComparer.Ordinal);
             (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
                 finalContent,
@@ -1109,7 +1115,9 @@ internal sealed class ImportService
             {
                 if (!byFile.TryGetValue(link, out var image))
                 {
-                    return "压缩包缺少正文引用的图片";
+                    return paper.UnavailableImageFiles.Contains(link)
+                        ? "图片文件缺失或校验失败"
+                        : "压缩包缺少正文引用的图片";
                 }
 
                 if (!image.Restorable)
@@ -1121,8 +1129,9 @@ internal sealed class ImportService
             return null;
         }
 
-        // 没有图片清单的普通 JSON 保留原 i: 引用（同一工作区通常仍然有效）。
-        if (paper.Images.Count == 0)
+        // 普通 JSON（没有图片清单）：保留原 i: 引用，同一工作区通常仍然有效。
+        // 压缩包声明过图片时即使全部校验失败，也要继续检查引用。
+        if (!paper.HasImageManifest && paper.Images.Count == 0 && paper.UnavailableImageIds.Count == 0)
         {
             return null;
         }
@@ -1137,7 +1146,9 @@ internal sealed class ImportService
         {
             if (!byId.TryGetValue(reference.ImageId, out var image))
             {
-                return "压缩包缺少正文引用的图片";
+                return paper.UnavailableImageIds.Contains(reference.ImageId)
+                    ? "图片文件缺失或校验失败"
+                    : "压缩包缺少正文引用的图片";
             }
 
             if (!image.Restorable)

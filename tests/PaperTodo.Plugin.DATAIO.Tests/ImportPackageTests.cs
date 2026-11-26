@@ -86,9 +86,17 @@ public sealed class ImportPackageTests
             Assert.Equal(1, plan.MissingImageAssetCount);
             var paper = Assert.Single(plan.Papers);
             Assert.Empty(paper.Images);
+            Assert.True(paper.HasImageManifest);
+            Assert.Contains("123456", paper.UnavailableImageIds);
             Assert.Equal(0, paper.ResolvedImageReferences);
             Assert.Equal(1, paper.UnresolvedImageReferences);
             Assert.Contains(plan.Warnings, warning => warning.Contains("缺失"));
+
+            // 清单声明过、但文件缺失的图片必须被视为“无法写回”，
+            // 更新时才能按预告移除坏引用，而不是静默保留。
+            Assert.Equal(
+                "图片文件缺失或校验失败",
+                ImportService.GetImageRestoreBlocker(paper));
         });
     }
 

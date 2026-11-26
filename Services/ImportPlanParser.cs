@@ -702,9 +702,19 @@ internal static class ImportPlanParser
                 if (image is null ||
                     string.IsNullOrWhiteSpace(image.PaperSourceId) ||
                     string.IsNullOrWhiteSpace(image.ImageId) ||
-                    !IsSafeImageEntryPath(image.File) ||
                     !bySourceId.TryGetValue(image.PaperSourceId, out var paper))
                 {
+                    missing++;
+                    continue;
+                }
+
+                // 只要清单为这张纸片登记过图片，就记录“有图片清单”，
+                // 即使所有条目都校验失败，更新时也应按文件声明处理引用。
+                paper.HasImageManifest = true;
+
+                if (!IsSafeImageEntryPath(image.File))
+                {
+                    MarkImageUnavailable(paper, image);
                     missing++;
                     continue;
                 }
@@ -717,6 +727,7 @@ internal static class ImportPlanParser
 
                 if (!entryCounts.TryGetValue(image.File, out var count) || count != 1)
                 {
+                    MarkImageUnavailable(paper, image);
                     missing++;
                     continue;
                 }
@@ -724,6 +735,7 @@ internal static class ImportPlanParser
                 var entry = archive.GetEntry(image.File)!;
                 if (entry.Length <= 0 || entry.Length > MaxImageEntryBytes)
                 {
+                    MarkImageUnavailable(paper, image);
                     missing++;
                     continue;
                 }
@@ -738,6 +750,7 @@ internal static class ImportPlanParser
                          image.Sha256,
                          StringComparison.OrdinalIgnoreCase)))
                 {
+                    MarkImageUnavailable(paper, image);
                     missing++;
                     continue;
                 }
@@ -827,13 +840,24 @@ internal static class ImportPlanParser
         if (plan.MissingImageAssetCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.MissingImageAssetCount} 张图片文件缺失或校验失败，相关引用将保持原样。");
+                $"{plan.MissingImageAssetCount} 张图片文件缺失或校验失败：新建时引用保持原样，" +
+                "更新对应笔记时会移除这些引用并更新其余正文。");
         }
 
         if (plan.UnresolvedImageReferenceCount > 0)
         {
             plan.Warnings.Add(
                 $"{plan.UnresolvedImageReferenceCount} 处图片引用在压缩包中没有对应图片，导入后可能无法显示。");
+        }
+    }
+
+    /// <summary>记录清单声明过、但无法写回的图片引用，供更新时移除坏引用使用。</summary>
+    private static void MarkImageUnavailable(ImportPaper paper, ExportImage image)
+    {
+        paper.UnavailableImageIds.Add(image.ImageId);
+        if (!string.IsNullOrWhiteSpace(image.File))
+        {
+            paper.UnavailableImageFiles.Add(image.File);
         }
     }
 
