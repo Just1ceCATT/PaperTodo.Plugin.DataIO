@@ -114,14 +114,8 @@ internal static class ExportPackageService
     }
 
     /// <summary>正文条目超过导入端单文件上限时，导出产物无法被本插件读回，必须提前拒绝。</summary>
-    private static void EnsureTextFits(string text, string what)
-    {
-        if (Encoding.UTF8.GetByteCount(text) > JsonFiles.MaxImportBytes)
-        {
-            throw new InvalidOperationException(
-                $"{what}超过 64 MiB 上限，生成的文件将无法被本插件重新导入；请减少纸片数量后重试。");
-        }
-    }
+    private static void EnsureTextFits(string text, string what) =>
+        JsonFiles.EnsureFitsImportLimit(text, what);
 
     /// <summary>把纸片 ID 限制在安全字符内；发生替换时追加短哈希，避免不同 ID 落到同一目录。</summary>
     private static string SafeSegment(string? value)

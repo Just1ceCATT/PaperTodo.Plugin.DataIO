@@ -197,6 +197,13 @@ internal sealed class ExportService
                 break;
             }
 
+            // 导入端只接受 2000 张图片；超出时必须截断，否则生成的包会被整体拒绝。
+            if (state.Images.Count >= ImportPlanParser.MaxPackageImages)
+            {
+                state.Truncated = true;
+                break;
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             try
             {

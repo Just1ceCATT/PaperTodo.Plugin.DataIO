@@ -8,6 +8,7 @@ internal static class DataFileService
     public static void Write(string path, ExportDocument document)
     {
         var json = JsonSerializer.Serialize(document, ExportJson.Options);
+        JsonFiles.EnsureFitsImportLimit(json, "导出 JSON");
         JsonFiles.WriteAllTextAtomic(path, json);
     }
 

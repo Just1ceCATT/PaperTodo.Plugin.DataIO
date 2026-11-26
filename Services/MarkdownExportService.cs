@@ -13,8 +13,12 @@ internal static class MarkdownExportService
     public const string MissingImageLabel = "图片缺失";
     private const string AlwaysEscapedMarkdownCharacters = "\\`*_{}[]<>~|&";
 
-    public static void Write(string path, ExportDocument document) =>
-        JsonFiles.WriteAllTextAtomic(path, Build(document));
+    public static void Write(string path, ExportDocument document)
+    {
+        var markdown = Build(document);
+        JsonFiles.EnsureFitsImportLimit(markdown, "导出 Markdown");
+        JsonFiles.WriteAllTextAtomic(path, markdown);
+    }
 
     /// <summary>
     /// 生成 Markdown 文本。imageLinkResolver 非空时，把 (纸片来源 ID, 图片 ID)

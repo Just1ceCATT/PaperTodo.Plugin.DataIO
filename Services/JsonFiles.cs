@@ -28,6 +28,19 @@ internal static class JsonFiles
         return File.ReadAllText(path, Encoding.UTF8);
     }
 
+    /// <summary>
+    /// 导出内容超过导入端单文件上限时提前拒绝：否则生成的备份文件
+    /// 会被本插件自己的导入逻辑拒绝，用户直到需要恢复时才发现。
+    /// </summary>
+    public static void EnsureFitsImportLimit(string text, string what)
+    {
+        if (Encoding.UTF8.GetByteCount(text) > MaxImportBytes)
+        {
+            throw new InvalidOperationException(
+                $"{what}超过 64 MiB 上限，生成的文件将无法被本插件重新导入；请减少纸片数量后重试。");
+        }
+    }
+
     /// <summary>先写临时文件再原子替换，避免中途失败留下半截文件。</summary>
     public static void WriteAllTextAtomic(string path, string text) =>
         WriteBytesAtomic(path, stream =>

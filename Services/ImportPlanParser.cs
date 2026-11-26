@@ -24,7 +24,9 @@ internal static class ImportPlanParser
     public const long MaxPackageExpandedBytes = 512L * 1024 * 1024;
 
     private const int MaxPackageEntries = 5_000;
-    private const int MaxPackageImages = 2_000;
+
+    /// <summary>压缩包图片数量上限；导出端也必须按同一上限截断，否则产物无法导入。</summary>
+    internal const int MaxPackageImages = 2_000;
     private const long MaxImageEntryBytes = IPaperNoteAssetsApi.MaximumImageBytes;
 
     /// <summary>压缩包文件本身的读取上限；没有上限时超大归档会在打开阶段就占用大量内存。</summary>
