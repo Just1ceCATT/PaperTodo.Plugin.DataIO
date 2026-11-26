@@ -267,17 +267,36 @@ internal static class TextDiff
 
         if (result.Count > MaxLines)
         {
-            result = result.Take(MaxLines).ToList();
-            result.Add(new DiffLine('…', "差异已截断，仅显示前 160 行", 0, 0));
+            // 只截取开头会让“整段改写”只显示删除行、看不到对应新增，
+            // 用户会误以为更新会删掉整篇内容。这里保留头尾两段，中间标注省略。
+            var head = MaxLines / 2;
+            var tail = MaxLines - head - 1;
+            var omitted = result.Count - head - tail;
+            result = result
+                .Take(head)
+                .Append(new DiffLine('…', $"差异已截断，中间省略 {omitted} 行", 0, 0))
+                .Concat(result.Skip(result.Count - tail))
+                .ToList();
         }
 
         return result;
     }
 
-    private static string[] Split(string? text) =>
-        string.IsNullOrEmpty(text)
-            ? []
-            : text.Replace("\r\n", "\n", StringComparison.Ordinal)
-                .Replace('\r', '\n')
-                .Split('\n');
+    private static string[] Split(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return [];
+        }
+
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n');
+
+        // 末尾换行是行结束符而不是额外的一行空内容：
+        // 去掉它可避免“b”与“b\n”之间出现肉眼不可见的新增空行。
+        return lines.Length > 1 && lines[^1].Length == 0
+            ? lines[..^1]
+            : lines;
+    }
 }

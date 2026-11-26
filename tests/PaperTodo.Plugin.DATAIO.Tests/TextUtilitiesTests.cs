@@ -165,6 +165,29 @@ public sealed class TextUtilitiesTests
     }
 
     [Fact]
+    public void Truncated_diff_shows_both_removals_and_additions()
+    {
+        // 1500 行整段改写会超过 LCS 上限并退化为“先全删、后全加”，
+        // 截断必须同时保留两端的删除与新增，否则看起来像更新会清空正文。
+        var oldText = string.Join("\n", Enumerable.Range(0, 1_500).Select(i => $"旧行 {i}"));
+        var newText = string.Join("\n", Enumerable.Range(0, 1_500).Select(i => $"新行 {i}"));
+
+        var diff = TextDiff.Compute(oldText, newText);
+
+        Assert.Contains(diff, line => line.Kind == '-');
+        Assert.Contains(diff, line => line.Kind == '+');
+        Assert.Contains(diff, line => line.Kind == '…');
+    }
+
+    [Fact]
+    public void Diff_ignores_terminal_newline_difference()
+    {
+        Assert.All(
+            TextDiff.Compute("a\nb", "a\nb\n"),
+            line => Assert.Equal(' ', line.Kind));
+    }
+
+    [Fact]
     public void Plain_text_summary_handles_pathological_brackets_quickly()
     {
         // 10 万个未闭合的 "["：旧实现逐个字符重复 IndexOf，会退化为 O(n²) 卡死 UI。
