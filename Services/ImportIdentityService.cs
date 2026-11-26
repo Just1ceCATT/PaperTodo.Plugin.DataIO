@@ -130,15 +130,19 @@ internal sealed class ImportIdentityService
                 TodoSnapshot[] localTodos =
                     todosByPaper.TryGetValue(target.Id, out var todos) ? todos : [];
                 fingerprint = ComputeTodoFingerprint(localTodos);
-                paper.UpdateDiff = TextDiff.Compute(
-                    TextDiff.TodoSnapshot(localTodos
-                        .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
-                        .OrderBy(todo => todo.Order)
-                        .Select(todo => (todo.Text, todo.Done))),
-                    TextDiff.TodoSnapshot((paper.Source.Todos ?? [])
-                        .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
-                        .OrderBy(todo => todo.Order)
-                        .Select(todo => (todo.Text, todo.Done))));
+                var sourceTodos = paper.Source.Todos ?? [];
+                // LCS 差异会分配行数乘积的矩阵，待办较多时在 UI 线程执行会卡住窗口。
+                paper.UpdateDiff = await Task.Run(
+                    () => TextDiff.Compute(
+                        TextDiff.TodoSnapshot(localTodos
+                            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+                            .OrderBy(todo => todo.Order)
+                            .Select(todo => (todo.Text, todo.Done))),
+                        TextDiff.TodoSnapshot(sourceTodos
+                            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
+                            .OrderBy(todo => todo.Order)
+                            .Select(todo => (todo.Text, todo.Done)))),
+                    cancellationToken);
                 paper.UpdateHasChanges = paper.UpdateDiff.Any(line => line.Kind is '-' or '+');
                 paper.UpdateHasMetaChanges = HasTodoMetaChanges(
                     localTodos,
@@ -185,15 +189,23 @@ internal sealed class ImportIdentityService
                     continue;
                 }
 
-                fingerprint = ComputeNoteFingerprint(note.Content);
-                paper.UpdateDiff = TextDiff.Compute(note.Content, paper.Source.Content ?? "");
+                // 正文 LCS 差异与指纹计算同样放到后台线程：再次导入大笔记时
+                // 这些纯计算会让 UI 线程数秒无响应，且无法取消。
+                var localContent = note.Content;
+                var sourceContent = paper.Source.Content ?? "";
+                (fingerprint, paper.UpdateDiff) = await Task.Run(
+                    () => (
+                        ComputeNoteFingerprint(localContent),
+                        TextDiff.Compute(localContent, sourceContent)),
+                    cancellationToken);
 
                 // Markdown 包的正文用 images/ 链接，本地用 i:ID；图片内容一致时只是写法不同。
                 // 等价判断同时忽略行尾空行、分隔线和图片地址格式，避免把“无变化”误报成待更新。
                 paper.UpdateHasChanges = !await NoteContentEquivalentAsync(
                     target.Id,
                     note.Content,
-                    paper);
+                    paper,
+                    cancellationToken);
 
                 // 本地仍有图片引用、而导入正文已是旧版“图片缺失”标记时，更新会破坏图片引用。
                 // 另外，压缩包缺少图片或图片超过写入上限时同样不能更新，否则源 ID 可能指向本机另一张图。
@@ -535,11 +547,16 @@ internal sealed class ImportIdentityService
     private async Task<bool> NoteContentEquivalentAsync(
         string paperId,
         string? localContent,
-        ImportPaper paper)
+        ImportPaper paper,
+        CancellationToken cancellationToken)
     {
         var source = paper.Source.Content ?? "";
         localContent ??= "";
-        if (MarkdownNormalize.ContentEquivalent(localContent, source))
+
+        // 正文等价判断是纯字符串计算：长正文（上限 10 万字符）放在 UI 线程会明显卡顿。
+        if (await Task.Run(
+                () => MarkdownNormalize.ContentEquivalent(localContent, source),
+                cancellationToken))
         {
             // 文件声明过、但无法写回的图片引用需要由“更新”移除；
             // 否则逐字相同的正文会被当成无变化，坏引用永远留在本地。
@@ -552,9 +569,11 @@ internal sealed class ImportIdentityService
             return false;
         }
 
-        if (!MarkdownNormalize.ContentEquivalent(
-                ImageReferenceScanner.NormalizeImageUrls(localContent),
-                ImageReferenceScanner.NormalizeImageUrls(source)))
+        if (!await Task.Run(
+                () => MarkdownNormalize.ContentEquivalent(
+                    ImageReferenceScanner.NormalizeImageUrls(localContent),
+                    ImageReferenceScanner.NormalizeImageUrls(source)),
+                cancellationToken))
         {
             return false;
         }
@@ -564,13 +583,14 @@ internal sealed class ImportIdentityService
             return false;
         }
 
-        var sourceHashes = SourceImageHashes(paper);
+        // 图片哈希是对压缩包内图片字节的 SHA-256，也属于重计算。
+        var sourceHashes = await Task.Run(() => SourceImageHashes(paper), cancellationToken);
         if (sourceHashes is null)
         {
             return false;
         }
 
-        var localHashes = await LocalImageHashesAsync(paperId, localContent);
+        var localHashes = await LocalImageHashesAsync(paperId, localContent, cancellationToken);
         return localHashes is not null &&
                sourceHashes.SequenceEqual(localHashes, StringComparer.Ordinal);
     }
@@ -621,7 +641,10 @@ internal sealed class ImportIdentityService
     }
 
     /// <summary>按正文出现顺序读取本地图片并计算哈希；读取失败或数量过多时返回 null。</summary>
-    private async Task<List<string>?> LocalImageHashesAsync(string paperId, string content)
+    private async Task<List<string>?> LocalImageHashesAsync(
+        string paperId,
+        string content,
+        CancellationToken cancellationToken)
     {
         const int maxImages = 40;
         var references = ImageReferenceScanner.Enumerate(content);
@@ -634,19 +657,23 @@ internal sealed class ImportIdentityService
         var result = new List<string>(references.Count);
         foreach (var reference in references)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!cache.TryGetValue(reference.ImageId, out var hash))
             {
                 try
                 {
+                    // 读取必须回到 UI 线程；哈希是纯计算，放后台线程避免冻结界面。
                     var image = await _gateway.OnUiAsync(
                         () => _gateway.Context.NoteAssets.ReadImage(paperId, reference.ImageId));
-                    hash = Sha256(image.Bytes);
+                    var bytes = image.Bytes;
+                    hash = await Task.Run(() => Sha256(bytes), cancellationToken);
                 }
                 catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
                 {
                     hash = null;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 cache[reference.ImageId] = hash;
             }
 

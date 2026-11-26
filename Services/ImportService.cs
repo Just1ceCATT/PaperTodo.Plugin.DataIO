@@ -908,12 +908,16 @@ internal sealed class ImportService
 
                 // 同一工作区重新导入时，本地正文里的图片往往与文件内容一致，
                 // 直接复用本机图片 ID，避免重复写入和正文图片 ID 每次导入都变化。
-                if (reusableLocalImages is not null &&
-                    TryTakeReusableImageId(
-                        reusableLocalImages,
-                        usedLocalImageIds,
-                        image.Bytes,
-                        out var reusableId))
+                // 逐字节比对在后台线程执行：多张大图时这类比较会长时间占用 UI 线程。
+                var reusableId = reusableLocalImages is null
+                    ? null
+                    : await Task.Run(
+                        () => TakeReusableImageId(
+                            reusableLocalImages,
+                            usedLocalImageIds,
+                            image.Bytes),
+                        cancellationToken);
+                if (reusableId is not null)
                 {
                     newIds[image.SourceImageId] = reusableId;
                     idsByFile[image.File] = reusableId;
@@ -1267,6 +1271,15 @@ internal sealed class ImportService
 
         return map;
     }
+
+    /// <summary>供后台线程调用的复用查找：命中时返回本地图片 ID。</summary>
+    private static string? TakeReusableImageId(
+        Dictionary<string, byte[]> localImages,
+        HashSet<string> usedLocalImageIds,
+        byte[] bytes) =>
+        TryTakeReusableImageId(localImages, usedLocalImageIds, bytes, out var imageId)
+            ? imageId
+            : null;
 
     /// <summary>在本地正文图片中找一张内容完全一致、且尚未被复用的图片。</summary>
     private static bool TryTakeReusableImageId(
