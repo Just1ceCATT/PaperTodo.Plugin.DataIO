@@ -12,6 +12,29 @@ public sealed class ImportPackageTests
     private static readonly byte[] ImageBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
     [Fact]
+    public void Package_with_too_many_entries_is_rejected_before_opening_archive()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "many.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                // 超过 5000 条上限：预检必须在构造 ZipArchive 之前拒绝，
+                // 否则恶意中央目录会先一步创建全部条目对象并耗尽内存。
+                for (var index = 0; index <= 5000; index++)
+                {
+                    archive.CreateEntry($"entry-{index}.bin");
+                }
+            }
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.NotNull(plan.FatalError);
+            Assert.Contains("条目过多", plan.FatalError);
+        });
+    }
+
+    [Fact]
     public void Json_package_attaches_images_and_counts_references()
     {
         WithTempDirectory(directory =>

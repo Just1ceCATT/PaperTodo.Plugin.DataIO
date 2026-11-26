@@ -71,6 +71,37 @@ public sealed class ImportPlanParserTests
     }
 
     [Fact]
+    public void Overlong_title_is_truncated_and_warned()
+    {
+        // 超长标题会被复制进提示、列表与持久化映射；解析时必须先收敛长度。
+        var title = new string('长', 600);
+        var json = Header +
+            $"[{{\"sourceId\":\"a\",\"type\":\"note\",\"title\":\"{title}\",\"content\":\"正文\"}}]}}";
+
+        var plan = ImportPlanParser.Parse(json);
+
+        Assert.Null(plan.FatalError);
+        var paper = Assert.Single(plan.Papers);
+        Assert.Equal(500, paper.Source.Title.Length);
+        Assert.Contains(plan.Warnings, warning => warning.Contains("标题超过"));
+    }
+
+    [Fact]
+    public void Overlong_source_id_is_skipped_with_warning()
+    {
+        var sourceId = new string('a', 300);
+        var json = Header +
+            $"[{{\"sourceId\":\"{sourceId}\",\"type\":\"note\",\"title\":\"A\",\"content\":\"正文\"}}]}}";
+
+        var plan = ImportPlanParser.Parse(json);
+
+        Assert.Empty(plan.Papers);
+        Assert.Contains(plan.Warnings, warning => warning.Contains("来源 ID"));
+        // 唯一纸片被跳过后整份计划不可用，而不是带着超长 ID 继续导入。
+        Assert.NotNull(plan.FatalError);
+    }
+
+    [Fact]
     public void File_source_ids_survive_partial_selection()
     {
         var json = Header +

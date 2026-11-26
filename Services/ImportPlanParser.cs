@@ -18,6 +18,15 @@ internal static class ImportPlanParser
     public const int MaxTodosPerPaper = 200;
 
     /// <summary>
+    /// 标题原文长度上限。显示时本来就按 40 显示宽度截断，
+    /// 但原文会被写进提示、列表与持久化映射；没有上限时数十 MB 的标题会冻结界面并撑大状态文件。
+    /// </summary>
+    private const int MaxTitleChars = 500;
+
+    /// <summary>来源 ID 长度上限。正常导出为 32 位十六进制；超长 ID 只会污染映射与查重。</summary>
+    private const int MaxSourceIdChars = 256;
+
+    /// <summary>
     /// 压缩包解压后允许的总字节数。导出端图片上限更小（为正文与清单预留空间），
     /// 保证任何合法导出包都能通过这里的整包校验。
     /// </summary>
@@ -106,6 +115,114 @@ internal static class ImportPlanParser
     }
 
     /// <summary>
+    /// 只读文件尾部，从中央目录结束记录（EOCD）取得条目总数，不构造 ZipArchive。
+    /// 构造 ZipArchive 会按中央目录一次性创建全部条目对象，恶意归档可在此之前耗尽内存；
+    /// 这里只读取固定大小的尾部缓冲区，无法可靠解析时返回 null，由调用方按损坏文件拒绝。
+    /// </summary>
+    private static long? TryReadCentralDirectoryEntryCount(FileStream stream)
+    {
+        try
+        {
+            var length = stream.Length;
+            if (length < 22)
+            {
+                return null;
+            }
+
+            // EOCD 固定部分 22 字节，注释最长 65535 字节。
+            var tailLength = (int)Math.Min(length, 22L + 65535L);
+            var tail = new byte[tailLength];
+            stream.Position = length - tailLength;
+            stream.ReadExactly(tail);
+
+            var eocdIndex = FindEndOfCentralDirectory(tail);
+            if (eocdIndex < 0)
+            {
+                return null;
+            }
+
+            var totalEntries = BitConverter.ToUInt16(tail, eocdIndex + 10);
+
+            // 中央目录条目数可放进 16 位且未使用 ZIP64 时，这就是准确值。
+            if (totalEntries != ushort.MaxValue)
+            {
+                stream.Position = 0;
+                return totalEntries;
+            }
+
+            // ZIP64：真实条目数在 ZIP64 EOCD 记录中，位置由 EOCD 前 20 字节的定位记录给出。
+            if (eocdIndex < 20)
+            {
+                return null;
+            }
+
+            var locatorIndex = eocdIndex - 20;
+            if (BitConverter.ToUInt32(tail, locatorIndex) != 0x07064B50)
+            {
+                // 没有 ZIP64 记录却写着 65535 条：按该值返回，调用方会按超限拒绝。
+                stream.Position = 0;
+                return totalEntries;
+            }
+
+            var zip64Offset = BitConverter.ToInt64(tail, locatorIndex + 8);
+            if (zip64Offset < 0 || zip64Offset > length - 56)
+            {
+                return null;
+            }
+
+            Span<byte> record = stackalloc byte[56];
+            stream.Position = zip64Offset;
+            stream.ReadExactly(record);
+            if (BitConverter.ToUInt32(record) != 0x06064B50)
+            {
+                return null;
+            }
+
+            var zip64Entries = BitConverter.ToInt64(record[32..]);
+            stream.Position = 0;
+            return zip64Entries < 0 ? null : zip64Entries;
+        }
+        catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从尾部向前查找 EOCD（PK\x05\x06）。zip 注释里也可能出现同样字节，
+    /// 因此要求“记录 + 注释长度”正好结束于文件末尾，与 .NET 打开归档的判定一致。
+    /// </summary>
+    private static int FindEndOfCentralDirectory(byte[] tail)
+    {
+        var fallback = -1;
+        for (var index = tail.Length - 22; index >= 0; index--)
+        {
+            if (tail[index] != (byte)'P' ||
+                tail[index + 1] != (byte)'K' ||
+                tail[index + 2] != 0x05 ||
+                tail[index + 3] != 0x06)
+            {
+                continue;
+            }
+
+            var commentLength = BitConverter.ToUInt16(tail, index + 20);
+            if (index + 22 + commentLength == tail.Length)
+            {
+                return index;
+            }
+
+            // 文件末尾有多余数据时注释长度对不上：仍记下最后一个候选，
+            // 避免把 .NET 本身可以打开的归档误判为损坏。
+            if (fallback < 0)
+            {
+                fallback = index;
+            }
+        }
+
+        return fallback;
+    }
+
+    /// <summary>
     /// 读取含图片的导出压缩包。不落盘解压，只读取清单引用的条目；
     /// 文件缺失、校验失败或超限的图片会被跳过并记录提示。
     /// </summary>
@@ -119,6 +236,19 @@ internal static class ImportPlanParser
             }
 
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // 必须在构造 ZipArchive 之前检查条目数：Read 模式会按中央目录
+            // 一次性创建全部条目对象，恶意大目录在构造之后才拒绝已经太晚。
+            var entryCount = TryReadCentralDirectoryEntryCount(stream);
+            if (entryCount is null)
+            {
+                return Fatal("压缩包已损坏或不是有效的 zip 文件。");
+            }
+
+            if (entryCount > MaxPackageEntries)
+            {
+                return Fatal($"压缩包条目过多（{entryCount} 个），已拒绝导入。");
+            }
+
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             return ParseArchive(archive, path);
         }
@@ -270,15 +400,24 @@ internal static class ImportPlanParser
             }
 
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
 
             // 备份包同样受条目数上限约束：构造 ZipArchive 会按中央目录创建全部条目对象，
             // 没有上限时几十万条目的归档足以让选择文件阶段卡死。
-            if (archive.Entries.Count > MaxPackageEntries)
+            // 因此必须在构造前读取中央目录的条目数。
+            var precheckedEntries = TryReadCentralDirectoryEntryCount(stream);
+            if (precheckedEntries is null)
             {
-                error = $"备份压缩包条目过多（{archive.Entries.Count} 个），已拒绝读取。";
+                error = "压缩包已损坏或不是有效的 zip 文件。";
                 return false;
             }
+
+            if (precheckedEntries > MaxPackageEntries)
+            {
+                error = $"备份压缩包条目过多（{precheckedEntries} 个），已拒绝读取。";
+                return false;
+            }
+
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
 
             // DataIO 导出压缩包优先按导出格式解析；即使同时含根级 dataN.json 也不当作备份弹选择框。
             if (archive.Entries.Any(entry =>
@@ -354,11 +493,18 @@ internal static class ImportPlanParser
             }
 
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
-            if (archive.Entries.Count > MaxPackageEntries)
+            var entryCount = TryReadCentralDirectoryEntryCount(stream);
+            if (entryCount is null)
             {
-                return Fatal($"备份压缩包条目过多（{archive.Entries.Count} 个），已拒绝导入。");
+                return Fatal("压缩包已损坏或不是有效的 zip 文件。");
             }
+
+            if (entryCount > MaxPackageEntries)
+            {
+                return Fatal($"备份压缩包条目过多（{entryCount} 个），已拒绝导入。");
+            }
+
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
 
             TryCollectCoreEntries(archive, out var entries, out var duplicate);
             if (duplicate || entries.Count == 0)
@@ -539,6 +685,18 @@ internal static class ImportPlanParser
     }
 
     private static ImportPlan Fatal(string message) => new() { FatalError = message };
+
+    /// <summary>按字符数截断，且不切断代理对（emoji 等补充平面字符）。</summary>
+    private static string TruncateChars(string value, int maxChars)
+    {
+        if (value.Length <= maxChars)
+        {
+            return value;
+        }
+
+        var cut = char.IsHighSurrogate(value[maxChars - 1]) ? maxChars - 1 : maxChars;
+        return value[..cut];
+    }
 
     /// <summary>
     /// 只接受唯一同名条目。duplicate 为 true 表示存在多个同名条目：
@@ -1338,6 +1496,20 @@ internal static class ImportPlanParser
 
         foreach (var source in document.Papers)
         {
+            // 先收敛标题与来源 ID：后续所有提示、列表行与持久化映射都会引用它们。
+            if ((source.Title?.Length ?? 0) > MaxTitleChars)
+            {
+                source.Title = TruncateChars(source.Title!, MaxTitleChars);
+                plan.Warnings.Add($"纸片标题超过 {MaxTitleChars} 字符，已截断后导入。");
+            }
+
+            if ((source.SourceId?.Length ?? 0) > MaxSourceIdChars)
+            {
+                plan.Warnings.Add(
+                    $"跳过纸片“{source.Title}”：来源 ID 超过 {MaxSourceIdChars} 字符。");
+                continue;
+            }
+
             var type = (source.Type ?? "").Trim().ToLowerInvariant();
 
             // 只保留结构完整的待办条目，并把显式 null 文本归一为空串。
