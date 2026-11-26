@@ -165,6 +165,27 @@ public sealed class TextUtilitiesTests
     }
 
     [Fact]
+    public void Plain_text_summary_handles_pathological_brackets_quickly()
+    {
+        // 10 万个未闭合的 "["：旧实现逐个字符重复 IndexOf，会退化为 O(n²) 卡死 UI。
+        var input = new string('[', 100_000);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        var text = MarkdownPreview.ToPlainText(input);
+
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"耗时 {stopwatch.Elapsed}");
+        Assert.NotEqual("", text);
+
+        // 有闭合方括号但没有链接目标，同样不能落入逐字符重复扫描。
+        var closed = new string('[', 50_000) + new string(']', 50_000);
+        stopwatch.Restart();
+        _ = MarkdownPreview.ToPlainText(closed);
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"耗时 {stopwatch.Elapsed}");
+    }
+
+    [Fact]
     public void Image_reference_scanner_counts_host_style_references()
     {
         Assert.Equal(1, ImageReferenceScanner.Count("![图片](i:123456)"));

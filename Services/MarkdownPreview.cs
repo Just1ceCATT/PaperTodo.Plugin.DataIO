@@ -41,6 +41,12 @@ internal static class MarkdownPreview
     /// <summary>解码宽度的上限（像素），避免大图在预览里占用过多内存。</summary>
     private const int MaxDecodePixelWidth = 2_000;
 
+    /// <summary>解码位图的高度上限：细高图片按宽度解码会分配极其巨大的像素缓冲。</summary>
+    private const int MaxDecodePixelHeight = 4_096;
+
+    /// <summary>图片显示高度上限：防止 1×1000000 这类畸形图片把布局撑到不可用。</summary>
+    private const double MaxDisplayImageHeight = 20_000;
+
     public static void Render(
         string markdown,
         Panel host,
@@ -293,16 +299,21 @@ internal static class MarkdownPreview
             }
 
             var labelStart = start + 1;
-            if (start > 0 && line[start - 1] == '!')
+            var labelEnd = line.IndexOf(']', labelStart);
+
+            // 没有闭合的方括号：剩余文本不可能再构成链接，一次性追加，避免逐字符重复扫描。
+            if (labelEnd < 0)
             {
-                labelStart = start + 1;
+                result.Append(line, i, line.Length - i);
+                break;
             }
 
-            var labelEnd = line.IndexOf(']', labelStart);
-            if (labelEnd < 0 || labelEnd + 1 >= line.Length || line[labelEnd + 1] != '(')
+            if (labelEnd + 1 >= line.Length || line[labelEnd + 1] != '(')
             {
-                result.Append(line, i, start + 1 - i);
-                i = start + 1;
+                // 无效链接：原样保留这段方括号内容并跳过，下一次从 ] 之后继续，
+                // 防止大量 "[" 在无匹配时退化为 O(n²)。
+                result.Append(line, i, labelEnd + 1 - i);
+                i = labelEnd + 1;
                 continue;
             }
 
@@ -645,6 +656,16 @@ internal static class MarkdownPreview
             available,
             natural.Width);
 
+        // 显示尺寸也按高度上限收敛：宽高比极端的图片不能把布局撑到数万像素高。
+        if (natural is { Width: > 0, Height: > 0 })
+        {
+            var displayHeight = displayWidth * natural.Height / natural.Width;
+            if (displayHeight > MaxDisplayImageHeight)
+            {
+                displayWidth = Math.Max(80, displayWidth * MaxDisplayImageHeight / displayHeight);
+            }
+        }
+
         if (!cache.Bitmaps.TryGetValue(image.Url, out var bitmap))
         {
             var pixelWidth = natural.Width > 0
@@ -652,7 +673,11 @@ internal static class MarkdownPreview
                     natural.Width,
                     Math.Max(1, (int)Math.Ceiling(displayWidth * GetDpiScale(host))))
                 : 0;
-            bitmap = DecodeBitmap(data.Bytes, Math.Min(pixelWidth, MaxDecodePixelWidth));
+            bitmap = DecodeBitmap(
+                data.Bytes,
+                Math.Min(pixelWidth, MaxDecodePixelWidth),
+                natural.Width,
+                natural.Height);
             cache.Bitmaps[image.Url] = bitmap;
         }
 
@@ -856,7 +881,11 @@ internal static class MarkdownPreview
         }
     }
 
-    private static BitmapSource? DecodeBitmap(byte[] bytes, int pixelWidth)
+    private static BitmapSource? DecodeBitmap(
+        byte[] bytes,
+        int pixelWidth,
+        int naturalWidth = 0,
+        int naturalHeight = 0)
     {
         try
         {
@@ -866,8 +895,22 @@ internal static class MarkdownPreview
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             bitmap.StreamSource = stream;
+
             if (pixelWidth > 0)
             {
+                // WPF 只按宽度解码时高度按原比例放大；细高图片会分配超大位图。
+                // 按高度上限反推一个更小的解码宽度，保持宽高比不变。
+                if (naturalWidth > 0 && naturalHeight > 0)
+                {
+                    var expectedHeight = (long)pixelWidth * naturalHeight / naturalWidth;
+                    if (expectedHeight > MaxDecodePixelHeight)
+                    {
+                        pixelWidth = Math.Max(
+                            1,
+                            (int)(pixelWidth * (double)MaxDecodePixelHeight / expectedHeight));
+                    }
+                }
+
                 bitmap.DecodePixelWidth = pixelWidth;
             }
 
@@ -1024,6 +1067,16 @@ internal static class MarkdownPreview
                 var image = c == '!';
                 var labelStart = i + (image ? 2 : 1);
                 var labelEnd = text.IndexOf(']', labelStart);
+
+                // 没有闭合方括号：剩余内容不可能再构成链接，整段按普通文本追加，
+                // 避免逐字符重复 IndexOf 在畸形输入上退化为 O(n²)。
+                if (labelEnd < 0)
+                {
+                    plain.Append(text, i, text.Length - i);
+                    i = text.Length;
+                    continue;
+                }
+
                 if (labelEnd > labelStart && labelEnd + 1 < text.Length && text[labelEnd + 1] == '(')
                 {
                     var urlEnd = text.IndexOf(')', labelEnd + 2);
@@ -1042,6 +1095,11 @@ internal static class MarkdownPreview
                         continue;
                     }
                 }
+
+                // 无效链接：原样追加到 ] 为止并跳过，下一次从 ] 之后继续。
+                plain.Append(text, i, labelEnd + 1 - i);
+                i = labelEnd + 1;
+                continue;
             }
 
             plain.Append(c);
