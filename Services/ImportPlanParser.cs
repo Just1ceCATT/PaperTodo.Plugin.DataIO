@@ -744,28 +744,30 @@ internal static class ImportPlanParser
 
                 var storedBytes = bytes;
                 var storedMime = image.Mime;
-                var restorable = image.Restorable &&
-                    bytes.LongLength <= IPaperNoteAssetsApi.MaximumImageAppendBytes;
+                bool restorable;
 
-                // 超过 8 MiB 时按宿主规则压缩后再写回；原始字节仍保留在压缩包内。
-                if (bytes.LongLength > IPaperNoteAssetsApi.MaximumImageAppendBytes)
+                // 宿主对超过 8 MiB 或最长边超过 2048 的图片会自动重编码。
+                // 插件必须先按同一规则处理：写回后的存储字节才是确定的，
+                // 再次导入时才能按字节复用图片，而不是每次追加一份新副本。
+                if (ImageCompressionService.TryPrepareForHost(
+                        bytes,
+                        image.Mime,
+                        out var prepared,
+                        out _))
                 {
-                    if (ImageCompressionService.TryCompress(
-                            bytes,
-                            image.Mime,
-                            out var compressed,
-                            out _))
+                    storedBytes = prepared.Bytes;
+                    storedMime = prepared.Mime;
+                    // 清单标记不可写回（导出时超过 8 MiB）的图片，压缩成功后恢复为可写回。
+                    restorable = image.Restorable || prepared.Compressed;
+                    if (prepared.Compressed)
                     {
-                        storedBytes = compressed.Bytes;
-                        storedMime = compressed.Mime;
-                        restorable = true;
                         plan.CompressedImageCount++;
                     }
-                    else
-                    {
-                        restorable = false;
-                        plan.CompressionFailedImageCount++;
-                    }
+                }
+                else
+                {
+                    restorable = false;
+                    plan.CompressionFailedImageCount++;
                 }
 
                 paper.Images.Add(new ImportImageAsset
@@ -811,8 +813,8 @@ internal static class ImportPlanParser
         if (plan.CompressedImageCount > 0)
         {
             plan.Warnings.Add(
-                $"{plan.CompressedImageCount} 张超过 8 MiB 的图片已按宿主规则压缩，" +
-                "导入时写回压缩后的版本；原始图片仍保留在压缩包中。");
+                $"{plan.CompressedImageCount} 张超过宿主自动压缩阈值（8 MiB 或最长边 2048 像素）的图片" +
+                "已按宿主规则压缩，导入时写回压缩后的版本；原始图片仍保留在压缩包中。");
         }
 
         if (plan.UnrestorableImageCount > 0)

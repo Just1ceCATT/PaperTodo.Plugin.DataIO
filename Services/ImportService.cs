@@ -822,6 +822,15 @@ internal sealed class ImportService
         }
 
         var canReadImages = _gateway.Can(PaperTodoPermissionNames.NotesRead);
+
+        // 更新时按本地正文里的图片逐张比对字节，复用内容一致的本机图片。
+        // 不能用来源图片 ID 直接读取：首次导入时宿主会分配新的图片 ID，
+        // 来源 ID 在本机通常不存在，按 ID 复用永远失败并导致每次导入都追加副本。
+        var reusableLocalImages = canReadImages && expectedLocalContent is not null
+            ? await ReadLocalImageBytesAsync(paperId, expectedLocalContent)
+            : null;
+        var usedLocalImageIds = new HashSet<string>(StringComparer.Ordinal);
+
         var newIds = new Dictionary<string, string>(StringComparer.Ordinal);
         var idsByFile = new Dictionary<string, string>(StringComparer.Ordinal);
         var appended = new List<string>();
@@ -841,14 +850,17 @@ internal sealed class ImportService
                     continue;
                 }
 
-                // 同一工作区重新导入时，图片往往已经存在且内容一致，直接复用原 ID，
-                // 避免重复写入和正文图片 ID 每次导入都变化。
-                if (canReadImages &&
-                    !string.IsNullOrWhiteSpace(image.SourceImageId) &&
-                    await CanReuseLocalImageAsync(paperId, image))
+                // 同一工作区重新导入时，本地正文里的图片往往与文件内容一致，
+                // 直接复用本机图片 ID，避免重复写入和正文图片 ID 每次导入都变化。
+                if (reusableLocalImages is not null &&
+                    TryTakeReusableImageId(
+                        reusableLocalImages,
+                        usedLocalImageIds,
+                        image.Bytes,
+                        out var reusableId))
                 {
-                    newIds[image.SourceImageId] = image.SourceImageId;
-                    idsByFile[image.File] = image.SourceImageId;
+                    newIds[image.SourceImageId] = reusableId;
+                    idsByFile[image.File] = reusableId;
                     continue;
                 }
 
@@ -1137,19 +1149,78 @@ internal sealed class ImportService
         return null;
     }
 
-    /// <summary>本地已有同一张笔记的同 ID 图片且字节完全一致时，可直接复用该 ID。</summary>
-    private async Task<bool> CanReuseLocalImageAsync(string paperId, ImportImageAsset image)
+    /// <summary>
+    /// 读取本地正文引用的图片字节，供复用比对。数量或总大小超过阈值时放弃复用，
+    /// 避免为一次导入把整篇笔记的图片全部驻留内存。
+    /// </summary>
+    private async Task<Dictionary<string, byte[]>?> ReadLocalImageBytesAsync(
+        string paperId,
+        string content)
     {
-        try
+        const int maxImages = 40;
+        const long maxTotalBytes = 128L * 1024 * 1024;
+
+        var references = ImageReferenceScanner.Enumerate(content);
+        if (references.Count == 0)
         {
-            var existing = await _gateway.OnUiAsync(
-                () => _gateway.Context.NoteAssets.ReadImage(paperId, image.SourceImageId));
-            return existing.Bytes.AsSpan().SequenceEqual(image.Bytes);
+            return new Dictionary<string, byte[]>(StringComparer.Ordinal);
         }
-        catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+
+        if (references.Count > maxImages)
         {
-            return false;
+            return null;
         }
+
+        var map = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        long totalBytes = 0;
+        foreach (var reference in references)
+        {
+            if (map.ContainsKey(reference.ImageId))
+            {
+                continue;
+            }
+
+            try
+            {
+                var image = await _gateway.OnUiAsync(
+                    () => _gateway.Context.NoteAssets.ReadImage(paperId, reference.ImageId));
+                totalBytes += image.Bytes.LongLength;
+                if (totalBytes > maxTotalBytes)
+                {
+                    return null;
+                }
+
+                map[reference.ImageId] = image.Bytes;
+            }
+            catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+            {
+                // 单张读取失败只影响该张的复用，不影响其它图片写回。
+            }
+        }
+
+        return map;
+    }
+
+    /// <summary>在本地正文图片中找一张内容完全一致、且尚未被复用的图片。</summary>
+    private static bool TryTakeReusableImageId(
+        Dictionary<string, byte[]> localImages,
+        HashSet<string> usedLocalImageIds,
+        byte[] bytes,
+        out string imageId)
+    {
+        foreach (var (id, localBytes) in localImages)
+        {
+            if (!usedLocalImageIds.Contains(id) &&
+                localBytes.AsSpan().SequenceEqual(bytes))
+            {
+                usedLocalImageIds.Add(id);
+                imageId = id;
+                return true;
+            }
+        }
+
+        imageId = "";
+        return false;
     }
 
     /// <summary>把正文里的旧图片引用替换成本机新写入的图片 ID。</summary>

@@ -159,6 +159,156 @@ public sealed class ImageCompressionTests
         }));
     }
 
+    [Fact]
+    public void Wide_image_under_8MiB_is_compressed_during_package_import()
+    {
+        RunSta(() => WithTempDirectory(directory =>
+        {
+            // 复现“重复导入图片膨胀”的根因：图片小于 8 MiB，但宿主会因最长边超过 2048
+            // 自动重编码。插件必须同样处理，写回的字节才是确定的。
+            var source = CreateNoisePng(2600, 120, PixelFormats.Bgr24);
+            Assert.True(source.Length < ImageCompressionService.MaxImageBytes);
+
+            var image = new CapturedExportImage(
+                "p1",
+                "123456",
+                ExportPackageService.BuildImageEntry("p1", "123456", "image/png"),
+                "image/png",
+                source,
+                Restorable: true);
+
+            var document = new ExportDocument
+            {
+                SchemaVersion = ExportDocument.CurrentSchemaVersion,
+                Papers =
+                [
+                    new ExportPaper
+                    {
+                        SourceId = "p1",
+                        Type = "note",
+                        Title = "宽图笔记",
+                        ContentAvailable = true,
+                        Content = "![image|100%](i:123456)"
+                    }
+                ],
+                Images = [ExportPackageService.ToManifest(image)]
+            };
+
+            var path = Path.Combine(directory, "wide.zip");
+            ExportPackageService.WriteJsonZip(path, document, [image]);
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.Null(plan.FatalError);
+            Assert.Equal(1, plan.CompressedImageCount);
+            Assert.Equal(1, plan.RestorableImageCount);
+
+            var asset = Assert.Single(Assert.Single(plan.Papers).Images);
+            Assert.True(asset.Restorable);
+            Assert.NotEqual(source.Length, asset.Bytes.Length);
+            Assert.True(asset.Bytes.Length < source.Length);
+        }));
+    }
+
+    [Fact]
+    public void Dimension_triggered_host_compression_is_deterministic()
+    {
+        RunSta(() =>
+        {
+            // 小于 8 MiB、但最长边超过 2048：宿主会自动重编码，插件必须给出确定的结果，
+            // 否则再次导入时字节对不上，无法复用图片。
+            var source = CreateNoisePng(2600, 120, PixelFormats.Bgr24);
+            Assert.True(source.Length < ImageCompressionService.MaxImageBytes);
+
+            Assert.True(ImageCompressionService.TryPrepareForHost(
+                source,
+                "image/png",
+                out var first,
+                out var reason), reason);
+            Assert.True(first.Compressed);
+            Assert.True(Math.Max(first.Width, first.Height) <= 2048);
+            Assert.True(first.Bytes.Length <= ImageCompressionService.MaxImageBytes);
+
+            Assert.True(ImageCompressionService.TryPrepareForHost(
+                source,
+                "image/png",
+                out var second,
+                out _));
+            Assert.Equal(first.Bytes, second.Bytes);
+        });
+    }
+
+    [Fact]
+    public void Small_image_passes_through_unchanged()
+    {
+        RunSta(() =>
+        {
+            var source = CreateNoisePng(64, 64, PixelFormats.Bgr24);
+
+            Assert.True(ImageCompressionService.TryPrepareForHost(
+                source,
+                "image/png",
+                out var prepared,
+                out var reason), reason);
+            Assert.False(prepared.Compressed);
+            Assert.Same(source, prepared.Bytes);
+        });
+    }
+
+    [Fact]
+    public void Gif_that_host_would_reencode_is_rejected()
+    {
+        RunSta(() =>
+        {
+            var source = CreateGif(2600, 100);
+
+            Assert.False(ImageCompressionService.TryPrepareForHost(
+                source,
+                "image/gif",
+                out _,
+                out var reason));
+            Assert.Contains("GIF", reason);
+        });
+    }
+
+    [Fact]
+    public void Oversized_dimensions_are_rejected_by_host_preparation()
+    {
+        RunSta(() =>
+        {
+            var source = CreateNoisePng(4200, 120, PixelFormats.Bgr24);
+
+            Assert.False(ImageCompressionService.TryPrepareForHost(
+                source,
+                "image/png",
+                out _,
+                out var reason));
+            Assert.Contains("4096", reason);
+        });
+    }
+
+    private static byte[] CreateGif(int width, int height)
+    {
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        new Random(654321).NextBytes(pixels);
+
+        var bitmap = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgr32,
+            null,
+            pixels,
+            stride);
+        var encoder = new GifBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return stream.ToArray();
+    }
+
     private static byte[] CreateNoisePng(int width, int height, PixelFormat format)
     {
         var stride = width * (format.BitsPerPixel / 8);
