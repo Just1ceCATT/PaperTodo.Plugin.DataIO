@@ -194,6 +194,15 @@ internal static class ImportPlanParser
         {
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+
+            // DataIO 导出压缩包优先按导出格式解析；即使同时含根级 dataN.json 也不当作备份弹选择框。
+            if (archive.Entries.Any(entry =>
+                    string.Equals(entry.FullName, ExportPackageService.JsonEntryName, StringComparison.Ordinal) ||
+                    string.Equals(entry.FullName, ExportPackageService.MarkdownEntryName, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
             TryCollectCoreEntries(archive, out var entries, out var duplicate);
             if (duplicate || entries.Count == 0)
             {
@@ -341,7 +350,11 @@ internal static class ImportPlanParser
 
         if (combined.Papers.Count == 0)
         {
-            return Fatal("备份压缩包中没有可导入的纸片。");
+            // 把逐条跳过原因一并带出，避免只报“没有可导入的纸片”而丢失诊断信息。
+            var detail = entryWarnings.Count > 0
+                ? "\n" + string.Join("\n", entryWarnings)
+                : "";
+            return Fatal("备份压缩包中没有可导入的纸片。" + detail);
         }
 
         if (combined.Papers.Count > MaxPapers)

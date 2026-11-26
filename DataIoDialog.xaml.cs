@@ -230,7 +230,10 @@ public partial class DataIoDialog : Window
             .Select(choice => choice.Name)
             .ToArray();
 
-    /// <summary>备份工作区多选：默认勾选当前工作区；找不到当前工作区时勾选全部可读项。</summary>
+    /// <summary>
+    /// 备份工作区多选：默认只勾选当前工作区（即使它不可读，也不预勾选其它工作区）；
+    /// 已知当前工作区名称但备份里没有时才勾选全部可读项；无法判断当前工作区时不预勾选。
+    /// </summary>
     internal void SetCoreBackupWorkspaces(
         string fileName,
         IReadOnlyList<CoreBackupWorkspace> workspaces,
@@ -240,10 +243,13 @@ public partial class DataIoDialog : Window
         MinWidth = 560;
         MaxWidth = 560;
 
+        // 先按文件名定位当前工作区条目，是否可读另行处理，避免不可读时误勾选其它工作区。
         var current = workspaces.FirstOrDefault(workspace =>
-            workspace.IsReadable &&
             string.Equals(workspace.Name, currentWorkspaceName, StringComparison.OrdinalIgnoreCase));
-        var selectAll = current is null;
+
+        // 已知当前工作区名称却找不到对应条目时，退化为勾选全部可读项；
+        // 名称未知（宿主不支持或读取失败）时不预勾选，防止直接回车误合并全部工作区。
+        var selectAll = current is null && !string.IsNullOrWhiteSpace(currentWorkspaceName);
 
         BodyPanel.Children.Add(new TextBlock
         {

@@ -1297,10 +1297,6 @@ public partial class DataIoView : UserControl
     }
 
     /// <summary>
-    /// 展示更新差异并收集每张纸片的处理方式；unrecoverable 为文件层面无法完整还原的内容。
-    /// 返回 null 表示取消导入。
-    /// </summary>
-    /// <summary>
     /// 备份压缩包含多个工作区时，让用户勾选一个或多个；返回 null 表示取消导入。
     /// </summary>
     internal IReadOnlyList<string>? ShowCoreBackupWorkspaceDialog(
@@ -1324,6 +1320,10 @@ public partial class DataIoView : UserControl
         return selected.Count > 0 ? selected : null;
     }
 
+    /// <summary>
+    /// 展示更新差异并收集每张纸片的处理方式；unrecoverable 为文件层面无法完整还原的内容。
+    /// 返回 null 表示取消导入。
+    /// </summary>
     internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,

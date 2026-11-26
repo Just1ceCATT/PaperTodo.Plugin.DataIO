@@ -336,6 +336,53 @@ public sealed class ImportPackageTests
     }
 
     [Fact]
+    public void Core_workspace_scan_ignores_dataio_export_packages()
+    {
+        WithTempDirectory(directory =>
+        {
+            var document = CreateDocument("导出笔记");
+            var path = Path.Combine(directory, "export.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(
+                    archive,
+                    ExportPackageService.JsonEntryName,
+                    JsonSerializer.Serialize(document, ExportJson.Options));
+                // 同时含根级 data.json：仍应按 DataIO 导出优先，而不是备份。
+                WriteEntry(archive, "data.json", CoreDocument("n1", "工作区1笔记"));
+            }
+
+            Assert.False(
+                ImportPlanParser.TryReadCoreBackupWorkspaces(path, out var workspaces, out _));
+            Assert.Empty(workspaces);
+
+            var plan = ImportPlanParser.ParseFile(path);
+            Assert.Null(plan.FatalError);
+            Assert.Equal("JSON 压缩包", plan.ContainerFormat);
+            Assert.Single(plan.Papers);
+        });
+    }
+
+    [Fact]
+    public void Core_backup_reports_why_workspace_is_unreadable()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "PaperTodo-core-bad.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(archive, "data.json", "{ 不是有效 JSON");
+            }
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.NotNull(plan.FatalError);
+            Assert.Contains("没有可导入的纸片", plan.FatalError);
+            Assert.Contains("data.json", plan.FatalError);
+        });
+    }
+
+    [Fact]
     public void Unreferenced_image_asset_is_counted_and_reported()
     {
         WithTempDirectory(directory =>

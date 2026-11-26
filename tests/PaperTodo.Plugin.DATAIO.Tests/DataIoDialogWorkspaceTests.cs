@@ -107,6 +107,81 @@ public sealed class DataIoDialogWorkspaceTests
         Assert.Equal([true, true], states);
     }
 
+    [Fact]
+    public void Workspace_picker_does_not_select_others_when_current_is_unreadable()
+    {
+        // 当前工作区条目存在但不可读：不应退化为勾选其它可读工作区。
+        var states = BuildPickerStates(
+            [
+                new CoreBackupWorkspace(1, "data.json", 0, 0, 0, 0, false),
+                new CoreBackupWorkspace(2, "data2.json", 8, 4, 4, 3, true)
+            ],
+            "data.json");
+
+        Assert.Equal([false, false], states);
+    }
+
+    [Fact]
+    public void Workspace_picker_selects_nothing_when_current_is_unknown()
+    {
+        // 无法判断当前工作区（null）时不预勾选，避免默认合并全部工作区。
+        var states = BuildPickerStates(
+            [
+                new CoreBackupWorkspace(1, "data.json", 8, 7, 1, 5, true),
+                new CoreBackupWorkspace(2, "data2.json", 8, 4, 4, 3, true)
+            ],
+            null);
+
+        Assert.Equal([false, false], states);
+    }
+
+    private static bool[] BuildPickerStates(
+        IReadOnlyList<CoreBackupWorkspace> workspaces,
+        string? currentWorkspaceName)
+    {
+        bool[]? states = null;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var theme = new PaperBodyTheme(
+                    true,
+                    "#211F1C",
+                    "#E7E0D4",
+                    "#92897B",
+                    "#A88E6A",
+                    "#4C453D",
+                    "Microsoft YaHei UI",
+                    1.0);
+                var dialog = new DataIoDialog(
+                    theme,
+                    System.Windows.Media.Colors.Gray,
+                    "选择备份工作区",
+                    "导入所选",
+                    "取消");
+                dialog.SetCoreBackupWorkspaces(
+                    "PaperTodo-core-test.zip",
+                    workspaces,
+                    currentWorkspaceName);
+                states = FindCheckBoxes(dialog)
+                    .Select(box => box.IsChecked == true)
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "对话框构建超时");
+        Assert.Null(failure);
+        Assert.NotNull(states);
+        return states;
+    }
+
     private static IEnumerable<CheckBox> FindCheckBoxes(DependencyObject root)
     {
         foreach (var child in LogicalTreeHelper.GetChildren(root))
