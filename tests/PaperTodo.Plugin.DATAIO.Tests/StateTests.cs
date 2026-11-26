@@ -16,6 +16,30 @@ public sealed class StateTests
     }
 
     [Fact]
+    public void Import_links_over_cap_drop_oldest_by_last_import_time()
+    {
+        var links = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
+        for (var index = 0; index < DataIoState.MaxImportLinks + 50; index++)
+        {
+            links[$"s{index}"] = new ImportIdentityLink
+            {
+                LocalPaperId = $"p{index}",
+                Type = "note",
+                // 插入顺序与导入时间相反：最旧的条目反而最后插入。
+                LastImportedAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)
+                    .AddMinutes(index)
+                    .ToString("O")
+            };
+        }
+
+        var normalized = DataIoState.NormalizeImportLinks(links);
+
+        Assert.Equal(DataIoState.MaxImportLinks, normalized.Count);
+        Assert.False(normalized.ContainsKey("s0"));
+        Assert.True(normalized.ContainsKey($"s{DataIoState.MaxImportLinks + 49}"));
+    }
+
+    [Fact]
     public void Search_keyword_is_restored()
     {
         var state = DataIoState.Parse("{\"Search\":\"周报\"}");

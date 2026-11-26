@@ -168,11 +168,6 @@ internal sealed class DataIoState
 
         foreach (var (sourceId, link) in links)
         {
-            if (normalized.Count >= MaxImportLinks)
-            {
-                break;
-            }
-
             if (string.IsNullOrWhiteSpace(sourceId) ||
                 link == null ||
                 string.IsNullOrWhiteSpace(link.LocalPaperId) ||
@@ -193,8 +188,28 @@ internal sealed class DataIoState
             normalized[sourceId] = link;
         }
 
+        // 超过上限时按最近导入时间淘汰最旧条目，与运行期 Trim 的规则一致。
+        // 不能按插入顺序截断：字典顺序是“首次登记顺序”，会把仍在频繁使用的旧来源先扔掉。
+        if (normalized.Count > MaxImportLinks)
+        {
+            var keep = normalized
+                .OrderByDescending(pair => ParseImportedAt(pair.Value.LastImportedAt))
+                .Take(MaxImportLinks)
+                .Select(pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var sourceId in normalized.Keys.Where(id => !keep.Contains(id)).ToList())
+            {
+                normalized.Remove(sourceId);
+            }
+        }
+
         return normalized;
     }
+
+    private static DateTimeOffset ParseImportedAt(string? value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
 }
 
 /// <summary>一条导入身份映射，附带用于识别本地修改的指纹。</summary>

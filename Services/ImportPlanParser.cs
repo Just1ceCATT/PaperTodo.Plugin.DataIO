@@ -27,7 +27,11 @@ internal static class ImportPlanParser
 
     /// <summary>压缩包图片数量上限；导出端也必须按同一上限截断，否则产物无法导入。</summary>
     internal const int MaxPackageImages = 2_000;
-    private const long MaxImageEntryBytes = IPaperNoteAssetsApi.MaximumImageBytes;
+    /// <summary>
+    /// 压缩包单张图片读取上限：与宿主输入上限一致（32 MiB）。
+    /// 超过 8 MiB 的图片会在解析时按宿主规则压缩后再写回。
+    /// </summary>
+    private const long MaxImageEntryBytes = 32L * 1024 * 1024;
 
     /// <summary>压缩包文件本身的读取上限；没有上限时超大归档会在打开阶段就占用大量内存。</summary>
     private const long MaxArchiveFileBytes = 512L * 1024 * 1024;
