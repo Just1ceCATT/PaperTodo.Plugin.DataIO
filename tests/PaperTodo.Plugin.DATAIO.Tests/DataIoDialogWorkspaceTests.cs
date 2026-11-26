@@ -135,6 +135,98 @@ public sealed class DataIoDialogWorkspaceTests
         Assert.Equal([false, false], states);
     }
 
+    [Fact]
+    public void Update_preview_renders_in_batches_and_covers_all_papers()
+    {
+        Exception? failure = null;
+        (int Choices, string? FirstMore, string? SecondMore, bool LastMoreMissing)? state = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var theme = new PaperBodyTheme(
+                    true,
+                    "#211F1C",
+                    "#E7E0D4",
+                    "#92897B",
+                    "#A88E6A",
+                    "#4C453D",
+                    "Microsoft YaHei UI",
+                    1.0);
+                var dialog = new DataIoDialog(
+                    theme,
+                    System.Windows.Media.Colors.Gray,
+                    "更新预览",
+                    "导入",
+                    "取消");
+                var papers = Enumerable.Range(0, 100)
+                    .Select(index => new ImportPaper
+                    {
+                        Source = new ExportPaper
+                        {
+                            Type = "note",
+                            Title = $"笔记 {index}",
+                            Content = "正文",
+                            ContentAvailable = true
+                        },
+                        UpdateTargetId = $"p{index}",
+                        UpdateTargetTitle = $"本地 {index}"
+                    })
+                    .ToList();
+
+                dialog.SetUpdatePreview(papers, null, canCreate: true);
+
+                var firstMore = FindButtons(dialog)
+                    .FirstOrDefault(button => $"{button.Content}".Contains("显示更多"));
+                firstMore?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var secondMore = FindButtons(dialog)
+                    .FirstOrDefault(button => $"{button.Content}".Contains("显示更多"));
+                secondMore?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var lastMore = FindButtons(dialog)
+                    .FirstOrDefault(button => $"{button.Content}".Contains("显示更多"));
+
+                state = (
+                    dialog.UpdateChoices.Count,
+                    firstMore is null ? null : $"{firstMore.Content}",
+                    secondMore is null ? null : $"{secondMore.Content}",
+                    lastMore is null);
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "对话框构建超时");
+        Assert.Null(failure);
+        Assert.NotNull(state);
+        Assert.Equal(100, state!.Value.Choices);
+        Assert.Contains("剩余 60 张", state.Value.FirstMore);
+        Assert.Contains("剩余 20 张", state.Value.SecondMore);
+        Assert.True(state.Value.LastMoreMissing);
+    }
+
+    private static IEnumerable<Button> FindButtons(DependencyObject root)
+    {
+        foreach (var child in LogicalTreeHelper.GetChildren(root))
+        {
+            if (child is Button button)
+            {
+                yield return button;
+            }
+
+            if (child is DependencyObject dependencyObject)
+            {
+                foreach (var nested in FindButtons(dependencyObject))
+                {
+                    yield return nested;
+                }
+            }
+        }
+    }
+
     private static bool[] BuildPickerStates(
         IReadOnlyList<CoreBackupWorkspace> workspaces,
         string? currentWorkspaceName)

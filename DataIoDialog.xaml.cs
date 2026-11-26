@@ -21,11 +21,22 @@ public partial class DataIoDialog : Window
     /// <summary>每张更新卡片的三个选项按钮，供“全部更新/全部跳过”批量切换。</summary>
     private readonly Dictionary<ImportPaper, Dictionary<ImportUpdateAction, RadioButton>> _choiceButtons = [];
 
+    /// <summary>每张纸片允许选择的动作，批量操作与未渲染卡片都要按它过滤。</summary>
+    private readonly Dictionary<ImportPaper, (bool Update, bool CreateNew)> _allowedActions = [];
+
+    /// <summary>尚未渲染的更新卡片，避免一次导入构建数万个控件冻结界面。</summary>
+    private readonly List<(ImportPaper Paper, int Index, bool CanCreate)> _pendingUpdateCards = [];
+    private int _renderedUpdateCards;
+    private Button? _moreCardsButton;
+
     /// <summary>更新预览的实时决策摘要与主按钮。</summary>
     private TextBlock? _updateSummaryText;
     private Button? _primaryButton;
     private int _newPaperCount;
     private IReadOnlyList<string> _unchangedTitles = [];
+
+    /// <summary>每批渲染的卡片数量：200 张 × 161 行差异远超一次性布局能力。</summary>
+    private const int UpdateCardBatchSize = 40;
 
     public DataIoDialog(
         PaperBodyTheme theme,
@@ -574,11 +585,23 @@ public partial class DataIoDialog : Window
 
         BodyPanel.Children.Add(BuildDecisionToolbar());
 
+        // 所有卡片先登记为默认“跳过”，未渲染的卡片也参与批量操作与摘要统计。
+        _pendingUpdateCards.Clear();
+        _renderedUpdateCards = 0;
+        _choiceButtons.Clear();
+        _allowedActions.Clear();
         for (var index = 0; index < papers.Count; index++)
         {
-            BodyPanel.Children.Add(BuildUpdateCard(papers[index], index, canCreate));
+            var paper = papers[index];
+            var contentUnavailable =
+                string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase) &&
+                paper.Source.ContentAvailable != true;
+            _allowedActions[paper] = (!contentUnavailable, canCreate);
+            _updateChoices[paper] = ImportUpdateAction.Skip;
+            _pendingUpdateCards.Add((paper, index, canCreate));
         }
 
+        RenderNextCardBatch();
         RefreshUpdateDecision();
     }
 
@@ -663,12 +686,59 @@ public partial class DataIoDialog : Window
 
     private void SetAllChoices(ImportUpdateAction action)
     {
-        foreach (var choices in _choiceButtons.Values)
+        // 批量操作覆盖全部纸片（含尚未渲染的卡片），但遵守每张纸片的可用动作。
+        foreach (var (paper, allowed) in _allowedActions)
         {
-            if (choices.TryGetValue(action, out var button) && button.IsEnabled)
+            if (action == ImportUpdateAction.Update && !allowed.Update)
+            {
+                continue;
+            }
+
+            if (action == ImportUpdateAction.CreateNew && !allowed.CreateNew)
+            {
+                continue;
+            }
+
+            _updateChoices[paper] = action;
+            if (_choiceButtons.TryGetValue(paper, out var choices) &&
+                choices.TryGetValue(action, out var button) &&
+                button.IsEnabled)
             {
                 button.IsChecked = true;
             }
+        }
+
+        RefreshUpdateDecision();
+    }
+
+    /// <summary>追加渲染下一批更新卡片；剩余部分通过“显示更多”按钮继续展开。</summary>
+    private void RenderNextCardBatch()
+    {
+        if (_moreCardsButton is not null)
+        {
+            BodyPanel.Children.Remove(_moreCardsButton);
+            _moreCardsButton = null;
+        }
+
+        var end = Math.Min(
+            _pendingUpdateCards.Count,
+            _renderedUpdateCards + UpdateCardBatchSize);
+        for (var i = _renderedUpdateCards; i < end; i++)
+        {
+            var (paper, index, canCreate) = _pendingUpdateCards[i];
+            BodyPanel.Children.Add(BuildUpdateCard(paper, index, canCreate));
+        }
+
+        _renderedUpdateCards = end;
+        var remaining = _pendingUpdateCards.Count - _renderedUpdateCards;
+        if (remaining > 0)
+        {
+            var button = CreateMiniButton($"显示更多（剩余 {remaining} 张）");
+            button.HorizontalAlignment = HorizontalAlignment.Left;
+            button.Margin = new Thickness(0, 2, 0, 10);
+            button.Click += (_, _) => RenderNextCardBatch();
+            _moreCardsButton = button;
+            BodyPanel.Children.Add(button);
         }
     }
 
@@ -875,6 +945,11 @@ public partial class DataIoDialog : Window
         bool enabled = true,
         string? disabledToolTip = null)
     {
+        // 默认“跳过”：覆盖本地数据必须是显式选择；但若批量操作已为这张纸片
+        // 选择了动作（可能发生在“显示更多”之前），渲染时保持已有选择。
+        var current = _updateChoices.TryGetValue(paper, out var chosen)
+            ? chosen
+            : ImportUpdateAction.Skip;
         var radio = new RadioButton
         {
             Content = label,
@@ -883,10 +958,8 @@ public partial class DataIoDialog : Window
             FontSize = 12.0 * _scale,
             IsEnabled = enabled,
             ToolTip = disabledToolTip,
-            // 默认“跳过”：覆盖本地数据必须是显式选择。
-            IsChecked = action == ImportUpdateAction.Skip
+            IsChecked = current == action
         };
-        _updateChoices[paper] = ImportUpdateAction.Skip;
         ToolTipService.SetShowOnDisabled(radio, true);
         if (!_choiceButtons.TryGetValue(paper, out var choices))
         {
