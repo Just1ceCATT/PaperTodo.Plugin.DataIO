@@ -241,10 +241,12 @@ internal sealed class ImportService
         if (target == null ||
             !string.Equals(target.Type, type, StringComparison.Ordinal))
         {
-            result.Warnings.Add(
-                $"纸片“{DisplayTitle(importPaper)}”的更新目标已失效，已改为新建。");
-            var fallbackId = await CreateOneAsync(importPaper, settings, result);
-            return (fallbackId, true, false);
+            // 用户已明确选择“更新”，目标却在确认后被删除或改变了类型：
+            // 静默改为新建会产生用户没有确认过的数据，必须中止本次导入。
+            throw new PaperTodoPluginException(
+                "target_changed",
+                $"纸片“{DisplayTitle(importPaper)}”的更新目标在确认后已被删除或类型改变，" +
+                "已中止本次导入。请重新导入文件并再次确认。");
         }
 
         if (!string.IsNullOrWhiteSpace(importPaper.SafeTitle) &&
@@ -1639,7 +1641,8 @@ internal sealed class ImportService
         "session_closed" or
         "app_exiting" or
         "data_reload_in_progress" or
-        "paper_limit";
+        "paper_limit" or
+        "target_changed";
 
     private static ImportFailure Failure(int index, ImportPaper paper, PaperTodoPluginException ex) =>
         new(index + 1, DisplayTitle(paper), paper.Source.Type, ex.Code, ex.Message);
