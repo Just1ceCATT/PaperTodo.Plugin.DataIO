@@ -5,8 +5,12 @@ namespace PaperTodo.Plugin.DataIo;
 /// <summary>通过宿主逻辑数据 API 采集快照并组装导出文档。</summary>
 internal sealed class ExportService
 {
-    /// <summary>一次导出最多内嵌的图片总字节；超出后剩余图片只保留正文引用并提示。</summary>
-    internal const long MaxEmbeddedImageBytes = 512L * 1024 * 1024;
+    /// <summary>
+    /// 一次导出最多内嵌的图片总字节；超出后剩余图片只保留正文引用并提示。
+    /// 必须小于导入端的 512 MiB 整包解压上限：正文与清单也会计入该上限，
+    /// 否则合法的导出包可能被本插件自己的导入端拒绝，备份无法恢复。
+    /// </summary>
+    internal const long MaxEmbeddedImageBytes = 440L * 1024 * 1024;
 
     private readonly HostGateway _gateway;
 
@@ -57,6 +61,7 @@ internal sealed class ExportService
             }
         };
 
+        var skippedProviderBodies = 0;
         foreach (var paper in papers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -67,8 +72,23 @@ internal sealed class ExportService
                 continue;
             }
 
-            document.Papers.Add(
-                await MapPaperAsync(paper, todosByPaper, cancellationToken));
+            var exportPaper = await MapPaperAsync(paper, todosByPaper, cancellationToken);
+            if (string.Equals(exportPaper.Type, "note", StringComparison.Ordinal) &&
+                exportPaper.ContentAvailable == false)
+            {
+                skippedProviderBodies++;
+            }
+
+            document.Papers.Add(exportPaper);
+        }
+
+        if (skippedProviderBodies > 0)
+        {
+            document.Warnings =
+            [
+                $"{skippedProviderBodies} 张笔记由第三方插件绘制正文，内容无法读取，" +
+                "导出文件中没有它们的正文。"
+            ];
         }
 
         return document;
@@ -204,9 +224,10 @@ internal sealed class ExportService
             {
                 throw;
             }
-            catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+            catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
             {
-                // 图片已被清理、归属变化或超出读取上限时保留引用并继续导出。
+                // 图片已被清理、归属变化、被杀毒/同步盘锁定或超出读取上限时，
+                // 只跳过这一张图片，不能让整次导出失败。
                 state.FailedReads++;
             }
 

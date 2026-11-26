@@ -9,7 +9,9 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static partial class ImageReferenceScanner
 {
-    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{1,12}\s*\)", RegexOptions.CultureInvariant)]
+    // 与宿主一致：图片 ID 为 3～8 位数字。统计规则必须与采集/改写一致，
+    // 否则界面显示“有图片”但导出时不会采集，跨机恢复时图片丢失。
+    [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:\d{3,8}\s*\)", RegexOptions.CultureInvariant)]
     private static partial Regex ReferencePattern();
 
     [GeneratedRegex(@"!\[[^\]\r\n]*\]\(\s*i:(\d{3,8})\s*\)", RegexOptions.CultureInvariant)]

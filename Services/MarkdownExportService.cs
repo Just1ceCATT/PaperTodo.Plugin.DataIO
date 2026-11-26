@@ -64,16 +64,21 @@ internal static class MarkdownExportService
 
     private static void AppendTitle(StringBuilder builder, string? title)
     {
-        var text = string.IsNullOrWhiteSpace(title)
-            ? "（无标题）"
-            : title.ReplaceLineEndings(" ").Trim();
-        builder.Append("# ").AppendLine(text).AppendLine();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            // 用独立标记表达“标题为空”，避免回导时被文件名兜底成“（无标题）”或文件名。
+            builder.Append("<!-- ").Append(MarkdownImportParser.EmptyTitleMarker).AppendLine(" -->");
+            builder.AppendLine();
+            return;
+        }
+
+        builder.Append("# ").AppendLine(title.ReplaceLineEndings(" ").Trim()).AppendLine();
     }
 
     private static void AppendTodos(StringBuilder builder, ExportPaper paper)
     {
+        // 不丢弃空白待办：JSON 会保留它们，Markdown 往返也应保持同样的条目数量。
         var todos = paper.Todos?
-            .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
             .OrderBy(todo => todo.Order)
             .ToArray() ?? [];
 
@@ -141,11 +146,14 @@ internal static class MarkdownExportService
     /// </summary>
     private static void AppendNoteContent(StringBuilder builder, string content)
     {
+        var fenceCharacter = '\0';
         foreach (var rawLine in MarkdownNormalize.NormalizeLineEndings(content).Split('\n'))
         {
             var line = rawLine;
             if (MarkdownImportParser.IsSectionMarkerLine(line) ||
-                MarkdownImportParser.IsContentUnavailableMarker(line))
+                MarkdownImportParser.IsContentUnavailableMarker(line) ||
+                MarkdownImportParser.IsEmptyTitleMarker(line) ||
+                MarkdownImportParser.IsFenceClosedMarker(line))
             {
                 var markerStart = line.IndexOf("<!--", StringComparison.Ordinal);
                 if (markerStart >= 0)
@@ -154,7 +162,16 @@ internal static class MarkdownExportService
                 }
             }
 
+            MarkdownImportParser.TryToggleFence(line.Trim(), ref fenceCharacter);
             builder.AppendLine(line);
+        }
+
+        // 正文以未闭合的代码围栏结束时，主动补一个闭合围栏；
+        // 否则回导时围栏会一直开着，把下一张纸片的正文吞进去。
+        if (fenceCharacter != '\0')
+        {
+            builder.AppendLine(fenceCharacter == '~' ? "~~~" : "```");
+            builder.Append("<!-- ").Append(MarkdownImportParser.FenceClosedMarker).AppendLine(" -->");
         }
     }
 

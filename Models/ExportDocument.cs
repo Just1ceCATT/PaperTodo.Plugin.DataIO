@@ -25,6 +25,9 @@ internal sealed class ExportDocument
 
     /// <summary>压缩包内的图片清单；普通单文件导出为 null。</summary>
     public List<ExportImage>? Images { get; set; }
+
+    /// <summary>导出时无法完整保存的内容提示；导入端忽略该字段。</summary>
+    public List<string>? Warnings { get; set; }
 }
 
 /// <summary>

@@ -15,6 +15,15 @@ internal static partial class MarkdownImportParser
     /// <summary>正文不可读取的笔记使用的标记，避免把占位文案当作真正文导入。</summary>
     internal const string ContentUnavailableMarker = "papertodo-dataio:content-unavailable";
 
+    /// <summary>标题为空的纸片使用的标记；没有它时导入端会用文件名兜底标题。</summary>
+    internal const string EmptyTitleMarker = "papertodo-dataio:title-empty";
+
+    /// <summary>
+    /// 导出时为未闭合代码围栏补的闭合标记；导入时据此移除人工补上的围栏行，
+    /// 保持正文与导出前一致，同时避免围栏吞掉下一张纸片。
+    /// </summary>
+    internal const string FenceClosedMarker = "papertodo-dataio:fence-closed";
+
     /// <summary>旧版导出使用的占位文案；仅当正文整体等于该文案时才按“正文缺失”处理。</summary>
     private const string LegacyUnavailablePlaceholder = "（正文不可读取，未导出）";
 
@@ -47,8 +56,9 @@ internal static partial class MarkdownImportParser
             if (fenceCharacter != '\0')
             {
                 // 未闭合的围栏会让后续所有纸片都被当成代码内容。
-                // 导出端会转义正文中的标记行，因此严格命中的 v2 标记仍是结构边界：
-                // 只有在“当前围栏之后还有闭合围栏”时，才把标记当作代码内容忽略。
+                // 导出端会转义正文中的标记行，并给未闭合的围栏补一个闭合围栏，
+                // 因此插件生成的文件不会出现“围栏内未被转义的 v2 标记”；
+                // 这里仍保持保守：只有围栏之后确实没有闭合围栏时才当作分节边界。
                 if (TypeMarkerPattern().IsMatch(trimmed) &&
                     trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase) &&
                     !HasClosingFenceAhead(lines, index + 1, fenceCharacter))
@@ -124,7 +134,13 @@ internal static partial class MarkdownImportParser
             bodyStart++;
         }
 
-        if (bodyStart < end && lines[bodyStart].StartsWith("# ", StringComparison.Ordinal))
+        if (bodyStart < end && IsEmptyTitleMarker(lines[bodyStart]))
+        {
+            // 明确标记的空标题：保留为空，而不是用文件名兜底。
+            title = "";
+            bodyStart++;
+        }
+        else if (bodyStart < end && lines[bodyStart].StartsWith("# ", StringComparison.Ordinal))
         {
             title = lines[bodyStart][2..].Trim();
             bodyStart++;
@@ -136,10 +152,8 @@ internal static partial class MarkdownImportParser
             // 只有带来源标记的 Markdown 才参与后续“更新原纸片”的身份匹配。
             SourceId = sourceId,
             Type = type,
-            // Markdown 不保存标题时用文件名兜底，避免导入为无标题纸片。
-            Title = string.IsNullOrWhiteSpace(title)
-                ? FallbackTitle(filePath, paperIndex)
-                : title,
+            // 文件里没有标题行时用文件名兜底；显式空标题标记保持为空。
+            Title = title ?? FallbackTitle(filePath, paperIndex),
             Show = true
         };
 
@@ -168,6 +182,17 @@ internal static partial class MarkdownImportParser
             if (IsContentUnavailableMarker(line))
             {
                 unavailable = true;
+                continue;
+            }
+
+            if (IsFenceClosedMarker(line))
+            {
+                // 移除导出时补上的闭合围栏，恢复正文原本的未闭合状态。
+                if (bodyLines.Count > 0 && IsFenceLine(bodyLines[^1]))
+                {
+                    bodyLines.RemoveAt(bodyLines.Count - 1);
+                }
+
                 continue;
             }
 
@@ -269,6 +294,31 @@ internal static partial class MarkdownImportParser
                trimmed.Contains(ContentUnavailableMarker, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>判断一行是否是“空标题”标记。</summary>
+    internal static bool IsEmptyTitleMarker(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.StartsWith("<!--", StringComparison.Ordinal) &&
+               trimmed.EndsWith("-->", StringComparison.Ordinal) &&
+               trimmed.Contains(EmptyTitleMarker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>判断一行是否是“补闭合围栏”标记。</summary>
+    internal static bool IsFenceClosedMarker(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.StartsWith("<!--", StringComparison.Ordinal) &&
+               trimmed.EndsWith("-->", StringComparison.Ordinal) &&
+               trimmed.Contains(FenceClosedMarker, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFenceLine(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.StartsWith("```", StringComparison.Ordinal) ||
+               trimmed.StartsWith("~~~", StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// 围栏之后是否还有同种闭合围栏。遇到下一个 v2 分节标记即停止：
     /// 说明当前围栏在分节边界仍未闭合，应把它当作未闭合围栏处理。
@@ -299,7 +349,7 @@ internal static partial class MarkdownImportParser
     /// 在 ~~~ 块内出现 ``` 行时不会误把围栏类型切换掉。
     /// 返回 true 表示当前行是围栏行。
     /// </summary>
-    private static bool TryToggleFence(string trimmed, ref char fenceCharacter)
+    internal static bool TryToggleFence(string trimmed, ref char fenceCharacter)
     {
         if (trimmed.StartsWith("```", StringComparison.Ordinal))
         {

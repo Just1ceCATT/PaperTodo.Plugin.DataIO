@@ -17,9 +17,9 @@ internal static class ExportPackageService
 
     private const string ImagesDirectory = "images";
 
-    /// <summary>生成压缩包内的图片路径；来源 ID 做安全化处理，路径统一使用正斜杠。</summary>
+    /// <summary>生成压缩包内的图片路径；来源 ID 与图片 ID 都做安全化处理，路径统一使用正斜杠。</summary>
     public static string BuildImageEntry(string paperSourceId, string imageId, string mime) =>
-        $"{ImagesDirectory}/{SafeSegment(paperSourceId)}/{imageId}{ExtensionFromMime(mime)}";
+        $"{ImagesDirectory}/{SafeSegment(paperSourceId)}/{SafeSegment(imageId)}{ExtensionFromMime(mime)}";
 
     /// <summary>JSON 压缩包：正文保持 i: 引用，清单写在 ExportDocument.Images 中。</summary>
     public static void WriteJsonZip(
@@ -27,13 +27,15 @@ internal static class ExportPackageService
         ExportDocument document,
         IReadOnlyList<CapturedExportImage> images)
     {
+        var json = JsonSerializer.Serialize(document, ExportJson.Options);
+        EnsureTextFits(json, "导出 JSON");
         JsonFiles.WriteBytesAtomic(path, stream =>
         {
             using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true);
             AddText(
                 archive,
                 JsonEntryName,
-                JsonSerializer.Serialize(document, ExportJson.Options),
+                json,
                 CompressionLevel.Optimal);
             foreach (var image in images)
             {
@@ -58,6 +60,7 @@ internal static class ExportPackageService
             document,
             (paperSourceId, imageId) =>
                 links.TryGetValue((paperSourceId, imageId), out var file) ? file : null);
+        EnsureTextFits(markdown, "导出 Markdown");
 
         var manifest = new ExportImageManifest
         {
@@ -108,6 +111,16 @@ internal static class ExportPackageService
         var entry = archive.CreateEntry(name, CompressionLevel.NoCompression);
         using var stream = entry.Open();
         stream.Write(bytes);
+    }
+
+    /// <summary>正文条目超过导入端单文件上限时，导出产物无法被本插件读回，必须提前拒绝。</summary>
+    private static void EnsureTextFits(string text, string what)
+    {
+        if (Encoding.UTF8.GetByteCount(text) > JsonFiles.MaxImportBytes)
+        {
+            throw new InvalidOperationException(
+                $"{what}超过 64 MiB 上限，生成的文件将无法被本插件重新导入；请减少纸片数量后重试。");
+        }
     }
 
     /// <summary>把纸片 ID 限制在安全字符内；发生替换时追加短哈希，避免不同 ID 落到同一目录。</summary>

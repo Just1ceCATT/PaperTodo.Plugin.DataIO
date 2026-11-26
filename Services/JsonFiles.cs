@@ -55,6 +55,11 @@ internal static class JsonFiles
                        FileShare.None))
             {
                 write(stream);
+
+                // 先把数据刷到磁盘再改名：断电窗口内改完名却没有数据块落盘，
+                // 会得到空/半截文件，而旧文件已经被覆盖。
+                stream.Flush();
+                stream.Flush(flushToDisk: true);
             }
 
             File.Move(temp, path, overwrite: true);
