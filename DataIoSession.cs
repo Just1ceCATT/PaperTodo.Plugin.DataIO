@@ -1414,6 +1414,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         {
             warnings.Add("本地已修改，更新会覆盖");
         }
+        else if (paper.TargetLocalStateUnknown)
+        {
+            warnings.Add("无法确认本地是否修改，更新会覆盖");
+        }
 
         if (paper.TargetImagesAtRisk)
         {
@@ -2180,9 +2184,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             paper.UpdateTargetTitle = null;
             paper.UpdateTargetFingerprint = null;
             paper.TargetLocallyModified = false;
+            paper.TargetLocalStateUnknown = false;
             paper.TargetImagesAtRisk = false;
             paper.UpdateDiff = null;
             paper.UpdateHasChanges = false;
+            paper.UpdateHasMetaChanges = false;
         }
     }
 
@@ -2389,6 +2395,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         paper.UpdateTargetTitle = null;
                         paper.UpdateTargetFingerprint = null;
                         paper.TargetLocallyModified = false;
+                        paper.TargetLocalStateUnknown = false;
                         paper.TargetImagesAtRisk = false;
                         paper.UpdateDiff = null;
                         paper.UpdateHasChanges = false;

@@ -29,9 +29,11 @@ public sealed class ImportServiceTests
             UpdateTargetTitle = "本地",
             UpdateTargetFingerprint = "fp",
             TargetLocallyModified = true,
+            TargetLocalStateUnknown = true,
             TargetImagesAtRisk = true,
             UpdateDiff = [new DiffLine('-', "旧", 1, 0)],
-            UpdateHasChanges = true
+            UpdateHasChanges = true,
+            UpdateHasMetaChanges = true
         };
         var plan = new ImportPlan();
         plan.Papers.Add(paper);
@@ -42,8 +44,10 @@ public sealed class ImportServiceTests
         Assert.Null(paper.UpdateTargetTitle);
         Assert.Null(paper.UpdateTargetFingerprint);
         Assert.False(paper.TargetLocallyModified);
+        Assert.False(paper.TargetLocalStateUnknown);
         Assert.False(paper.TargetImagesAtRisk);
         Assert.Null(paper.UpdateDiff);
         Assert.False(paper.UpdateHasChanges);
+        Assert.False(paper.UpdateHasMetaChanges);
     }
 }

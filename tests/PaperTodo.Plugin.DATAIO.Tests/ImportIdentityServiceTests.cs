@@ -25,6 +25,7 @@ public sealed class ImportIdentityServiceTests
         var link = Assert.Single(state.ImportLinks).Value;
         Assert.Equal("p1", link.LocalPaperId);
         Assert.Equal("", link.LocalFingerprint);
+        Assert.True(link.LocalFingerprintUnknown);
         Assert.Empty(link.PreviousLocalPaperIds);
         Assert.True(service.HasChanges);
     }
@@ -244,6 +245,7 @@ public sealed class ImportIdentityServiceTests
         var link = state.ImportLinks["s"];
         Assert.Equal("p2", link.LocalPaperId);
         Assert.Equal("", link.LocalFingerprint);
+        Assert.True(link.LocalFingerprintUnknown);
         Assert.Empty(link.PreviousLocalPaperIds);
     }
 
@@ -292,6 +294,7 @@ public sealed class ImportIdentityServiceTests
         var link = state.ImportLinks["s"];
         Assert.Equal("p1", link.LocalPaperId);
         Assert.Equal("", link.LocalFingerprint);
+        Assert.True(link.LocalFingerprintUnknown);
         Assert.Empty(link.PreviousLocalPaperIds);
         Assert.True(service.HasChanges);
     }

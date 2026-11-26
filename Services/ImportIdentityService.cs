@@ -194,8 +194,10 @@ internal sealed class ImportIdentityService
             paper.UpdateTargetId = target.Id;
             paper.UpdateTargetTitle = target.Title;
             paper.TargetLocallyModified =
+                !link.LocalFingerprintUnknown &&
                 link.LocalFingerprint.Length > 0 &&
                 !string.Equals(link.LocalFingerprint, fingerprint, StringComparison.Ordinal);
+            paper.TargetLocalStateUnknown = link.LocalFingerprintUnknown;
         }
     }
 
@@ -366,8 +368,10 @@ internal sealed class ImportIdentityService
                     history.RemoveAt(0);
                     link.LocalPaperId = candidateId;
                     link.PreviousLocalPaperIds = history;
-                    // 历史副本的旧指纹未知，留空以避免误报“本地已修改”；下次导入后重新登记。
+                    // 历史副本没有导入时的指纹：标记为未知，
+                    // 更新预览必须保守提示“可能已修改”，不能静默当作无修改。
                     link.LocalFingerprint = "";
+                    link.LocalFingerprintUnknown = true;
                     promoted = true;
                     break;
                 }
@@ -487,6 +491,7 @@ internal sealed class ImportIdentityService
             {
                 link.LocalPaperId = candidateId;
                 link.LocalFingerprint = "";
+                link.LocalFingerprintUnknown = true;
                 link.PreviousLocalPaperIds = history;
                 return candidate;
             }

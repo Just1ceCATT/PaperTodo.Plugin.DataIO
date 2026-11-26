@@ -123,6 +123,12 @@ internal sealed class ImportPaper
     public bool TargetLocallyModified { get; set; }
 
     /// <summary>
+    /// 更新目标是从历史副本回退来的，没有可靠的导入时指纹；
+    /// 无法确认本地是否被修改，预览需保守提示“更新会覆盖本地内容”。
+    /// </summary>
+    public bool TargetLocalStateUnknown { get; set; }
+
+    /// <summary>
     /// 导入正文含旧版“图片缺失”标记，而本地纸片仍含有图片引用。
     /// 此时更新会用标记文本覆盖本地图片引用，必须阻止。
     /// </summary>

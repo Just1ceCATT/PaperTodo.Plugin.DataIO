@@ -794,6 +794,17 @@ public partial class DataIoDialog : Window
                 Margin = new Thickness(0, 3, 0, 0)
             });
         }
+        else if (paper.TargetLocalStateUnknown)
+        {
+            card.Children.Add(new TextBlock
+            {
+                Text = "无法确认这张纸片在导入后是否被修改过；更新会覆盖本地内容。",
+                FontSize = 11.5 * _scale,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Resources["DialogWarningBrush"],
+                Margin = new Thickness(0, 3, 0, 0)
+            });
+        }
 
         if (paper.TargetImagesAtRisk)
         {

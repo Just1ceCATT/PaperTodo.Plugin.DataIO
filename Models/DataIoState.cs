@@ -206,6 +206,13 @@ internal sealed class ImportIdentityLink
 
     /// <summary>上次导入完成后，本地纸片内容的指纹；用于检测用户之后的本地修改。</summary>
     public string LocalFingerprint { get; set; } = "";
+
+    /// <summary>
+    /// 指纹不可信：当前目标是从历史副本回退来的，没有该副本的导入时指纹。
+    /// 此时不能把空指纹当作“未修改”，更新前的差异预览必须按“可能已修改”提示。
+    /// </summary>
+    public bool LocalFingerprintUnknown { get; set; }
+
     public string LastImportedAt { get; set; } = "";
 
     /// <summary>
