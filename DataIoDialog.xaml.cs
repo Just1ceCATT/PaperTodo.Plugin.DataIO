@@ -698,10 +698,22 @@ public partial class DataIoDialog : Window
 
         // 全部跳过也是一个有效决定：允许继续，导入结果会显示“已跳过 N 张”。
         // 不允许禁用主按钮，否则用户会被困在预览窗口里。
-        var actionable = update + create;
+        // 注意：文件里未命中本地的纸片（_newPaperCount）不在逐张选择集内，
+        // 但确认后会被新建，因此“可执行数量”必须把它算进去，按钮文案不能写成“全部跳过”。
+        var parts = new List<string>(2);
+        if (update > 0)
+        {
+            parts.Add($"更新 {update}");
+        }
+
+        if (totalCreate > 0)
+        {
+            parts.Add($"新建 {totalCreate}");
+        }
+
         _primaryButton.IsEnabled = true;
-        _primaryButton.Content = actionable > 0
-            ? $"导入（更新 {update} · 新建 {totalCreate}）"
+        _primaryButton.Content = parts.Count > 0
+            ? $"导入（{string.Join(" · ", parts)}）"
             : "全部跳过并关闭";
     }
 
