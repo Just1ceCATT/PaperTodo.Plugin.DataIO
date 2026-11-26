@@ -126,15 +126,17 @@ internal sealed class ImportService
                         result.SourceIdToPaperId[importPaper.Source.SourceId] = localId;
                     }
 
-                    // 更新笔记时图片已在写入正文前处理完；新建或待办纸片在这里补图片。
+                    // 更新笔记的图片已由 UpdateNoteAsync 按“更新语义”处理完（失败时也回退为
+                    // 移除坏引用的正文），这里不能再用“新建语义”重跑，否则会把刚移除的坏引用
+                    // 写回、重复追加图片并重复累计统计；只有新建的纸片才需要在这里补图片。
                     try
                     {
-                        if (!imagesHandled)
+                        if (!imagesHandled && createdNow)
                         {
                             await RestoreImagesAsync(
                                 importPaper,
                                 localId,
-                                createdNow,
+                                createdNow: true,
                                 result,
                                 cancellationToken);
                         }
@@ -361,6 +363,25 @@ internal sealed class ImportService
                     $"纸片“{DisplayTitle(importPaper)}”的 {removed} 处图片引用无法写回" +
                     $"（{reason}），已移除这些引用并更新其余正文。");
             }
+        }
+
+        // 图片写回期间用户可能仍在编辑；兜底写入前重新读取并复核指纹，
+        // 避免用文件正文覆盖写回窗口内的本地修改。
+        var latest = await TryGetNoteAsync(targetId);
+        if (latest is not { ContentAvailable: true })
+        {
+            throw new PaperTodoPluginException(
+                "local_unavailable",
+                "无法读取本地笔记正文，已跳过更新。");
+        }
+
+        if (!FingerprintMatches(
+                importPaper.UpdateTargetFingerprint,
+                ImportIdentityService.ComputeNoteFingerprint(latest.Content)))
+        {
+            throw new PaperTodoPluginException(
+                "local_changed",
+                "本地笔记在图片写回期间被修改，已跳过更新，请重新导入后确认。");
         }
 
         await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
