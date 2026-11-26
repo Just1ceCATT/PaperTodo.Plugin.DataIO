@@ -61,6 +61,7 @@ internal sealed class ExportService
             }
         };
 
+        var warnings = new List<string>();
         var skippedProviderBodies = 0;
         foreach (var paper in papers)
         {
@@ -72,7 +73,7 @@ internal sealed class ExportService
                 continue;
             }
 
-            var exportPaper = await MapPaperAsync(paper, todosByPaper, cancellationToken);
+            var exportPaper = await MapPaperAsync(paper, todosByPaper, warnings, cancellationToken);
             if (string.Equals(exportPaper.Type, "note", StringComparison.Ordinal) &&
                 exportPaper.ContentAvailable == false)
             {
@@ -84,12 +85,13 @@ internal sealed class ExportService
 
         if (skippedProviderBodies > 0)
         {
-            document.Warnings =
-            [
+            warnings.Insert(
+                0,
                 $"{skippedProviderBodies} 张笔记由第三方插件绘制正文，内容无法读取，" +
-                "导出文件中没有它们的正文。"
-            ];
+                "导出文件中没有它们的正文。");
         }
+
+        document.Warnings = warnings.Count > 0 ? warnings : null;
 
         return document;
     }
@@ -253,6 +255,7 @@ internal sealed class ExportService
     private async Task<ExportPaper> MapPaperAsync(
         PaperSnapshot paper,
         Dictionary<string, TodoSnapshot[]> todosByPaper,
+        List<string> warnings,
         CancellationToken cancellationToken)
     {
         var exportPaper = new ExportPaper
@@ -270,9 +273,25 @@ internal sealed class ExportService
                 throw new PaperTodoPluginException("permission_denied", "缺少 todos.read 权限，无法导出待办纸片。");
             }
 
-            exportPaper.Todos = todosByPaper.TryGetValue(paper.Id, out var todos)
-                ? todos.Select(MapTodo).ToList()
-                : [];
+            var todos = todosByPaper.TryGetValue(paper.Id, out var stored) ? stored : [];
+            if (todos.Length > ImportPlanParser.MaxTodosPerPaper)
+            {
+                // 导入端会整张跳过超过上限的待办纸片；导出端必须提前截断并明确告知，
+                // 否则备份看似成功，恢复时整张纸片（含标题）会被丢弃。
+                warnings.Add(
+                    $"纸片“{DisplayTitle(paper.Title)}”有 {todos.Length} 条待办，" +
+                    $"超过单张纸片 {ImportPlanParser.MaxTodosPerPaper} 条的可导入上限；" +
+                    $"备份中只保留前 {ImportPlanParser.MaxTodosPerPaper} 条。");
+                exportPaper.Todos = todos
+                    .Take(ImportPlanParser.MaxTodosPerPaper)
+                    .Select(MapTodo)
+                    .ToList();
+            }
+            else
+            {
+                exportPaper.Todos = todos.Select(MapTodo).ToList();
+            }
+
             return exportPaper;
         }
 
@@ -297,6 +316,9 @@ internal sealed class ExportService
         cancellationToken.ThrowIfCancellationRequested();
         return exportPaper;
     }
+
+    private static string DisplayTitle(string? title) =>
+        string.IsNullOrWhiteSpace(title) ? "（无标题）" : title;
 
     private static ExportTodo MapTodo(TodoSnapshot todo) => new()
     {

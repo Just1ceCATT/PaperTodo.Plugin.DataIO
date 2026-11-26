@@ -2092,6 +2092,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             Format = hasImageReferences ? "zip" : markdown ? "markdown" : "json",
             Papers = document.Papers.Count,
             Warnings = (unavailableNotes > 0 ? 1 : 0)
+                + (document.Warnings?.Count ?? 0)
                 + (imageCapture.HasImages ? 0 : imageSummary.HasAny ? 1 : 0)
                 + (imageCapture.FailedImageReads > 0 ? 1 : 0)
                 + (imageCapture.OversizedImages > 0 ? 1 : 0)
@@ -2134,6 +2135,13 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             "注意：导出文件不是完整备份——由其他插件提供正文的笔记、" +
             "以及待办关联的文件/文件夹路径不会随文件保存。"
         };
+
+        // 导出预检发现的保真度问题（正文缺失、待办超限被截断等）必须出现在结果里，
+        // 不能只写进文件或历史记录，否则用户会把残缺备份当成完整备份。
+        if (document.Warnings is { Count: > 0 })
+        {
+            details.AddRange(document.Warnings);
+        }
         if (markdown)
         {
             details.Add(
