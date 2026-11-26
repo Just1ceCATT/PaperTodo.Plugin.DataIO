@@ -54,6 +54,8 @@ public sealed class PreviewFactoryTests
         Assert.NotNull(content);
         Assert.False(content!.ContentAvailable);
         Assert.Contains("未包含", content.Warning);
+        // 正文不可读不能被标签成“空白笔记”，否则用户会放心导出/跳过。
+        Assert.Equal("文件未包含正文", content.Meta);
     }
 
     [Fact]

@@ -41,6 +41,51 @@ public sealed class DataIoViewTests
     }
 
     [Fact]
+    public void Unselectable_rows_never_render_as_selected()
+    {
+        Exception? failure = null;
+        bool? selectedWithExplicitKeys = null;
+        bool? selectedWithDefault = null;
+        int selectedCount = -1;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var view = new DataIoView();
+                var blocked = new PaperRowItem
+                {
+                    Key = "1",
+                    Title = "笔记",
+                    Type = "note",
+                    TypeLabel = "笔记",
+                    CanSelect = false,
+                    Warning = "缺少 papers.create 权限，无法新建"
+                };
+
+                // 即使选择集包含不可选中的键（批量全选时可能出现），也不能显示为已勾选。
+                view.SetRows([blocked], new HashSet<string> { "1" });
+                selectedWithExplicitKeys = blocked.IsSelected;
+                selectedCount = view.GetSelectedKeys("note").Count;
+
+                view.SetRows([blocked], selectedKeys: null);
+                selectedWithDefault = blocked.IsSelected;
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "视图加载超时");
+        Assert.Null(failure);
+        Assert.False(selectedWithExplicitKeys);
+        Assert.False(selectedWithDefault);
+        Assert.Equal(0, selectedCount);
+    }
+
+    [Fact]
     public void History_mode_switches_pages_and_hides_primary_action()
     {
         Exception? failure = null;

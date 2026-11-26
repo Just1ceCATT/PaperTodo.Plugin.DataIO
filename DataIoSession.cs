@@ -54,6 +54,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>预览正文缓存；导出数据变化、切换模式或更换导入文件时整体清空。</summary>
     private readonly Dictionary<string, PreviewContent> _previewCache = new(StringComparer.Ordinal);
 
+    /// <summary>预览缓存的插入顺序，用于按最旧优先淘汰，防止逐张浏览累积大量图片字节。</summary>
+    private readonly List<string> _previewCacheOrder = [];
+
+    /// <summary>当前缓存的粗略字节数（正文 + 图片 + 待办文本）。</summary>
+    private long _previewCacheBytes;
+
+    private const int MaxPreviewCacheEntries = 12;
+    private const long MaxPreviewCacheBytes = 64L * 1024 * 1024;
+
     /// <summary>缓存代次：清理后递增，阻止刷新前发出的异步读取把旧内容写回缓存。</summary>
     private int _previewGeneration;
 
@@ -592,7 +601,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _debounce.Stop();
         _debounce.Tick -= OnDebounceTick;
         _subscription?.Dispose();
-        _previewCache.Clear();
+        ClearPreviewCache();
         _view.PreviewLoader = null;
         _view.HoverPreviewLoader = null;
 
@@ -1304,7 +1313,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>清空预览缓存并递增代次；用于模式切换、更换导入文件等键空间变化。</summary>
     private void InvalidatePreviewCache()
     {
-        _previewCache.Clear();
+        ClearPreviewCache();
         _previewGeneration++;
     }
 
@@ -1468,10 +1477,59 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         // 只缓存带图片的快照；纯文本结果若被缓存，预览窗口会命中而缺少图片。
         if (includeImages && content is not null && !_disposed && generation == _previewGeneration)
         {
-            _previewCache[key] = content;
+            AddPreviewCache(key, content);
         }
 
         return content;
+    }
+
+    /// <summary>写入预览缓存并按条数与总字节淘汰最旧条目，避免浏览大量含图笔记时内存持续增长。</summary>
+    private void AddPreviewCache(string key, PreviewContent content)
+    {
+        if (_previewCache.TryGetValue(key, out var existing))
+        {
+            _previewCacheBytes -= EstimatePreviewBytes(existing);
+            _previewCacheOrder.Remove(key);
+        }
+
+        _previewCache[key] = content;
+        _previewCacheOrder.Add(key);
+        _previewCacheBytes += EstimatePreviewBytes(content);
+
+        while (_previewCacheOrder.Count > 0 &&
+               (_previewCacheOrder.Count > MaxPreviewCacheEntries ||
+                _previewCacheBytes > MaxPreviewCacheBytes))
+        {
+            var oldest = _previewCacheOrder[0];
+            _previewCacheOrder.RemoveAt(0);
+            if (_previewCache.Remove(oldest, out var evicted))
+            {
+                _previewCacheBytes -= EstimatePreviewBytes(evicted);
+            }
+        }
+    }
+
+    private static long EstimatePreviewBytes(PreviewContent content)
+    {
+        long total = (long)content.Body.Length * sizeof(char);
+        foreach (var todo in content.Todos)
+        {
+            total += (long)todo.Text.Length * sizeof(char) + (long)todo.Meta.Length * sizeof(char);
+        }
+
+        foreach (var image in content.Images.Values)
+        {
+            total += image.Bytes.LongLength;
+        }
+
+        return total;
+    }
+
+    private void ClearPreviewCache()
+    {
+        _previewCache.Clear();
+        _previewCacheOrder.Clear();
+        _previewCacheBytes = 0;
     }
 
     private Task<PreviewContent?> BuildExportPreviewAsync(string paperId, bool includeImages)

@@ -394,14 +394,16 @@ public partial class DataIoView : UserControl
         _todosAvailable = todosEnabled;
         ApplyRowAvailability();
 
-        // 只在对应项被禁用且原本展开时收起它，不影响另一项。
-        if (!notesEnabled && _notesExpanded)
+        // 只在对应项被禁用且没有任何行可展示时收起它。
+        // 若组内有行（例如缺少 papers.create 权限时的行内告警），必须保持展开，
+        // 否则用户只能看到“0 张”，看不到告警也看不到内容。
+        if (!notesEnabled && _notesExpanded && _noteRows.Count == 0)
         {
             _notesExpanded = false;
             AnimateNotes();
         }
 
-        if (!todosEnabled && _todosExpanded)
+        if (!todosEnabled && _todosExpanded && _todoRows.Count == 0)
         {
             _todosExpanded = false;
             AnimateTodos();
@@ -563,7 +565,11 @@ public partial class DataIoView : UserControl
 
         foreach (var row in rows)
         {
-            row.IsSelected = selected is null ? row.CanSelect : selected.Contains(row.Key);
+            // 不可选中的行（如缺少 papers.create 权限）无论选择集里有没有它的键，
+            // 都不能显示成已勾选，否则界面有勾但统计与实际导入都不包含它。
+            row.IsSelected = selected is null
+                ? row.CanSelect
+                : selected.Contains(row.Key) && row.CanSelect;
             row.PropertyChanged += OnRowPropertyChanged;
             _allRows.Add(row);
 

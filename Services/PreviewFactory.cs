@@ -83,7 +83,12 @@ internal static class PreviewFactory
             Key = paper.Id,
             Title = title,
             TypeLabel = "笔记",
-            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
+            // 正文不可读取时不能显示“空白笔记”，否则会被误认为内容本来就是空的。
+            Meta = !available
+                ? "正文不可读取"
+                : body.Length == 0
+                    ? "空白笔记"
+                    : $"{body.Length} 字",
             Warning = warning,
             ContentAvailable = available,
             Body = available ? body : "",
@@ -149,7 +154,11 @@ internal static class PreviewFactory
             Key = key,
             Title = title,
             TypeLabel = "笔记",
-            Meta = body.Length == 0 ? "空白笔记" : $"{body.Length} 字",
+            Meta = !available
+                ? "文件未包含正文"
+                : body.Length == 0
+                    ? "空白笔记"
+                    : $"{body.Length} 字",
             Warning = warning,
             ContentAvailable = available,
             Body = available ? body : "",
