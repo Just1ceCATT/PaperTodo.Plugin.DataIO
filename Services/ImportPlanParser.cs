@@ -165,7 +165,258 @@ internal static class ImportPlanParser
             return plan;
         }
 
-        return Fatal("压缩包不是由 DataIo 导出的：缺少 dataio-export.json 或 dataio-export.md。");
+        // PaperTodo 核心历史备份：zip 内直接放 data.json / data2.json … data5.json。
+        TryCollectCoreEntries(archive, out var coreEntries, out var duplicateCoreName);
+        if (duplicateCoreName)
+        {
+            return Fatal("备份压缩包包含重复的工作区文件，已拒绝导入。");
+        }
+
+        if (coreEntries.Count > 0)
+        {
+            return ParseCoreBackup(coreEntries);
+        }
+
+        return Fatal(
+            "压缩包不是由 DataIo 导出的，也不是 PaperTodo 备份：" +
+            "缺少 dataio-export.json、dataio-export.md 或 data*.json。");
+    }
+
+    /// <summary>读取备份压缩包内的工作区列表；非核心备份返回 false。</summary>
+    internal static bool TryReadCoreBackupWorkspaces(
+        string path,
+        out IReadOnlyList<CoreBackupWorkspace> workspaces,
+        out string? error)
+    {
+        workspaces = [];
+        error = null;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            TryCollectCoreEntries(archive, out var entries, out var duplicate);
+            if (duplicate || entries.Count == 0)
+            {
+                return false;
+            }
+
+            var list = new List<CoreBackupWorkspace>(entries.Count);
+            foreach (var (number, name, entry) in entries)
+            {
+                var json = ReadEntryText(entry, JsonFiles.MaxImportBytes);
+                if (json is null)
+                {
+                    list.Add(new CoreBackupWorkspace(number, name, 0, 0, 0, 0, false));
+                    continue;
+                }
+
+                var built = BuildCoreExportDocument(json);
+                if (built.Document is null)
+                {
+                    list.Add(new CoreBackupWorkspace(number, name, 0, 0, 0, 0, false));
+                    continue;
+                }
+
+                var noteCount = built.Document.Papers.Count(
+                    paper => string.Equals(paper.Type, "note", StringComparison.OrdinalIgnoreCase));
+                var todoCount = built.Document.Papers.Count(
+                    paper => string.Equals(paper.Type, "todo", StringComparison.OrdinalIgnoreCase));
+                list.Add(new CoreBackupWorkspace(
+                    number,
+                    name,
+                    built.Document.Papers.Count,
+                    noteCount,
+                    todoCount,
+                    built.SkippedPluginBodies,
+                    true));
+            }
+
+            workspaces = list;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            error = $"读取备份压缩包失败：{ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>只解析用户在备份压缩包里勾选的工作区。</summary>
+    internal static ImportPlan ParseCoreBackup(
+        string path,
+        IReadOnlyCollection<string> selectedNames)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+            TryCollectCoreEntries(archive, out var entries, out var duplicate);
+            if (duplicate || entries.Count == 0)
+            {
+                return Fatal("备份压缩包缺少有效的工作区文件。");
+            }
+
+            var selected = new HashSet<string>(selectedNames, StringComparer.Ordinal);
+            var chosen = entries.Where(entry => selected.Contains(entry.Name)).ToList();
+            if (chosen.Count == 0)
+            {
+                return Fatal("未选择任何工作区。");
+            }
+
+            return ParseCoreBackup(chosen);
+        }
+        catch (InvalidDataException)
+        {
+            return Fatal("压缩包已损坏或不是有效的 zip 文件。");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Fatal($"读取压缩包失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>收集并排序备份内的 dataN.json；返回 false 表示没有核心工作区文件。</summary>
+    private static bool TryCollectCoreEntries(
+        ZipArchive archive,
+        out List<(int WorkspaceNumber, string Name, ZipArchiveEntry Entry)> entries,
+        out bool duplicateName)
+    {
+        entries = [];
+        duplicateName = false;
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in archive.Entries)
+        {
+            if (!TryGetCoreWorkspaceNumber(entry.FullName, out var number))
+            {
+                continue;
+            }
+
+            if (!names.Add(entry.FullName))
+            {
+                duplicateName = true;
+                return false;
+            }
+
+            entries.Add((number, entry.FullName, entry));
+        }
+
+        entries.Sort((left, right) => left.WorkspaceNumber.CompareTo(right.WorkspaceNumber));
+        return entries.Count > 0;
+    }
+
+    /// <summary>
+    /// 导入 PaperTodo 核心历史备份：每个 dataN.json 是一个工作区快照。
+    /// 当前插件只能写入当前工作区，因此把全部文件合并为一个导入计划并提示边界不会保留。
+    /// </summary>
+    private static ImportPlan ParseCoreBackup(
+        IReadOnlyList<(int WorkspaceNumber, string Name, ZipArchiveEntry Entry)> entries)
+    {
+        var combined = new ExportDocument();
+        var workspaceDetails = new List<string>();
+        var entryWarnings = new List<string>();
+        var skippedPluginBodies = 0;
+        var missingSourceIds = 0;
+
+        foreach (var (_, name, entry) in entries)
+        {
+            var json = ReadEntryText(entry, JsonFiles.MaxImportBytes);
+            if (json is null)
+            {
+                entryWarnings.Add($"{name} 无法读取或超过单次导入大小上限，已跳过。");
+                continue;
+            }
+
+            var built = BuildCoreExportDocument(json);
+            if (built.Document is null)
+            {
+                entryWarnings.Add($"{name} 不是有效的工作区数据，已跳过。");
+                continue;
+            }
+
+            combined.Papers.AddRange(built.Document.Papers);
+            skippedPluginBodies += built.SkippedPluginBodies;
+            missingSourceIds += built.MissingSourceIds;
+            workspaceDetails.Add($"{name}（{built.Document.Papers.Count} 张）");
+        }
+
+        if (combined.Papers.Count == 0)
+        {
+            return Fatal("备份压缩包中没有可导入的纸片。");
+        }
+
+        if (combined.Papers.Count > MaxPapers)
+        {
+            return Fatal(
+                $"备份包含 {combined.Papers.Count} 张纸片，超过单次导入上限 {MaxPapers} 张；" +
+                "请解压后逐个工作区导入。");
+        }
+
+        // 合并后 sourceId 必须唯一，否则同文件内的关联映射会产生歧义。
+        var duplicateSourceId = combined.Papers
+            .Where(paper => !string.IsNullOrWhiteSpace(paper.SourceId))
+            .GroupBy(paper => paper.SourceId, StringComparer.Ordinal)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateSourceId is not null)
+        {
+            return Fatal(
+                $"备份中多个工作区包含相同的纸片 ID（{duplicateSourceId.Key}），无法一次性合并导入；" +
+                "请解压后逐个工作区导入。");
+        }
+
+        var plan = ParseDocument(combined);
+        if (plan.FatalError is not null)
+        {
+            return plan;
+        }
+
+        plan.ContainerFormat = "PaperTodo 备份压缩包";
+        plan.Warnings.Insert(
+            0,
+            workspaceDetails.Count == 1
+                ? $"检测到 PaperTodo 核心备份：{workspaceDetails[0]}。"
+                : $"检测到 PaperTodo 核心备份：包含 {workspaceDetails.Count} 个工作区文件" +
+                  $"（{string.Join("、", workspaceDetails)}），已合并为 {combined.Papers.Count} 张纸片；" +
+                  "工作区边界不会保留。");
+        plan.Warnings.Add("窗口位置、折叠/置顶状态、插件状态和图片本体不会保留。");
+        foreach (var warning in entryWarnings)
+        {
+            plan.Warnings.Add(warning);
+        }
+
+        if (skippedPluginBodies > 0)
+        {
+            plan.Warnings.Add(
+                $"已跳过 {skippedPluginBodies} 张由其他插件绘制正文的纸片，无法读取它们的正文。");
+        }
+
+        if (missingSourceIds > 0)
+        {
+            plan.Warnings.Add($"{missingSourceIds} 张纸片缺少来源 ID，再次导入时会新建副本。");
+        }
+
+        return plan;
+    }
+
+    /// <summary>data.json 为工作区 1，data2.json ～ data5.json 对应其余槽位。</summary>
+    private static bool TryGetCoreWorkspaceNumber(string name, out int number)
+    {
+        number = 0;
+        if (name == "data.json")
+        {
+            number = 1;
+            return true;
+        }
+
+        if (name.Length == 10 &&
+            name.StartsWith("data", StringComparison.Ordinal) &&
+            name[4] is >= '2' and <= '5' &&
+            name.EndsWith(".json", StringComparison.Ordinal))
+        {
+            number = name[4] - '0';
+            return true;
+        }
+
+        return false;
     }
 
     private static ImportPlan Fatal(string message) => new() { FatalError = message };
@@ -635,6 +886,45 @@ internal static class ImportPlanParser
     /// </summary>
     private static ImportPlan ParseCoreData(string json)
     {
+        var built = BuildCoreExportDocument(json);
+        if (built.Document is null)
+        {
+            return new ImportPlan { FatalError = built.Error };
+        }
+
+        var plan = ParseDocument(built.Document);
+        if (plan.FatalError is not null)
+        {
+            if (built.SkippedPluginBodies > 0)
+            {
+                plan.FatalError +=
+                    $"\n已跳过 {built.SkippedPluginBodies} 张由其他插件绘制正文的纸片，无法读取它们的正文。";
+            }
+
+            return plan;
+        }
+
+        plan.Warnings.Add(
+            "检测到 PaperTodo 主数据文件（data.json）：将按纸片导入；" +
+            "窗口位置、折叠/置顶状态和图片本体不会保留。");
+        if (built.SkippedPluginBodies > 0)
+        {
+            plan.Warnings.Add(
+                $"已跳过 {built.SkippedPluginBodies} 张由其他插件绘制正文的纸片，无法读取它们的正文。");
+        }
+
+        if (built.MissingSourceIds > 0)
+        {
+            plan.Warnings.Add(
+                $"{built.MissingSourceIds} 张纸片缺少来源 ID，再次导入时会新建副本。");
+        }
+
+        return plan;
+    }
+
+    /// <summary>把单个工作区 dataN.json 转成导出文档；备份压缩包可复用并合并多个结果。</summary>
+    private static CoreDocumentBuild BuildCoreExportDocument(string json)
+    {
         CoreDataDocument? core;
         try
         {
@@ -642,12 +932,12 @@ internal static class ImportPlanParser
         }
         catch (JsonException)
         {
-            return InvalidJsonPlan();
+            return CoreDocumentBuild.Failed(InvalidJsonPlan().FatalError!);
         }
 
         if (core?.Papers is null)
         {
-            return UnsupportedPlan();
+            return CoreDocumentBuild.Failed(UnsupportedPlan().FatalError!);
         }
 
         var document = new ExportDocument();
@@ -709,33 +999,16 @@ internal static class ImportPlanParser
             document.Papers.Add(export);
         }
 
-        var plan = ParseDocument(document);
-        if (plan.FatalError is not null)
-        {
-            if (skippedPluginBodies > 0)
-            {
-                plan.FatalError +=
-                    $"\n已跳过 {skippedPluginBodies} 张由其他插件绘制正文的纸片，无法读取它们的正文。";
-            }
+        return new CoreDocumentBuild(document, null, skippedPluginBodies, missingSourceIds);
+    }
 
-            return plan;
-        }
-
-        plan.Warnings.Add(
-            "检测到 PaperTodo 主数据文件（data.json）：将按纸片导入；" +
-            "窗口位置、折叠/置顶状态和图片本体不会保留。");
-        if (skippedPluginBodies > 0)
-        {
-            plan.Warnings.Add(
-                $"已跳过 {skippedPluginBodies} 张由其他插件绘制正文的纸片，无法读取它们的正文。");
-        }
-
-        if (missingSourceIds > 0)
-        {
-            plan.Warnings.Add($"{missingSourceIds} 张纸片缺少来源 ID，再次导入时会新建副本。");
-        }
-
-        return plan;
+    private sealed record CoreDocumentBuild(
+        ExportDocument? Document,
+        string? Error,
+        int SkippedPluginBodies,
+        int MissingSourceIds)
+    {
+        public static CoreDocumentBuild Failed(string error) => new(null, error, 0, 0);
     }
 
     private static bool IsMarkdownBody(string? providerId) =>

@@ -235,6 +235,107 @@ public sealed class ImportPackageTests
     }
 
     [Fact]
+    public void Core_backup_zip_merges_workspaces_into_one_plan()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "PaperTodo-core-test.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(archive, "data.json", CoreDocument("n1", "工作区1笔记"));
+                WriteEntry(archive, "data2.json", CoreDocument("n2", "工作区2笔记"));
+            }
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.Null(plan.FatalError);
+            Assert.Equal(2, plan.Papers.Count);
+            Assert.Equal("PaperTodo 备份压缩包", plan.ContainerFormat);
+            Assert.Contains(plan.Warnings, warning => warning.Contains("已合并为 2 张纸片"));
+            Assert.Contains(plan.Warnings, warning => warning.Contains("工作区边界不会保留"));
+        });
+    }
+
+    [Fact]
+    public void Core_backup_zip_rejects_duplicate_paper_ids_across_workspaces()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "PaperTodo-core-test.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(archive, "data.json", CoreDocument("same-id", "工作区1笔记"));
+                WriteEntry(archive, "data2.json", CoreDocument("same-id", "工作区2笔记"));
+            }
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.NotNull(plan.FatalError);
+            Assert.Contains("相同的纸片 ID", plan.FatalError);
+        });
+    }
+
+    [Fact]
+    public void Core_backup_lists_workspaces_and_parses_only_selected()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "PaperTodo-core-test.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(archive, "data.json", CoreDocumentWithPluginNote());
+                WriteEntry(archive, "data2.json", CoreDocument("n2", "工作区2笔记"));
+            }
+
+            Assert.True(
+                ImportPlanParser.TryReadCoreBackupWorkspaces(path, out var workspaces, out var error));
+            Assert.Null(error);
+            Assert.Equal(2, workspaces.Count);
+            Assert.Equal("data.json", workspaces[0].Name);
+            Assert.Equal(1, workspaces[0].PaperCount);
+            Assert.Equal(1, workspaces[0].SkippedPluginBodies);
+            Assert.Equal("data2.json", workspaces[1].Name);
+            Assert.Equal(1, workspaces[1].PaperCount);
+            Assert.Equal(0, workspaces[1].SkippedPluginBodies);
+
+            var selected = ImportPlanParser.ParseCoreBackup(path, ["data2.json"]);
+
+            Assert.Null(selected.FatalError);
+            Assert.Single(selected.Papers);
+            Assert.Equal("n2", selected.Papers[0].Source.SourceId);
+            Assert.Contains(
+                selected.Warnings,
+                warning => warning.Contains("检测到 PaperTodo 核心备份：data2.json"));
+            Assert.DoesNotContain(
+                selected.Warnings,
+                warning => warning.Contains("工作区边界不会保留"));
+
+            var empty = ImportPlanParser.ParseCoreBackup(path, []);
+            Assert.NotNull(empty.FatalError);
+            Assert.Contains("未选择任何工作区", empty.FatalError);
+        });
+    }
+
+    [Fact]
+    public void Core_backup_zip_skips_plugin_body_notes()
+    {
+        WithTempDirectory(directory =>
+        {
+            var path = Path.Combine(directory, "PaperTodo-core-test.zip");
+            using (var archive = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(archive, "data.json", CoreDocumentWithPluginNote());
+            }
+
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.Null(plan.FatalError);
+            Assert.Single(plan.Papers);
+            Assert.Contains(plan.Warnings, warning => warning.Contains("已跳过 1 张由其他插件绘制正文的纸片"));
+        });
+    }
+
+    [Fact]
     public void Unreferenced_image_asset_is_counted_and_reported()
     {
         WithTempDirectory(directory =>
@@ -257,6 +358,49 @@ public sealed class ImportPackageTests
             Assert.Equal("压缩包内有 1 张未被引用的图片", status.Value.Text);
         });
     }
+
+    private static string CoreDocument(string id, string title) =>
+        JsonSerializer.Serialize(new
+        {
+            papers = new[]
+            {
+                new
+                {
+                    id,
+                    type = "note",
+                    title,
+                    bodyProviderId = "builtin.markdown",
+                    content = "正文",
+                    isVisible = true
+                }
+            }
+        });
+
+    private static string CoreDocumentWithPluginNote() =>
+        JsonSerializer.Serialize(new
+        {
+            papers = new object[]
+            {
+                new
+                {
+                    id = "markdown-note",
+                    type = "note",
+                    title = "可读笔记",
+                    bodyProviderId = "builtin.markdown",
+                    content = "正文",
+                    isVisible = true
+                },
+                new
+                {
+                    id = "plugin-note",
+                    type = "note",
+                    title = "插件笔记",
+                    bodyProviderId = "sample.webhook.native",
+                    content = "",
+                    isVisible = true
+                }
+            }
+        });
 
     private static CapturedExportImage CreateImage(bool restorable) => new(
         "p1",

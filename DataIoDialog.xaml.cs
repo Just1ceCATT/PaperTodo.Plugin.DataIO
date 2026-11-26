@@ -221,6 +221,294 @@ public partial class DataIoDialog : Window
         }
     }
 
+    private readonly List<(string Name, CheckBox Box)> _workspaceChoices = [];
+    private Style? _workspaceCheckBoxStyle;
+
+    internal IReadOnlyList<string> SelectedWorkspaceNames =>
+        _workspaceChoices
+            .Where(choice => choice.Box.IsChecked == true)
+            .Select(choice => choice.Name)
+            .ToArray();
+
+    /// <summary>备份工作区多选：默认勾选当前工作区；找不到当前工作区时勾选全部可读项。</summary>
+    internal void SetCoreBackupWorkspaces(
+        string fileName,
+        IReadOnlyList<CoreBackupWorkspace> workspaces,
+        string? currentWorkspaceName)
+    {
+        Width = 560;
+        MinWidth = 560;
+        MaxWidth = 560;
+
+        var current = workspaces.FirstOrDefault(workspace =>
+            workspace.IsReadable &&
+            string.Equals(workspace.Name, currentWorkspaceName, StringComparison.OrdinalIgnoreCase));
+        var selectAll = current is null;
+
+        BodyPanel.Children.Add(new TextBlock
+        {
+            Text = $"{fileName} 包含 {workspaces.Count} 个工作区。选择一个或多个工作区进行导入；" +
+                   "选择多个时会合并到当前工作区。",
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = Width - 38,
+            LineHeight = 20.0 * _scale,
+            FontSize = 12.5 * _scale,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(0, 2, 0, 10)
+        });
+
+        var checkBoxStyle = WorkspaceCheckBoxStyle();
+        foreach (var workspace in workspaces)
+        {
+            var isCurrent = ReferenceEquals(workspace, current);
+            var shouldCheck = workspace.IsReadable && (selectAll || isCurrent);
+            var check = new CheckBox
+            {
+                Style = checkBoxStyle,
+                IsEnabled = workspace.IsReadable,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Center,
+                Content = BuildWorkspaceChoiceContent(workspace, isCurrent)
+            };
+            check.Checked += (_, _) => RefreshWorkspaceSelection();
+            check.Unchecked += (_, _) => RefreshWorkspaceSelection();
+
+            BodyPanel.Children.Add(new Border
+            {
+                Background = TintBrush(14),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(10, 8, 10, 8),
+                Margin = new Thickness(0, 0, 0, 6),
+                Child = check
+            });
+            _workspaceChoices.Add((workspace.Name, check));
+
+            // 等控件进入视觉树后再设置勾选，避免初始值被模板初始化覆盖。
+            check.IsChecked = shouldCheck;
+        }
+
+        BodyPanel.Children.Add(new TextBlock
+        {
+            Text = "选择多个工作区时，所有纸片都会导入当前工作区，工作区边界不会保留。",
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = Width - 38,
+            FontSize = 11.5 * _scale,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(2, 4, 0, 0)
+        });
+
+        RefreshWorkspaceSelection();
+    }
+
+    private FrameworkElement BuildWorkspaceChoiceContent(
+        CoreBackupWorkspace workspace,
+        bool isCurrent)
+    {
+        var title = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        title.Children.Add(new TextBlock
+        {
+            Text = workspace.Name,
+            FontSize = 13.0 * _scale,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Resources["DialogTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        if (isCurrent)
+        {
+            title.Children.Add(new Border
+            {
+                Margin = new Thickness(8, 0, 0, 0),
+                Padding = new Thickness(6, 1, 6, 1),
+                CornerRadius = new CornerRadius(4),
+                Background = TintBrush(32),
+                VerticalAlignment = VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text = "当前工作区",
+                    FontSize = 10.5 * _scale,
+                    Foreground = (Brush)Resources["DialogAccentBrush"]
+                }
+            });
+        }
+
+        var panel = new StackPanel();
+        panel.Children.Add(title);
+        panel.Children.Add(new TextBlock
+        {
+            Text = DescribeWorkspace(workspace),
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 11.5 * _scale,
+            Foreground = (Brush)Resources["DialogWeakBrush"],
+            Margin = new Thickness(0, 3, 0, 0)
+        });
+        return panel;
+    }
+
+    /// <summary>与宿主待办勾选框一致：圆角方框、选中后填充强调色并显示对勾。</summary>
+    private Style WorkspaceCheckBoxStyle()
+    {
+        if (_workspaceCheckBoxStyle is not null)
+        {
+            return _workspaceCheckBoxStyle;
+        }
+
+        var size = 16.0 * _scale;
+        var style = new Style(typeof(CheckBox));
+        style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
+        style.Setters.Add(new Setter(Control.FocusVisualStyleProperty, null));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(0)));
+        style.Setters.Add(new Setter(UIElement.SnapsToDevicePixelsProperty, true));
+
+        var root = new FrameworkElementFactory(typeof(DockPanel));
+        root.SetValue(DockPanel.LastChildFillProperty, true);
+
+        var checkGrid = new FrameworkElementFactory(typeof(Grid));
+        checkGrid.SetValue(FrameworkElement.WidthProperty, size);
+        checkGrid.SetValue(FrameworkElement.HeightProperty, size);
+        checkGrid.SetValue(DockPanel.DockProperty, Dock.Left);
+        checkGrid.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+        var border = new FrameworkElementFactory(typeof(Border));
+        border.Name = "CheckBorder";
+        border.SetValue(FrameworkElement.WidthProperty, size);
+        border.SetValue(FrameworkElement.HeightProperty, size);
+        border.SetValue(Border.BorderThicknessProperty, new Thickness(1.5 * _scale));
+        border.SetValue(Border.CornerRadiusProperty, new CornerRadius(4.0 * _scale));
+        border.SetValue(
+            Border.BorderBrushProperty,
+            new DynamicResourceExtension("DialogWeakBrush"));
+        border.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+        border.SetValue(UIElement.SnapsToDevicePixelsProperty, true);
+        checkGrid.AppendChild(border);
+
+        var path = new FrameworkElementFactory(typeof(System.Windows.Shapes.Path));
+        path.Name = "CheckMark";
+        path.SetValue(
+            System.Windows.Shapes.Path.DataProperty,
+            Geometry.Parse("M 3,7.5 L 6.5,11 L 13,4"));
+        path.SetValue(
+            System.Windows.Shapes.Path.StrokeProperty,
+            new DynamicResourceExtension("DialogPaperBrush"));
+        path.SetValue(System.Windows.Shapes.Path.StrokeThicknessProperty, 2.0);
+        path.SetValue(
+            System.Windows.Shapes.Path.StrokeStartLineCapProperty,
+            PenLineCap.Round);
+        path.SetValue(
+            System.Windows.Shapes.Path.StrokeEndLineCapProperty,
+            PenLineCap.Round);
+        path.SetValue(
+            System.Windows.Shapes.Path.StrokeLineJoinProperty,
+            PenLineJoin.Round);
+        path.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+        path.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        path.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        path.SetValue(
+            FrameworkElement.LayoutTransformProperty,
+            new ScaleTransform(_scale, _scale));
+        checkGrid.AppendChild(path);
+        root.AppendChild(checkGrid);
+
+        var content = new FrameworkElementFactory(typeof(ContentPresenter));
+        content.SetValue(FrameworkElement.MarginProperty, new Thickness(10.0 * _scale, 0, 0, 0));
+        content.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+        root.AppendChild(content);
+
+        var template = new ControlTemplate(typeof(CheckBox))
+        {
+            VisualTree = root
+        };
+
+        var checkedTrigger = new Trigger
+        {
+            Property = ToggleButton.IsCheckedProperty,
+            Value = true
+        };
+        checkedTrigger.Setters.Add(new Setter(
+            Border.BackgroundProperty,
+            new DynamicResourceExtension("DialogAccentBrush"),
+            "CheckBorder"));
+        checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, Brushes.Transparent, "CheckBorder"));
+        checkedTrigger.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(0), "CheckBorder"));
+        checkedTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "CheckMark"));
+
+        var hoverUnchecked = new MultiTrigger();
+        hoverUnchecked.Conditions.Add(new Condition
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true
+        });
+        hoverUnchecked.Conditions.Add(new Condition
+        {
+            Property = ToggleButton.IsCheckedProperty,
+            Value = false
+        });
+        hoverUnchecked.Setters.Add(new Setter(
+            Border.BorderBrushProperty,
+            new DynamicResourceExtension("DialogAccentBrush"),
+            "CheckBorder"));
+        hoverUnchecked.Setters.Add(new Setter(
+            Border.BackgroundProperty,
+            new DynamicResourceExtension("DialogButtonHoverBrush"),
+            "CheckBorder"));
+
+        var hoverChecked = new MultiTrigger();
+        hoverChecked.Conditions.Add(new Condition
+        {
+            Property = UIElement.IsMouseOverProperty,
+            Value = true
+        });
+        hoverChecked.Conditions.Add(new Condition
+        {
+            Property = ToggleButton.IsCheckedProperty,
+            Value = true
+        });
+        hoverChecked.Setters.Add(new Setter(
+            Border.BackgroundProperty,
+            new DynamicResourceExtension("DialogAccentBrush"),
+            "CheckBorder"));
+        hoverChecked.Setters.Add(new Setter(Border.BorderBrushProperty, Brushes.Transparent, "CheckBorder"));
+        hoverChecked.Setters.Add(new Setter(Border.BorderThicknessProperty, new Thickness(0), "CheckBorder"));
+
+        template.Triggers.Add(checkedTrigger);
+        template.Triggers.Add(hoverUnchecked);
+        template.Triggers.Add(hoverChecked);
+
+        style.Setters.Add(new Setter(Control.TemplateProperty, template));
+        _workspaceCheckBoxStyle = style;
+        return style;
+    }
+
+    private string DescribeWorkspace(CoreBackupWorkspace workspace)
+    {
+        if (!workspace.IsReadable)
+        {
+            return "无法读取这个工作区文件。";
+        }
+
+        var text = $"工作区 {workspace.WorkspaceNumber} · 可导入 {workspace.PaperCount} 张" +
+                   $"（{workspace.NoteCount} 笔记 · {workspace.TodoCount} 待办）";
+        if (workspace.SkippedPluginBodies > 0)
+        {
+            text += $"；跳过 {workspace.SkippedPluginBodies} 张插件正文";
+        }
+
+        return text;
+    }
+
+    private void RefreshWorkspaceSelection()
+    {
+        if (_primaryButton is not null)
+        {
+            _primaryButton.IsEnabled =
+                _workspaceChoices.Any(choice => choice.Box.IsChecked == true);
+        }
+    }
+
     internal IReadOnlyDictionary<ImportPaper, ImportUpdateAction> UpdateChoices => _updateChoices;
 
     /// <summary>

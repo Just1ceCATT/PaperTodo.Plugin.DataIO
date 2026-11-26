@@ -467,7 +467,7 @@ public partial class DataIoView : UserControl
         ImportFileNameText.Text = hasFile ? fileName! : "尚未选择文件";
         ImportFileNameText.ToolTip = hasFile ? fileName : null;
         ImportFileStatusText.Text = string.IsNullOrWhiteSpace(status)
-            ? "支持 PaperTodo JSON、Markdown 文档 (*.md) 或导出压缩包 (*.zip)"
+            ? "支持 JSON、Markdown、DataIO 压缩包或 PaperTodo 备份 (*.zip)"
             : status!;
         ChooseFileButton.Content = hasFile ? "重新选择" : "选择文件";
         ClearFileButton.Visibility = hasFile ? Visibility.Visible : Visibility.Collapsed;
@@ -1300,6 +1300,30 @@ public partial class DataIoView : UserControl
     /// 展示更新差异并收集每张纸片的处理方式；unrecoverable 为文件层面无法完整还原的内容。
     /// 返回 null 表示取消导入。
     /// </summary>
+    /// <summary>
+    /// 备份压缩包含多个工作区时，让用户勾选一个或多个；返回 null 表示取消导入。
+    /// </summary>
+    internal IReadOnlyList<string>? ShowCoreBackupWorkspaceDialog(
+        string fileName,
+        IReadOnlyList<CoreBackupWorkspace> workspaces,
+        string? currentWorkspaceFileName)
+    {
+        var dialog = new DataIoDialog(
+            CurrentTheme,
+            ResolveTintColor(),
+            "选择备份工作区",
+            "导入所选",
+            "取消");
+        dialog.SetCoreBackupWorkspaces(fileName, workspaces, currentWorkspaceFileName);
+        if (dialog.ShowModal(Window.GetWindow(this)) != true)
+        {
+            return null;
+        }
+
+        var selected = dialog.SelectedWorkspaceNames;
+        return selected.Count > 0 ? selected : null;
+    }
+
     internal Dictionary<ImportPaper, ImportUpdateAction>? ShowUpdatePreviewDialog(
         IReadOnlyList<ImportPaper> papers,
         IReadOnlyList<string>? unrecoverable,

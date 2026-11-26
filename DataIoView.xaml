@@ -708,7 +708,7 @@
                            Foreground="{DynamicResource DataIoTextBrush}" />
                 <TextBlock x:Name="ImportFileStatusText"
                            Margin="0,2,0,0"
-                           Text="支持 PaperTodo JSON 或 Markdown 文档 (*.md)"
+                           Text="支持 JSON、Markdown、DataIO 压缩包或 PaperTodo 备份 (*.zip)"
                            TextTrimming="CharacterEllipsis"
                            FontSize="{DynamicResource DataIoWeakFontSize}"
                            Foreground="{DynamicResource DataIoWeakBrush}" />

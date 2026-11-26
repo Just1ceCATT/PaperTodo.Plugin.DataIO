@@ -767,10 +767,25 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         if (!_busy)
         {
-            SetStatus(StartupPrefix() + (_importPlan is null
-                ? "请选择要导入的文件。"
-                : $"已读取 {_importPlan.Papers.Count} 张纸片。"));
+            SetStatus(StartupPrefix() + DescribeImportStatus());
         }
+    }
+
+    /// <summary>已选导入文件的摘要；有预检提示时明确说明会在导入结果中显示。</summary>
+    private string DescribeImportStatus()
+    {
+        if (_importPlan is null)
+        {
+            return "请选择要导入的文件。";
+        }
+
+        var updateCount = _importPlan.Papers.Count(
+            paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId));
+        var updateNote = updateCount > 0 ? $"（其中 {updateCount} 张将更新已有纸片）" : "";
+        return _importPlan.Warnings.Count > 0
+            ? $"已读取 {_importPlan.Papers.Count} 张纸片{updateNote}；" +
+              $"{_importPlan.Warnings.Count} 条预检提示将在导入结果中显示。"
+            : $"已读取 {_importPlan.Papers.Count} 张纸片{updateNote}。";
     }
 
     /// <summary>
@@ -1951,6 +1966,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
     // ---------- 导入 ----------
 
+    /// <summary>当前工作区文件名（data.json / data2.json），用于预选备份内的对应条目。</summary>
+    private string? TryGetCurrentWorkspaceFileName()
+    {
+        try
+        {
+            var status = _context.Workspace.GetDataReloadStatus();
+            return string.IsNullOrWhiteSpace(status.DataFileName) ? null : status.DataFileName;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     private async Task ChooseImportFileAsync()
     {
         // 选择文件本身不需要 papers.create；纯更新导入也应允许继续。
@@ -1959,7 +1988,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             Title = "选择导入文件",
             // 默认过滤器同时列出 JSON、Markdown 与含图片的压缩包。
             Filter = "PaperTodo 数据 (*.json;*.md;*.markdown;*.zip)|*.json;*.md;*.markdown;*.zip|"
-                + "PaperTodo 压缩包 (*.zip)|*.zip|"
+                + "DataIO 或 PaperTodo 压缩包 (*.zip)|*.zip|"
                 + "JSON 文件 (*.json)|*.json|"
                 + "Markdown 文档 (*.md;*.markdown)|*.md;*.markdown|"
                 + "所有文件 (*.*)|*.*",
@@ -1987,7 +2016,34 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         ImportPlan plan;
         try
         {
-            plan = await Task.Run(() => ImportPlanParser.ParseFile(dialog.FileName));
+            // 备份压缩包可能包含多个工作区：先读取清单，让用户选择一个或多个。
+            var coreWorkspaces = await Task.Run(() =>
+            {
+                ImportPlanParser.TryReadCoreBackupWorkspaces(
+                    dialog.FileName,
+                    out var found,
+                    out _);
+                return found;
+            });
+
+            IReadOnlyList<string>? selectedWorkspaces = null;
+            if (coreWorkspaces.Count > 1)
+            {
+                selectedWorkspaces = _view.ShowCoreBackupWorkspaceDialog(
+                    Path.GetFileName(dialog.FileName),
+                    coreWorkspaces,
+                    TryGetCurrentWorkspaceFileName());
+                if (selectedWorkspaces is null)
+                {
+                    SetStatus("已取消选择备份工作区。");
+                    return;
+                }
+            }
+
+            plan = await Task.Run(() =>
+                selectedWorkspaces is null
+                    ? ImportPlanParser.ParseFile(dialog.FileName)
+                    : ImportPlanParser.ParseCoreBackup(dialog.FileName, selectedWorkspaces));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -2021,11 +2077,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         InvalidatePreviewCache();
         RefreshImportView();
 
-        var updateCount = plan.Papers.Count(paper => !string.IsNullOrWhiteSpace(paper.UpdateTargetId));
-        var updateNote = updateCount > 0 ? $"（其中 {updateCount} 张将更新已有纸片）" : "";
-        SetStatus(plan.Warnings.Count > 0
-            ? $"已读取 {plan.Papers.Count} 张纸片{updateNote}；{plan.Warnings.Count} 条预检提示将在导入结果中显示。"
-            : $"已读取 {plan.Papers.Count} 张纸片{updateNote}。");
+        SetStatus(DescribeImportStatus());
     }
 
     /// <summary>清空计划内的更新目标及所有派生状态。</summary>
