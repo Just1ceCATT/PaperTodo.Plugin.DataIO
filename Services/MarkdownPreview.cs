@@ -657,12 +657,13 @@ internal static class MarkdownPreview
             natural.Width);
 
         // 显示尺寸也按高度上限收敛：宽高比极端的图片不能把布局撑到数万像素高。
+        // 这里不能回抬到最小宽度，否则 2×2000 这类窄高图反而会被放大到更高的显示高度。
         if (natural is { Width: > 0, Height: > 0 })
         {
             var displayHeight = displayWidth * natural.Height / natural.Width;
             if (displayHeight > MaxDisplayImageHeight)
             {
-                displayWidth = Math.Max(80, displayWidth * MaxDisplayImageHeight / displayHeight);
+                displayWidth = Math.Max(1, displayWidth * MaxDisplayImageHeight / displayHeight);
             }
         }
 
@@ -961,6 +962,14 @@ internal static class MarkdownPreview
         }
 
         var i = 0;
+
+        // 方括号扫描的缓存：畸形输入里大量 "[" 找不到 "]"，逐字符重复 IndexOf 会退化为 O(n²)。
+        // noLinkClosers 表示当前位置之后再没有 "]"，之后所有 "[" 都只能按普通字符处理；
+        // invalidCloserEnd 记录“下一个 ] 不构成链接”的有效范围，范围内的 "[" 无需重复扫描。
+        // 注意仍要逐字符继续处理，否则会跳过强调、行内代码与转义。
+        var noLinkClosers = false;
+        var invalidCloserEnd = -1;
+
         while (i < text.Length)
         {
             if (target.Count >= MaxInlinesPerBlock)
@@ -1066,14 +1075,36 @@ internal static class MarkdownPreview
             {
                 var image = c == '!';
                 var labelStart = i + (image ? 2 : 1);
-                var labelEnd = text.IndexOf(']', labelStart);
 
-                // 没有闭合方括号：剩余内容不可能再构成链接，整段按普通文本追加，
-                // 避免逐字符重复 IndexOf 在畸形输入上退化为 O(n²)。
+                // 已确认之后没有 "]"：本字符按普通文本处理并继续，保留强调等行内格式。
+                if (noLinkClosers)
+                {
+                    plain.Append(c);
+                    i++;
+                    continue;
+                }
+
+                // 未越过上一个无效 "]" 时，后面第一个 "]" 仍是同一个，无需再扫描。
+                if (invalidCloserEnd > 0 && labelStart < invalidCloserEnd)
+                {
+                    plain.Append(c);
+                    i++;
+                    continue;
+                }
+
+                if (invalidCloserEnd > 0 && labelStart >= invalidCloserEnd)
+                {
+                    invalidCloserEnd = -1;
+                }
+
+                var labelEnd = text.IndexOf(']', labelStart);
                 if (labelEnd < 0)
                 {
-                    plain.Append(text, i, text.Length - i);
-                    i = text.Length;
+                    // 没有闭合方括号：之后任何 "[" 都不可能构成链接，只缓存结论，
+                    // 仍逐字符继续解析，不能吞掉后续的强调、行内代码与转义。
+                    noLinkClosers = true;
+                    plain.Append(c);
+                    i++;
                     continue;
                 }
 
@@ -1096,9 +1127,11 @@ internal static class MarkdownPreview
                     }
                 }
 
-                // 无效链接：原样追加到 ] 为止并跳过，下一次从 ] 之后继续。
-                plain.Append(text, i, labelEnd + 1 - i);
-                i = labelEnd + 1;
+                // 无效链接：记录这个 "]" 无效（其后不是 "("），范围内后续 "[" 直接跳过扫描，
+                // 但本字符仍按普通文本处理，方括号内的强调等格式继续解析。
+                invalidCloserEnd = labelEnd + 1;
+                plain.Append(c);
+                i++;
                 continue;
             }
 

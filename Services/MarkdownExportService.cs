@@ -155,15 +155,24 @@ internal static class MarkdownExportService
         foreach (var rawLine in MarkdownNormalize.NormalizeLineEndings(content).Split('\n'))
         {
             var line = rawLine;
-            if (MarkdownImportParser.IsSectionMarkerLine(line) ||
-                MarkdownImportParser.IsContentUnavailableMarker(line) ||
-                MarkdownImportParser.IsEmptyTitleMarker(line) ||
-                MarkdownImportParser.IsFenceClosedMarker(line))
+            if (MarkdownImportParser.IsAnyNoteMarkerLine(line))
             {
                 var markerStart = line.IndexOf("<!--", StringComparison.Ordinal);
                 if (markerStart >= 0)
                 {
                     line = line[..markerStart] + "\\" + line[markerStart..];
+                }
+            }
+            else
+            {
+                // 用户正文本来就写成 "\<!-- 标记 -->" 时导出端不会再转义，
+                // 导入端却会剥掉反斜杠；这里补一个反斜杠保证往返可逆。
+                var trimmed = line.TrimStart();
+                var indent = line.Length - trimmed.Length;
+                if (trimmed.StartsWith('\\') &&
+                    MarkdownImportParser.IsAnyNoteMarkerLine(trimmed[1..]))
+                {
+                    line = line[..indent] + "\\" + line[indent..];
                 }
             }
 

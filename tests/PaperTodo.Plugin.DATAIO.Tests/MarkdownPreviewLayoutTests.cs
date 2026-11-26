@@ -66,6 +66,88 @@ public sealed class MarkdownPreviewLayoutTests
         });
     }
 
+    [Fact]
+    public void Unmatched_bracket_still_parses_inline_formatting()
+    {
+        RunSta(() =>
+        {
+            var palette = new PreviewPalette(
+                Brushes.Black,
+                Brushes.Gray,
+                Brushes.LightGray,
+                Brushes.Blue,
+                Brushes.Transparent,
+                1.0,
+                new FontFamily("Segoe UI"),
+                new FontFamily("Consolas"),
+                400);
+
+            // 未闭合的 "[" 不能吞掉后续的强调解析（快速路径只缓存“没有 ]”，
+            // 仍要逐字符处理行内格式）。
+            var host = new StackPanel();
+            MarkdownPreview.Render(
+                "[未闭合 **加粗** 结尾",
+                host,
+                palette,
+                new Dictionary<string, PreviewImage>(StringComparer.Ordinal));
+
+            var textBlock = Assert.IsType<TextBlock>(Assert.Single(host.Children.Cast<UIElement>()));
+            Assert.Contains(
+                EnumerateInlines(textBlock.Inlines),
+                inline => inline is System.Windows.Documents.Bold);
+        });
+    }
+
+    [Fact]
+    public void Extreme_narrow_image_is_clamped_to_height_limit()
+    {
+        RunSta(() =>
+        {
+            var png = CreatePng(2, 40_000);
+            var palette = new PreviewPalette(
+                Brushes.Black,
+                Brushes.Gray,
+                Brushes.LightGray,
+                Brushes.Blue,
+                Brushes.Transparent,
+                1.0,
+                new FontFamily("Segoe UI"),
+                new FontFamily("Consolas"),
+                400);
+
+            var host = new StackPanel();
+            MarkdownPreview.Render(
+                "![image](i:001)",
+                host,
+                palette,
+                new Dictionary<string, PreviewImage>(StringComparer.Ordinal)
+                {
+                    ["i:001"] = new PreviewImage("image/png", png)
+                });
+
+            var border = Assert.IsType<Border>(Assert.Single(host.Children.Cast<UIElement>()));
+            var image = Assert.IsType<Image>(border.Child);
+            // 2×40000 的显示高度被压到 20000 上限：宽度应为 1，而不是被抬回 80。
+            Assert.True(image.Width <= 1.5, $"显示宽度 {image.Width}");
+        });
+    }
+
+    private static IEnumerable<System.Windows.Documents.Inline> EnumerateInlines(
+        System.Windows.Documents.InlineCollection inlines)
+    {
+        foreach (var inline in inlines)
+        {
+            yield return inline;
+            if (inline is System.Windows.Documents.Span span)
+            {
+                foreach (var nested in EnumerateInlines(span.Inlines))
+                {
+                    yield return nested;
+                }
+            }
+        }
+    }
+
     private static void AssertImageWidth(object child, double expectedWidth)
     {
         var border = Assert.IsType<Border>(child);

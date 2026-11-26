@@ -404,6 +404,13 @@ internal static partial class MarkdownImportParser
         return false;
     }
 
+    /// <summary>行是否为四类插件标记之一（导出端转义判断与导入端还原共用）。</summary>
+    internal static bool IsAnyNoteMarkerLine(string line) =>
+        IsSectionMarkerLine(line) ||
+        IsContentUnavailableMarker(line) ||
+        IsEmptyTitleMarker(line) ||
+        IsFenceClosedMarker(line);
+
     /// <summary>去掉导出时加到标记行开头的反斜杠。</summary>
     private static string UnescapeNoteMarkerLine(string line)
     {
@@ -414,10 +421,13 @@ internal static partial class MarkdownImportParser
         }
 
         var withoutBackslash = line.Remove(start, 1);
-        return IsSectionMarkerLine(withoutBackslash) ||
-               IsContentUnavailableMarker(withoutBackslash) ||
-               IsEmptyTitleMarker(withoutBackslash) ||
-               IsFenceClosedMarker(withoutBackslash)
+
+        // 两种情况都要剥掉一层反斜杠：
+        // 1. 导出端为标记行加的转义：去掉后正好是标记；
+        // 2. 用户内容本来就以反斜杠 + 标记行开头：导出端会再加一层，去掉后仍是该内容。
+        var trimmed = withoutBackslash.TrimStart();
+        var escapedMarker = trimmed.StartsWith('\\') && IsAnyNoteMarkerLine(trimmed[1..]);
+        return IsAnyNoteMarkerLine(withoutBackslash) || escapedMarker
             ? withoutBackslash
             : line;
     }

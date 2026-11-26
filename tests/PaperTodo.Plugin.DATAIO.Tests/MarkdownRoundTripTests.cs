@@ -178,6 +178,25 @@ public sealed class MarkdownRoundTripTests
     }
 
     [Fact]
+    public void Note_line_with_user_escaped_marker_round_trips()
+    {
+        // 用户正文本来就写成 "\<!-- 标记 -->"：导出端补一层转义，回导剥一层后保持不变。
+        var content = "\\<!-- papertodo-dataio:title-empty -->";
+        var plan = RoundTrip(new ExportPaper
+        {
+            SourceId = "s7",
+            Type = "note",
+            Title = "用户转义",
+            ContentAvailable = true,
+            Content = content
+        });
+
+        Assert.Null(plan.FatalError);
+        var paper = Assert.Single(plan.Papers);
+        Assert.Equal(content, paper.Source.Content);
+    }
+
+    [Fact]
     public void Note_whose_text_equals_legacy_placeholder_is_preserved()
     {
         // v2 文件里正文恰好是这句占位文案时，它可能是真正的笔记内容，
