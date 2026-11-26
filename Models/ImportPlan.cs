@@ -5,6 +5,13 @@ internal sealed class ImportPlan
 {
     public List<ImportPaper> Papers { get; } = [];
     public List<string> Warnings { get; } = [];
+
+    /// <summary>
+    /// 文件里出现过的全部来源 ID（含本轮未勾选、因内容无变化被跳过或因解析失败被跳过的纸片）。
+    /// 更新待办时用来区分“文件中确实没有这个关联目标”和“目标存在但本轮没导入”，
+    /// 只有前者才应清除本地关联，避免部分导入误删有效关联。
+    /// </summary>
+    public HashSet<string> FileSourceIds { get; } = new(StringComparer.Ordinal);
     public int TodoCount { get; set; }
     public int TruncatedTitles { get; set; }
     public int UnresolvedLinks { get; set; }
@@ -93,6 +100,9 @@ internal sealed class ImportPlan
             filtered.Papers.Add(paper);
         }
 
+        // 文件内来源 ID 全集必须随勾选范围保留：清关联时依赖它区分
+        // “文件里没有”与“文件里有但本轮未导入”。
+        filtered.FileSourceIds.UnionWith(FileSourceIds);
         filtered.Warnings.AddRange(Warnings);
         return filtered;
     }

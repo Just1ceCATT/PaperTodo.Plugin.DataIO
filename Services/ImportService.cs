@@ -189,6 +189,7 @@ internal sealed class ImportService
                             plan.SupportsPaperLinks,
                             plan.SupportsReminders,
                             idMap,
+                            plan.FileSourceIds,
                             result,
                             cancellationToken);
                     }
@@ -1234,6 +1235,7 @@ internal sealed class ImportService
         bool supportsPaperLinks,
         bool supportsReminders,
         Dictionary<string, string> idMap,
+        IReadOnlySet<string> fileSourceIds,
         ImportResult result,
         CancellationToken cancellationToken)
     {
@@ -1359,6 +1361,15 @@ internal sealed class ImportService
                 if (!idMap.TryGetValue(original.LinkedSourcePaperId, out var target) ||
                     string.Equals(target, newPaperId, StringComparison.Ordinal))
                 {
+                    // 目标纸片在文件里存在、只是本轮没有导入（未勾选、内容无变化被跳过或导入失败）：
+                    // 本地关联仍然有效，不能按“文件中已不存在”清除。
+                    if (fileSourceIds.Contains(original.LinkedSourcePaperId))
+                    {
+                        result.Warnings.Add(
+                            $"待办“{Shorten(original.Text)}”要关联的纸片本轮未导入，本地关联保持不变。");
+                        continue;
+                    }
+
                     result.Warnings.Add($"待办“{Shorten(original.Text)}”要关联的纸片不在导入文件中，关联已丢弃。");
 
                     // 源文件要求关联但目标不在文件内：更新时应清掉本地旧关联，保持与文件一致。

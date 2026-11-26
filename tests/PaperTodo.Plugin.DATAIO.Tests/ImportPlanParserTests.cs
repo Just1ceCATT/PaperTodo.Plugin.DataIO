@@ -69,4 +69,25 @@ public sealed class ImportPlanParserTests
         Assert.NotNull(plan.FatalError);
         Assert.Contains("JSON", plan.FatalError);
     }
+
+    [Fact]
+    public void File_source_ids_survive_partial_selection()
+    {
+        var json = Header +
+            "[{\"sourceId\":\"a\",\"type\":\"todo\",\"title\":\"A\"," +
+            "\"todos\":[{\"text\":\"甲\",\"linkedSourcePaperId\":\"b\"}]}," +
+            "{\"sourceId\":\"b\",\"type\":\"note\",\"title\":\"B\",\"content\":\"正文\"}]}";
+
+        var plan = ImportPlanParser.Parse(json);
+        Assert.Null(plan.FatalError);
+        Assert.Contains("b", plan.FileSourceIds);
+
+        // 只勾选 A 时，B 虽未进入本轮计划，仍应记录在文件来源 ID 中，
+        // 这样更新 A 时不会误清“A 的待办 → B”的本地关联。
+        var filtered = plan.WithPapers([plan.Papers[0]]);
+
+        Assert.Single(filtered.Papers);
+        Assert.Contains("a", filtered.FileSourceIds);
+        Assert.Contains("b", filtered.FileSourceIds);
+    }
 }

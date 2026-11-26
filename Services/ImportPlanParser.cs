@@ -1297,6 +1297,10 @@ internal static class ImportPlanParser
             }
         }
 
+        // 记录文件内全部来源 ID（含随后因类型/长度等原因被跳过的纸片），
+        // 供更新时判断关联目标是否真的不在文件中。
+        plan.FileSourceIds.UnionWith(sourceIds);
+
         var now = DateTimeOffset.Now;
 
         foreach (var source in document.Papers)
