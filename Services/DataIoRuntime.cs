@@ -39,12 +39,39 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         if (_startupCorrupt &&
             RuntimeLinkProtocol.WriteCorruptBackup(_state.CorruptBackup!, workspaceFileName))
         {
-            lock (_gate)
+            try
             {
-                _state.CorruptBackup = null;
-                SaveLocked();
+                lock (_gate)
+                {
+                    _state.CorruptBackup = null;
+                    SaveLocked();
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // 保存失败不能让 Runtime 构造失败；恢复内存中的损坏标记，下次启动再备份。
+                lock (_gate)
+                {
+                    _state.CorruptBackup = corruptBackup;
+                }
             }
         }
+
+        MergePendingState(context, workspaceFileName);
+
+        _subscription = context.Papers.Subscribe(OnRuntimeEvent);
+
+        // 宿主以折叠/胶囊状态恢复工具纸片时会延迟构建正文外壳，展开后可能只留下空白窗口。
+        // Runtime 比 Body 更早稳定，启动后主动请求一次“展开”，强制宿主走正常的正文构建路径。
+        _ = Task.Run(() => NormalizeStartupPresentationAsync());
+    }
+
+    /// <summary>
+    /// 合并本工作区的待推送状态。只有按当前纸片列表校验过、或日志确实为空、
+    /// 或日志已过期时才删除：列表在启动早期可能不完整，此时删掉会丢映射。
+    /// </summary>
+    private void MergePendingState(PaperPluginRuntimeContext context, string? workspaceFileName)
+    {
         var pending = RuntimeLinkProtocol.TryReadPendingState(workspaceFileName);
         if (pending is not null)
         {
@@ -53,9 +80,10 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                 var known = context.Workspace.ListPapers()
                     .Select(paper => paper.Id)
                     .ToHashSet(StringComparer.Ordinal);
+                var filtered = RuntimeLinkProtocol.FilterKnownLinks(pending.ImportLinks, known);
                 var incoming = new RuntimeWorkspaceState
                 {
-                    ImportLinks = RuntimeLinkProtocol.FilterKnownLinks(pending.ImportLinks, known),
+                    ImportLinks = filtered,
                     History = pending.History,
                     LastExportDirectory = pending.LastExportDirectory,
                     LastImportDirectory = pending.LastImportDirectory
@@ -65,7 +93,12 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                     Save();
                 }
 
-                RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
+                if (filtered.Count > 0 ||
+                    pending.ImportLinks.Count == 0 ||
+                    RuntimeLinkProtocol.PendingStateOlderThan(workspaceFileName, TimeSpan.FromDays(30)))
+                {
+                    RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
+                }
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -73,11 +106,34 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
             }
         }
 
-        _subscription = context.Papers.Subscribe(OnRuntimeEvent);
+        // 升级兼容：旧版共享日志没有工作区后缀，按当前纸片过滤后合并；
+        // 未匹配的条目可能属于其它工作区，保留在旧文件中等待对应工作区合并。
+        var legacy = RuntimeLinkProtocol.TryReadLegacyPendingState();
+        if (legacy is null)
+        {
+            return;
+        }
 
-        // 宿主以折叠/胶囊状态恢复工具纸片时会延迟构建正文外壳，展开后可能只留下空白窗口。
-        // Runtime 比 Body 更早稳定，启动后主动请求一次“展开”，强制宿主走正常的正文构建路径。
-        _ = Task.Run(() => NormalizeStartupPresentationAsync());
+        try
+        {
+            var known = context.Workspace.ListPapers()
+                .Select(paper => paper.Id)
+                .ToHashSet(StringComparer.Ordinal);
+            var filtered = RuntimeLinkProtocol.FilterKnownLinks(legacy.ImportLinks, known);
+            if (ImportLinkMerge.MergeInto(_state.ImportLinks, filtered))
+            {
+                Save();
+            }
+
+            if (filtered.Count > 0)
+            {
+                RuntimeLinkProtocol.RemoveLegacyPendingSources(filtered.Keys.ToList());
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // 暂时读不到纸片列表：保留旧日志，下次启动再迁移。
+        }
     }
 
     /// <summary>当前工作区数据文件名（data.json / data2.json），用于隔离待推送日志。</summary>

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text.Json;
 using Xunit;
 
@@ -215,6 +216,41 @@ public sealed class RuntimeLinkProtocolTests
         finally
         {
             RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
+        }
+    }
+
+    [Fact]
+    public void Corrupt_pending_state_is_backed_up_instead_of_silently_deleted()
+    {
+        var key = "dataio-pending-" + Guid.NewGuid().ToString("N") + ".json";
+        var path = RuntimeLinkProtocol.PendingStatePath(key)!;
+        var directory = Path.GetDirectoryName(path)!;
+        var backupPath = Path.Combine(
+            directory,
+            $"state-corrupt.{RuntimeLinkProtocol.WorkspaceKey(key)}.bak");
+        try
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(path, "{\"importLinks\":{");
+
+            var state = RuntimeLinkProtocol.TryReadPendingState(key);
+
+            Assert.Null(state);
+            Assert.False(File.Exists(path));
+            Assert.True(File.Exists(backupPath));
+            Assert.Contains("importLinks", File.ReadAllText(backupPath));
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            if (File.Exists(backupPath))
+            {
+                File.Delete(backupPath);
+            }
         }
     }
 

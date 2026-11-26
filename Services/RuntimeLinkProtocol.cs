@@ -342,11 +342,121 @@ internal static class RuntimeLinkProtocol
 
         try
         {
-            return ParseState(File.ReadAllText(path), out _);
+            var state = ParseState(File.ReadAllText(path), out var corruptBackup);
+            if (!string.IsNullOrEmpty(corruptBackup))
+            {
+                // 待推送日志同样是崩溃恢复凭据：损坏时另存 .bak 后再清除，
+                // 不能让它被当成“空日志”静默删除。
+                if (WriteCorruptBackup(corruptBackup, workspaceFileName))
+                {
+                    DeletePendingState(workspaceFileName);
+                }
+
+                return null;
+            }
+
+            return state;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             return null;
+        }
+    }
+
+    public static bool PendingStateOlderThan(string? workspaceFileName, TimeSpan age)
+    {
+        var path = PendingStatePath(workspaceFileName);
+        if (path is null || !File.Exists(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            return DateTime.UtcNow - File.GetLastWriteTimeUtc(path) > age;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>旧版共享待推送日志路径；升级兼容用，迁移完成后删除。</summary>
+    private static string? LegacyPendingStatePath
+    {
+        get
+        {
+            try
+            {
+                var directory = Path.GetDirectoryName(typeof(DataIoPlugin).Assembly.Location);
+                return string.IsNullOrEmpty(directory)
+                    ? null
+                    : Path.Combine(directory, ".runtime", "import-links.pending.json");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                return null;
+            }
+        }
+    }
+
+    public static RuntimeWorkspaceState? TryReadLegacyPendingState()
+    {
+        var path = LegacyPendingStatePath;
+        if (path is null || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var state = ParseState(File.ReadAllText(path), out var corruptBackup);
+            if (!string.IsNullOrEmpty(corruptBackup))
+            {
+                WriteCorruptBackup(corruptBackup, "legacy");
+                return null;
+            }
+
+            return state;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从旧版共享日志中移除已被本工作区合并的条目，未匹配的（可能属于其它工作区）保留。
+    /// 条目清空后删除文件。
+    /// </summary>
+    public static void RemoveLegacyPendingSources(IReadOnlyCollection<string> consumedSourceIds)
+    {
+        var path = LegacyPendingStatePath;
+        var legacy = TryReadLegacyPendingState();
+        if (path is null || legacy is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var consumed = new HashSet<string>(consumedSourceIds, StringComparer.Ordinal);
+            var remaining = legacy.ImportLinks
+                .Where(pair => !consumed.Contains(pair.Key))
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+            if (remaining.Count == 0)
+            {
+                File.Delete(path);
+                return;
+            }
+
+            JsonFiles.WriteAllTextAtomic(
+                path,
+                SerializeState(new RuntimeWorkspaceState { ImportLinks = remaining }));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            // 迁移失败时保留原文件，下次启动再试。
         }
     }
 

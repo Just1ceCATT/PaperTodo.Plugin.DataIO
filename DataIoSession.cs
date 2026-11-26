@@ -133,9 +133,17 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     private static int _autoReloadCount;
     private const int MaxAutoReloads = 2;
 
+    /// <summary>
+    /// 工作区数据文件名（data.json / data2.json）。只在会话存活期间可读：
+    /// 会话销毁后宿主 API 会拒绝调用，必须在构造时缓存，否则销毁后写待推送日志
+    /// 会落到 “default” 键，永远不会被任何 Runtime 读取。
+    /// </summary>
+    private readonly string? _workspaceFileName;
+
     public DataIoSession(PaperBodyContext context)
     {
         _context = context;
+        _workspaceFileName = TryGetCurrentWorkspaceFileName();
         _state = DataIoState.Parse(context.StateJson, out var stateRecovered);
         if (stateRecovered)
         {
@@ -172,6 +180,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             _gateway,
             _state,
             id => _context.Workspace.GetPaper(id));
+
+        // 上一次会话在 Runtime 不可用或销毁后写入的待推送状态必须先合并进镜像；
+        // 否则重建后的会话会用旧镜像整表替换 Runtime，并顺手删掉这份待推送数据。
+        AbsorbPendingState();
         _view.PreviewLoader = key => LoadPreviewAsync(key, includeImages: true);
         _view.HoverPreviewLoader = key => LoadPreviewAsync(key, includeImages: false);
 
@@ -1086,7 +1098,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             }
 
             _linkPushPending = false;
-            RuntimeLinkProtocol.DeletePendingState(TryGetCurrentWorkspaceFileName());
+            RuntimeLinkProtocol.DeletePendingState(_workspaceFileName);
         }
         catch (Exception)
         {
@@ -1108,7 +1120,32 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             state.ImportLinks = new Dictionary<string, ImportIdentityLink>(links, StringComparer.Ordinal);
         }
 
-        RuntimeLinkProtocol.WritePendingState(state, TryGetCurrentWorkspaceFileName());
+        RuntimeLinkProtocol.WritePendingState(state, _workspaceFileName);
+    }
+
+    /// <summary>
+    /// 会话启动时合并本工作区残留的待推送状态。Runtime 只在自身启动时消费一次日志，
+    /// 重建正文产生的新会话必须把它吸进镜像，后续的整表替换才不会把它删掉。
+    /// </summary>
+    private void AbsorbPendingState()
+    {
+        try
+        {
+            var pending = RuntimeLinkProtocol.TryReadPendingState(_workspaceFileName);
+            if (pending is null)
+            {
+                return;
+            }
+
+            if (RuntimeLinkProtocol.ApplyToState(_state, pending, replaceLinks: false))
+            {
+                _context.SaveStateJson(DataIoState.Serialize(_state));
+            }
+        }
+        catch (Exception)
+        {
+            // 读取待推送日志失败不应阻止正文加载；日志会在下次会话或 Runtime 启动时再合并。
+        }
     }
 
     /// <summary>首次展示状态栏时带上“状态已损坏并备份”的提示。</summary>
