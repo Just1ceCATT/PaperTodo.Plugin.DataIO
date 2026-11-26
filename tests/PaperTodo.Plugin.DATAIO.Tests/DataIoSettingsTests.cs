@@ -27,6 +27,18 @@ public sealed class DataIoSettingsTests
     }
 
     [Fact]
+    public void Invalid_json_is_reported_as_corrupted()
+    {
+        var settings = DataIoSettings.Parse("{ not json", out var corrupted);
+
+        Assert.True(corrupted);
+        Assert.True(settings.UpdateImportedPapers);
+
+        _ = DataIoSettings.Parse("{}", out var validJsonCorrupted);
+        Assert.False(validJsonCorrupted);
+    }
+
+    [Fact]
     public void Non_boolean_value_falls_back_to_default()
     {
         Assert.False(DataIoSettings.Parse("{\"deleteMissingTodos\":\"no\"}").DeleteMissingTodos);

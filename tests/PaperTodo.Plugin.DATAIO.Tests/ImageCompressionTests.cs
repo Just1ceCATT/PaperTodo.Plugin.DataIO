@@ -31,6 +31,34 @@ public sealed class ImageCompressionTests
     }
 
     [Fact]
+    public void Oversized_dimensions_are_rejected_before_full_decode()
+    {
+        RunSta(() =>
+        {
+            var source = CreateNoisePng(4200, 1200, PixelFormats.Bgr24);
+            Assert.True(source.Length > ImageCompressionService.MaxImageBytes);
+
+            Assert.False(ImageCompressionService.TryCompress(
+                source,
+                "image/png",
+                out _,
+                out var reason));
+            Assert.Contains("4096", reason);
+        });
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A }, true)]
+    [InlineData(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }, true)]
+    [InlineData(new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }, true)]
+    [InlineData(new byte[] { 0x3C, 0x68, 0x74, 0x6D, 0x6C, 0x3E }, false)]
+    [InlineData(new byte[] { 0x4D, 0x5A, 0x90, 0x00 }, false)]
+    public void Signature_check_rejects_non_images(byte[] bytes, bool expected)
+    {
+        Assert.Equal(expected, ImageCompressionService.HasRecognizedImageSignature(bytes));
+    }
+
+    [Fact]
     public async Task Compression_runs_on_worker_thread()
     {
         // 导入解析走 Task.Run（线程池/MTA），压缩不能依赖 STA。

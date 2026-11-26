@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Xunit;
 
 namespace PaperTodo.Plugin.DataIo.Tests;
@@ -144,6 +145,27 @@ public sealed class RuntimeLinkProtocolTests
         Assert.Equal(7, requestId);
         Assert.True(corrupt);
         Assert.Single(received!.ImportLinks);
+    }
+
+    [Fact]
+    public void Snapshot_with_null_collections_is_normalized()
+    {
+        // 外部消息可能把集合写成 null；合并历史/映射时不能让异常逃逸出回调。
+        using var document = JsonDocument.Parse(
+            "{\"type\":\"" + RuntimeLinkProtocol.SnapshotType +
+            "\",\"requestId\":7,\"workspace\":{\"importLinks\":null,\"history\":null}}");
+
+        Assert.True(RuntimeLinkProtocol.TryRead(
+            document.RootElement,
+            out _,
+            out var requestId,
+            out var workspace,
+            out _));
+
+        Assert.Equal(7, requestId);
+        Assert.NotNull(workspace);
+        Assert.NotNull(workspace!.ImportLinks);
+        Assert.NotNull(workspace.History);
     }
 
     private static ImportIdentityLink Link(string paperId, string importedAt) => new()

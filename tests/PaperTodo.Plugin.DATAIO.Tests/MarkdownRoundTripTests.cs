@@ -183,6 +183,109 @@ public sealed class MarkdownRoundTripTests
         Assert.Equal(todoCount, paper.Todos?.Count ?? 0);
     }
 
+    [Fact]
+    public void Unclosed_fence_does_not_swallow_next_paper_on_round_trip()
+    {
+        // A 的正文以未闭合代码围栏结束，B 又含代码块：旧实现会把 B 的标记当成
+        // A 的代码内容，整张 B 被吞进 A。
+        var document = new ExportDocument
+        {
+            ExportedAt = DateTimeOffset.Now,
+            Papers =
+            [
+                new ExportPaper
+                {
+                    SourceId = "a",
+                    Type = "note",
+                    Title = "A",
+                    ContentAvailable = true,
+                    Content = "```\n未闭合的代码"
+                },
+                new ExportPaper
+                {
+                    SourceId = "b",
+                    Type = "note",
+                    Title = "B",
+                    ContentAvailable = true,
+                    Content = "```\n另一段代码\n```"
+                }
+            ]
+        };
+
+        var path = Path.Combine(Path.GetTempPath(), $"papertodo-fence-{Guid.NewGuid():N}.md");
+        try
+        {
+            MarkdownExportService.Write(path, document);
+            var plan = ImportPlanParser.ParseFile(path);
+
+            Assert.Null(plan.FatalError);
+            Assert.Equal(2, plan.Papers.Count);
+            Assert.Equal("a", plan.Papers[0].Source.SourceId);
+            Assert.Equal("```\n未闭合的代码", plan.Papers[0].Source.Content);
+            Assert.Equal("b", plan.Papers[1].Source.SourceId);
+            Assert.Equal("```\n另一段代码\n```", plan.Papers[1].Source.Content);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // 测试清理失败不影响结果。
+            }
+        }
+    }
+
+    [Fact]
+    public void Empty_title_round_trips_as_empty()
+    {
+        var plan = RoundTrip(new ExportPaper
+        {
+            SourceId = "s6",
+            Type = "note",
+            Title = "",
+            ContentAvailable = true,
+            Content = "正文"
+        });
+
+        Assert.Null(plan.FatalError);
+        Assert.Equal("", Assert.Single(plan.Papers).Source.Title);
+    }
+
+    [Fact]
+    public void Blank_todo_text_is_written_to_markdown()
+    {
+        // 宿主不允许追加空文本待办，导入端会跳过它；但导出文件应保留该条目，
+        // 让其它 Markdown 工具看到完整内容，而不是在导出时直接丢失。
+        var document = new ExportDocument
+        {
+            ExportedAt = DateTimeOffset.Now,
+            Papers =
+            [
+                new ExportPaper
+                {
+                    SourceId = "s7",
+                    Type = "todo",
+                    Title = "待办",
+                    Todos =
+                    [
+                        new ExportTodo { Text = "", Done = false, Order = 0 },
+                        new ExportTodo { Text = "有内容", Done = false, Order = 1 }
+                    ]
+                }
+            ]
+        };
+
+        var markdown = MarkdownExportService.Build(document);
+        var checkboxLines = markdown
+            .Split('\n')
+            .Count(line => line.StartsWith("- [ ]", StringComparison.Ordinal));
+
+        Assert.Equal(2, checkboxLines);
+    }
+
     private static ImportPlan RoundTrip(ExportPaper paper)
     {
         var document = new ExportDocument

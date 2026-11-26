@@ -43,6 +43,41 @@ public sealed class StateTests
     }
 
     [Fact]
+    public void Plan_filter_preserves_format_capabilities()
+    {
+        // Markdown 计划标记为“不携带提醒/关联”；按勾选范围生成新计划时必须保留，
+        // 否则更新会按“文件中没有”清除本地关联与提醒。
+        var plan = new ImportPlan
+        {
+            SupportsPaperLinks = false,
+            SupportsReminders = false,
+            ContainerFormat = "Markdown 压缩包"
+        };
+        plan.Papers.Add(new ImportPaper
+        {
+            Source = new ExportPaper { Type = "todo", Title = "T", Todos = [] }
+        });
+
+        var filtered = plan.WithPapers(plan.Papers);
+
+        Assert.False(filtered.SupportsPaperLinks);
+        Assert.False(filtered.SupportsReminders);
+        Assert.Equal("Markdown 压缩包", filtered.ContainerFormat);
+        Assert.Single(filtered.Papers);
+    }
+
+    [Fact]
+    public void Migrate_keeps_corrupt_state_for_session_backup()
+    {
+        const string corrupt = "{ this is not json";
+
+        var migrated = DataIoState.Migrate(corrupt, fromVersion: 0);
+
+        // 原样返回，让会话层按“损坏状态”备份并提示，而不是静默重置。
+        Assert.Equal(corrupt, migrated);
+    }
+
+    [Fact]
     public void Migrate_normalizes_unknown_values()
     {
         var migrated = DataIoState.Parse(DataIoState.Migrate(
