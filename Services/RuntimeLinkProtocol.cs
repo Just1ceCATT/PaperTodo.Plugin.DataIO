@@ -86,6 +86,7 @@ internal static class RuntimeLinkProtocol
                 {
                     // 外部消息中的集合字段可能显式为 null；不归一化会在合并历史时抛异常。
                     workspace.ImportLinks = DataIoState.NormalizeImportLinks(workspace.ImportLinks);
+                    workspace.RemovedLinks = DataIoState.NormalizeRemovedLinks(workspace.RemovedLinks);
                     workspace.History = DataIoState.NormalizeHistory(workspace.History);
                     workspace.LastExportDirectory ??= "";
                     workspace.LastImportDirectory ??= "";
@@ -104,6 +105,9 @@ internal static class RuntimeLinkProtocol
     public static RuntimeWorkspaceState FromState(DataIoState state) => new()
     {
         ImportLinks = new Dictionary<string, ImportIdentityLink>(state.ImportLinks, StringComparer.Ordinal),
+        RemovedLinks = new Dictionary<string, string>(
+            state.RemovedLinks ?? new Dictionary<string, string>(StringComparer.Ordinal),
+            StringComparer.Ordinal),
         History = state.History.Select(entry => entry.Clone()).ToList(),
         LastExportDirectory = state.LastExportDirectory,
         LastImportDirectory = state.LastImportDirectory
@@ -132,6 +136,7 @@ internal static class RuntimeLinkProtocol
 
             state.Version = Math.Max(1, state.Version);
             state.ImportLinks = DataIoState.NormalizeImportLinks(state.ImportLinks);
+            state.RemovedLinks = DataIoState.NormalizeRemovedLinks(state.RemovedLinks);
             state.History = DataIoState.NormalizeHistory(state.History);
             state.LastExportDirectory ??= "";
             state.LastImportDirectory ??= "";
@@ -154,12 +159,21 @@ internal static class RuntimeLinkProtocol
         JsonSerializer.Serialize(state.Clone(), Options);
 
     /// <summary>
-    /// 把 incoming 合并进 target：映射按较新导入时间取胜，历史按唯一键去重，
-    /// 上次目录在 incoming 非空时覆盖（纸片镜像通常是最近一次用户操作）。
+    /// 把 incoming 合并进 target：映射按较新导入时间取胜，墓碑优先于旧映射，
+    /// 历史按唯一键去重，上次目录在 incoming 非空时覆盖（纸片镜像通常是最近一次用户操作）。
     /// </summary>
     public static bool MergeState(RuntimeWorkspaceState target, RuntimeWorkspaceState incoming)
     {
-        var changed = ImportLinkMerge.MergeInto(target.ImportLinks, incoming.ImportLinks);
+        // 删除墓碑必须先合并：合并协议本身只能表达“有”，
+        // 不处理墓碑会把本地已删除的映射原样并回来。
+        var changed = MergeRemovedLinks(target.RemovedLinks, incoming.RemovedLinks);
+        // 已被墓碑覆盖的旧映射直接跳过，避免“先并回、再删掉”这种无意义的抖动。
+        var surviving = incoming.ImportLinks
+            .Where(pair => !IsRemoved(pair.Value, pair.Key, target.RemovedLinks))
+            .ToList();
+        changed |= ImportLinkMerge.MergeInto(target.ImportLinks, surviving);
+        changed |= ApplyRemovals(target.ImportLinks, target.RemovedLinks);
+        changed |= PruneRemovedLinks(target.ImportLinks, target.RemovedLinks);
 
         var history = MergeHistory(target.History, incoming.History);
         if (!history.Select(EntryKey).SequenceEqual(target.History.Select(EntryKey)))
@@ -194,10 +208,14 @@ internal static class RuntimeLinkProtocol
         RuntimeWorkspaceState snapshot,
         bool replaceLinks)
     {
-        var changed = false;
+        state.RemovedLinks ??= new Dictionary<string, string>(StringComparer.Ordinal);
+        // 先合并墓碑，后续所有映射都按“墓碑优先”过滤。
+        var changed = MergeRemovedLinks(state.RemovedLinks, snapshot.RemovedLinks);
         if (replaceLinks)
         {
             var links = DataIoState.NormalizeImportLinks(snapshot.ImportLinks);
+            // Runtime 快照可能落后于本地刚发生的删除：本地墓碑优先，不能被快照复活。
+            ApplyRemovals(links, state.RemovedLinks);
             if (!LinkSetsEqual(state.ImportLinks, links))
             {
                 state.ImportLinks = links;
@@ -206,8 +224,14 @@ internal static class RuntimeLinkProtocol
         }
         else
         {
-            changed = ImportLinkMerge.MergeInto(state.ImportLinks, snapshot.ImportLinks);
+            var surviving = snapshot.ImportLinks
+                .Where(pair => !IsRemoved(pair.Value, pair.Key, state.RemovedLinks))
+                .ToList();
+            changed |= ImportLinkMerge.MergeInto(state.ImportLinks, surviving);
+            changed |= ApplyRemovals(state.ImportLinks, state.RemovedLinks);
         }
+
+        changed |= PruneRemovedLinks(state.ImportLinks, state.RemovedLinks);
 
         var history = MergeHistory(state.History, snapshot.History);
         if (!history.Select(EntryKey).SequenceEqual(state.History.Select(EntryKey)))
@@ -227,6 +251,114 @@ internal static class RuntimeLinkProtocol
             !string.Equals(state.LastImportDirectory, snapshot.LastImportDirectory, StringComparison.Ordinal))
         {
             state.LastImportDirectory = snapshot.LastImportDirectory;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// 应用删除墓碑：只有映射登记时间早于删除时间时才真正删除。
+    /// 删除之后重新导入成功的映射（登记时间更新）会保留。
+    /// </summary>
+    internal static bool ApplyRemovals(
+        Dictionary<string, ImportIdentityLink> links,
+        IReadOnlyDictionary<string, string>? removed)
+    {
+        if (removed is null || removed.Count == 0)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var (sourceId, removedAt) in removed)
+        {
+            if (links.TryGetValue(sourceId, out var link) &&
+                ImportIdentityService.CompareImportedAt(link.LastImportedAt, removedAt) < 0)
+            {
+                links.Remove(sourceId);
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>映射是否已被更晚的删除墓碑覆盖：登记时间早于删除时间才算已删除。</summary>
+    private static bool IsRemoved(
+        ImportIdentityLink? link,
+        string sourceId,
+        IReadOnlyDictionary<string, string>? removed) =>
+        link is not null &&
+        removed is not null &&
+        removed.TryGetValue(sourceId, out var removedAt) &&
+        ImportIdentityService.CompareImportedAt(link.LastImportedAt, removedAt) < 0;
+
+    /// <summary>合并墓碑集合：同一 sourceId 保留较晚的删除时间。</summary>
+    internal static bool MergeRemovedLinks(
+        Dictionary<string, string> target,
+        IReadOnlyDictionary<string, string>? incoming)
+    {
+        if (incoming is null || incoming.Count == 0)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var (sourceId, removedAt) in incoming)
+        {
+            if (string.IsNullOrWhiteSpace(sourceId) || string.IsNullOrWhiteSpace(removedAt))
+            {
+                continue;
+            }
+
+            if (!target.TryGetValue(sourceId, out var existing) ||
+                ImportIdentityService.CompareImportedAt(removedAt, existing) > 0)
+            {
+                target[sourceId] = removedAt;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// 丢弃已被更新映射覆盖的墓碑（删除后重新导入），并按保留期与容量上限裁剪，
+    /// 避免墓碑集合随使用无限增长。
+    /// </summary>
+    private static bool PruneRemovedLinks(
+        Dictionary<string, ImportIdentityLink> links,
+        Dictionary<string, string> removed)
+    {
+        if (removed.Count == 0)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var sourceId in removed.Keys.ToList())
+        {
+            if (links.TryGetValue(sourceId, out var link) &&
+                ImportIdentityService.CompareImportedAt(link.LastImportedAt, removed[sourceId]) >= 0)
+            {
+                removed.Remove(sourceId);
+                changed = true;
+            }
+        }
+
+        var normalized = DataIoState.NormalizeRemovedLinks(removed);
+        if (normalized.Count != removed.Count ||
+            normalized.Any(pair =>
+                !removed.TryGetValue(pair.Key, out var existing) ||
+                !string.Equals(existing, pair.Value, StringComparison.Ordinal)))
+        {
+            removed.Clear();
+            foreach (var (sourceId, removedAt) in normalized)
+            {
+                removed[sourceId] = removedAt;
+            }
+
             changed = true;
         }
 
@@ -583,6 +715,10 @@ internal sealed class RuntimeWorkspaceState
     public Dictionary<string, ImportIdentityLink> ImportLinks { get; set; } =
         new(StringComparer.Ordinal);
 
+    /// <summary>已删除映射的墓碑：sourceId → 删除时间，合并时据此真正删除旧映射。</summary>
+    public Dictionary<string, string> RemovedLinks { get; set; } =
+        new(StringComparer.Ordinal);
+
     public List<DataIoHistoryEntry> History { get; set; } = [];
 
     public string LastExportDirectory { get; set; } = "";
@@ -596,6 +732,7 @@ internal sealed class RuntimeWorkspaceState
     {
         Version = Version,
         ImportLinks = new Dictionary<string, ImportIdentityLink>(ImportLinks, StringComparer.Ordinal),
+        RemovedLinks = new Dictionary<string, string>(RemovedLinks, StringComparer.Ordinal),
         History = History.Select(entry => entry.Clone()).ToList(),
         LastExportDirectory = LastExportDirectory,
         LastImportDirectory = LastImportDirectory,

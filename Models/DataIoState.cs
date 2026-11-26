@@ -33,6 +33,14 @@ internal sealed class DataIoState
         new(StringComparer.Ordinal);
 
     /// <summary>
+    /// 已删除映射的墓碑：sourceId → 删除时间（ISO 8601）。
+    /// Runtime 的合并协议只能表达“有哪些映射”，无法表达“删掉了哪些”；
+    /// 没有墓碑时，本地删除会被权威快照原样回滚，死映射永远删不掉。
+    /// </summary>
+    public Dictionary<string, string> RemovedLinks { get; set; } =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
     /// 最近的导入/导出记录（新到旧），供贴边胶囊的悬停面板展示。
     /// 只保留轻量元数据，条数有上限，避免状态无限增长。
     /// </summary>
@@ -63,6 +71,7 @@ internal sealed class DataIoState
         {
             var state = JsonSerializer.Deserialize<DataIoState>(json, Options) ?? new DataIoState();
             state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
+            state.RemovedLinks = NormalizeRemovedLinks(state.RemovedLinks);
             state.History = NormalizeHistory(state.History);
             return state;
         }
@@ -95,6 +104,7 @@ internal sealed class DataIoState
         state.ExportFormat = NormalizeExportFormat(state.ExportFormat);
         state.Search ??= "";
         state.ImportLinks = NormalizeImportLinks(state.ImportLinks);
+        state.RemovedLinks = NormalizeRemovedLinks(state.RemovedLinks);
         state.History = NormalizeHistory(state.History);
         return Serialize(state);
     }
@@ -194,6 +204,55 @@ internal sealed class DataIoState
         {
             var keep = normalized
                 .OrderByDescending(pair => ParseImportedAt(pair.Value.LastImportedAt))
+                .Take(MaxImportLinks)
+                .Select(pair => pair.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var sourceId in normalized.Keys.Where(id => !keep.Contains(id)).ToList())
+            {
+                normalized.Remove(sourceId);
+            }
+        }
+
+        return normalized;
+    }
+
+    /// <summary>墓碑保留时长；超过后不再保留，避免状态文件随使用无限增长。</summary>
+    internal static readonly TimeSpan RemovedLinkRetention = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// 归一化删除墓碑：丢弃无键/无有效时间的条目，按保留期淘汰过期墓碑，
+    /// 并按删除时间截断到与映射相同的容量上限。
+    /// </summary>
+    public static Dictionary<string, string> NormalizeRemovedLinks(
+        Dictionary<string, string>? removed)
+    {
+        var normalized = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (removed == null || removed.Count == 0)
+        {
+            return normalized;
+        }
+
+        var cutoff = DateTimeOffset.Now - RemovedLinkRetention;
+        foreach (var (sourceId, at) in removed)
+        {
+            if (string.IsNullOrWhiteSpace(sourceId) ||
+                !DateTimeOffset.TryParse(
+                    at,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.None,
+                    out var parsed) ||
+                parsed < cutoff)
+            {
+                continue;
+            }
+
+            normalized[sourceId] = parsed.ToString("O", CultureInfo.InvariantCulture);
+        }
+
+        if (normalized.Count > MaxImportLinks)
+        {
+            var keep = normalized
+                .OrderByDescending(pair => ParseImportedAt(pair.Value))
                 .Take(MaxImportLinks)
                 .Select(pair => pair.Key)
                 .ToHashSet(StringComparer.Ordinal);

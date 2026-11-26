@@ -867,9 +867,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// </summary>
     private void ReconcileImportLinks()
     {
-        // 工具纸片自身也在列表中，列表为空只可能是 PaperTodo 数据尚未就绪的瞬态。
-        // 此时绝不能把全部映射判定为失效，等待下次刷新再对账。
-        if (_papers.Count == 0)
+        // 工具纸片自身也在列表中：列表为空、或不包含自己，只可能是 PaperTodo 数据尚未就绪的瞬态。
+        // 此时绝不能把“暂时看不到”的纸片判定为已删除，否则会误删映射并写进墓碑。
+        if (!_papers.Any(IsSelf))
         {
             return;
         }
@@ -1065,7 +1065,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         cancellationToken.ThrowIfCancellationRequested();
         var known = papers.Select(paper => paper.Id).ToHashSet(StringComparer.Ordinal);
-        return (RuntimeLinkProtocol.FilterKnownLinks(links, known), true);
+        // 工具纸片自身也在列表中。列表里没有自己时说明 PaperTodo 还在恢复数据，
+        // 此时的列表不代表完整纸片集合：过滤结果不能作为“可整表替换”的依据。
+        var complete = known.Contains(_context.PaperId);
+        return (RuntimeLinkProtocol.FilterKnownLinks(links, known), complete);
     }
 
     /// <summary>映射、历史或上次目录变化后同时刷新纸片级镜像与 Runtime 权威状态。</summary>
@@ -2338,7 +2341,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
             if (!_gateway.Can(PaperTodoPermissionNames.PapersRead))
             {
-                // 没有读取权限时只能按新建处理。
+                // 没有读取权限时只能按新建处理；但已有映射时不能静默新建，
+                // 否则再次导入同一文件会产生重复纸片。
+                if (_state.ImportLinks.Count > 0)
+                {
+                    plan.Warnings.Add(
+                        "缺少 papers.read 权限，无法确认已导入的纸片，本次将按新建处理；" +
+                        "这可能产生重复纸片，建议恢复权限后重新导入。");
+                }
+
                 return true;
             }
 

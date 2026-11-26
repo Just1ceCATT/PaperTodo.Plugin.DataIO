@@ -85,6 +85,75 @@ public sealed class RuntimeLinkProtocolTests
     }
 
     [Fact]
+    public void Merge_applies_removal_tombstones_and_does_not_resurrect_deleted_links()
+    {
+        var older = DateTimeOffset.Now.AddMinutes(-10).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        var removedAt = DateTimeOffset.Now.AddMinutes(-5).ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        var reimportedAt = DateTimeOffset.Now.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+
+        var target = new RuntimeWorkspaceState
+        {
+            ImportLinks = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal)
+            {
+                ["s1"] = Link("old", older)
+            }
+        };
+        var incoming = new RuntimeWorkspaceState
+        {
+            RemovedLinks = new Dictionary<string, string>(StringComparer.Ordinal) { ["s1"] = removedAt }
+        };
+
+        Assert.True(RuntimeLinkProtocol.MergeState(target, incoming));
+        Assert.False(target.ImportLinks.ContainsKey("s1"));
+        Assert.Equal(removedAt, target.RemovedLinks["s1"]);
+
+        // 删除后合入删除前登记的旧映射不能复活。
+        Assert.False(RuntimeLinkProtocol.MergeState(target, new RuntimeWorkspaceState
+        {
+            ImportLinks = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal)
+            {
+                ["s1"] = Link("old", older)
+            }
+        }));
+        Assert.False(target.ImportLinks.ContainsKey("s1"));
+
+        // 删除后重新导入（登记时间更新）可以保留，并清理墓碑。
+        Assert.True(RuntimeLinkProtocol.MergeState(target, new RuntimeWorkspaceState
+        {
+            ImportLinks = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal)
+            {
+                ["s1"] = Link("new", reimportedAt)
+            }
+        }));
+        Assert.Equal("new", target.ImportLinks["s1"].LocalPaperId);
+        Assert.False(target.RemovedLinks.ContainsKey("s1"));
+    }
+
+    [Fact]
+    public void Pending_state_round_trips_removal_tombstones()
+    {
+        var workspaceFileName = "dataio-tombstone-" + Guid.NewGuid().ToString("N") + ".json";
+        try
+        {
+            var removedAt = DateTimeOffset.Now.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            var state = new RuntimeWorkspaceState
+            {
+                RemovedLinks = new Dictionary<string, string>(StringComparer.Ordinal) { ["s1"] = removedAt }
+            };
+
+            RuntimeLinkProtocol.WritePendingState(state, workspaceFileName);
+            var restored = RuntimeLinkProtocol.TryReadPendingState(workspaceFileName);
+
+            Assert.NotNull(restored);
+            Assert.Equal(removedAt, Assert.Single(restored!.RemovedLinks).Value);
+        }
+        finally
+        {
+            RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
+        }
+    }
+
+    [Fact]
     public void Merge_unions_history_and_fills_missing_directories()
     {
         var target = new RuntimeWorkspaceState

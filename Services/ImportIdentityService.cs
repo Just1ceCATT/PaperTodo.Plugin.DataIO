@@ -31,7 +31,20 @@ internal sealed class ImportIdentityService
         _state = state;
         _paperLookup = paperLookup;
         _state.ImportLinks ??= new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
+        _state.RemovedLinks ??= new Dictionary<string, string>(StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// 记录一次删除墓碑。Runtime 的合并协议无法表达删除，没有墓碑时
+    /// 本地删掉的映射会被下一次权威快照原样复活。
+    /// </summary>
+    private void MarkRemoved(string sourceId) =>
+        _state.RemovedLinks[sourceId] =
+            DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>映射被本地修改后的时间戳，让 Runtime 合并时采用本地较新的版本。</summary>
+    private static string TouchTimestamp() =>
+        DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture);
 
     /// <summary>本次解析或记录是否修改了映射，调用方据此决定是否保存状态。</summary>
     public bool HasChanges { get; private set; }
@@ -98,6 +111,7 @@ internal sealed class ImportIdentityService
                 if (target is null)
                 {
                     _state.ImportLinks.Remove(sourceId);
+                    MarkRemoved(sourceId);
                     HasChanges = true;
                     continue;
                 }
@@ -146,6 +160,7 @@ internal sealed class ImportIdentityService
                     if (target is null)
                     {
                         _state.ImportLinks.Remove(sourceId);
+                        MarkRemoved(sourceId);
                         HasChanges = true;
                         plan.Warnings.Add(
                             $"纸片“{DisplayTitle(paper)}”的更新目标不再是内置 Markdown 笔记，已取消关联。");
@@ -218,20 +233,16 @@ internal sealed class ImportIdentityService
             }
 
             var type = NormalizeType(paper.Source.Type);
-            string? fingerprint;
+            string? fingerprint = null;
             try
             {
                 fingerprint = await ComputeLocalFingerprintAsync(localId, type, cancellationToken);
             }
             catch (PaperTodoPluginException)
             {
-                // 单张纸片读取失败不能影响其余映射的登记。
-                continue;
-            }
-
-            if (fingerprint == null)
-            {
-                continue;
+                // 纸片已随会话销毁、正在重载或权限暂时不可用时读不到指纹。
+                // 但导入已经写入纸片，映射必须照常登记：否则下次导入会把它当成新建副本。
+                // 指纹记为未知，更新预览会保守提示“无法确认本地是否修改”。
             }
 
             _state.ImportLinks.TryGetValue(sourceId, out var previous);
@@ -240,13 +251,16 @@ internal sealed class ImportIdentityService
                 LocalPaperId = localId,
                 Type = type,
                 Title = paper.Source.Title,
-                LocalFingerprint = fingerprint,
+                LocalFingerprint = fingerprint ?? "",
+                LocalFingerprintUnknown = fingerprint is null,
                 LastImportedAt = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
                 PreviousLocalPaperIds = MergeHistory(
                     previous?.LocalPaperId,
                     previous?.PreviousLocalPaperIds,
                     localId)
             };
+            // 重新导入成功的映射必须撤销旧墓碑，否则墓碑会把新映射再删掉。
+            _state.RemovedLinks.Remove(sourceId);
             HasChanges = true;
         }
 
@@ -334,6 +348,9 @@ internal sealed class ImportIdentityService
             if (history.RemoveAll(id => string.Equals(id, paperId, StringComparison.Ordinal)) > 0)
             {
                 HasChanges = true;
+                // 历史副本变化也要让 Runtime 采用本地版本：合并按 LastImportedAt 取新，
+                // 不改时间戳的修改会被权威快照原样回滚。
+                link.LastImportedAt = TouchTimestamp();
             }
 
             if (!string.Equals(link.LocalPaperId, paperId, StringComparison.Ordinal))
@@ -368,6 +385,7 @@ internal sealed class ImportIdentityService
                     history.RemoveAt(0);
                     link.LocalPaperId = candidateId;
                     link.PreviousLocalPaperIds = history;
+                    link.LastImportedAt = TouchTimestamp();
                     // 历史副本没有导入时的指纹：标记为未知，
                     // 更新预览必须保守提示“可能已修改”，不能静默当作无修改。
                     link.LocalFingerprint = "";
@@ -392,6 +410,7 @@ internal sealed class ImportIdentityService
         foreach (var sourceId in staleSources)
         {
             _state.ImportLinks.Remove(sourceId);
+            MarkRemoved(sourceId);
         }
     }
 
@@ -418,6 +437,8 @@ internal sealed class ImportIdentityService
                 if (history.RemoveAll(id => !papersById.ContainsKey(id)) > 0)
                 {
                     link.PreviousLocalPaperIds = history;
+                    // 让 Runtime 在合并时采用这次修剪，而不是用旧快照回滚。
+                    link.LastImportedAt = TouchTimestamp();
                     HasChanges = true;
                 }
 
@@ -435,6 +456,7 @@ internal sealed class ImportIdentityService
         foreach (var sourceId in staleSources)
         {
             _state.ImportLinks.Remove(sourceId);
+            MarkRemoved(sourceId);
         }
     }
 
@@ -493,6 +515,8 @@ internal sealed class ImportIdentityService
                 link.LocalFingerprint = "";
                 link.LocalFingerprintUnknown = true;
                 link.PreviousLocalPaperIds = history;
+                // 目标切换也是一次本地修改：更新导入时间以便 Runtime 合并时采用。
+                link.LastImportedAt = TouchTimestamp();
                 return candidate;
             }
         }

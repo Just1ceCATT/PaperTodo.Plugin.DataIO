@@ -84,6 +84,8 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                 var incoming = new RuntimeWorkspaceState
                 {
                     ImportLinks = filtered,
+                    // 墓碑必须一起合并：日志里的删除语义同样要真正生效。
+                    RemovedLinks = pending.RemovedLinks,
                     History = pending.History,
                     LastExportDirectory = pending.LastExportDirectory,
                     LastImportDirectory = pending.LastImportDirectory
@@ -93,8 +95,10 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                     Save();
                 }
 
-                if (filtered.Count > 0 ||
-                    pending.ImportLinks.Count == 0 ||
+                // 只有日志里的每条映射都能在当前纸片列表中找到，才能确认日志已被完整消费。
+                // 列表在启动早期可能不完整：只要有一条被过滤掉（目标暂时不可见），
+                // 删除日志就会永久丢掉这条映射，因此保留到列表完整或日志过期。
+                if (filtered.Count == pending.ImportLinks.Count ||
                     RuntimeLinkProtocol.PendingStateOlderThan(workspaceFileName, TimeSpan.FromDays(30)))
                 {
                     RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
@@ -261,6 +265,9 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                 {
                     // 显式替换：Body 在成功同步后提交完整快照，删除语义必须真正生效。
                     _state.ImportLinks = DataIoState.NormalizeImportLinks(workspace.ImportLinks);
+                    _state.RemovedLinks = DataIoState.NormalizeRemovedLinks(workspace.RemovedLinks);
+                    // 快照里的墓碑同样要应用到映射：发送方可能只更新墓碑而漏掉整表。
+                    RuntimeLinkProtocol.ApplyRemovals(_state.ImportLinks, _state.RemovedLinks);
                     _state.History = DataIoState.NormalizeHistory(workspace.History);
                     _state.LastExportDirectory = workspace.LastExportDirectory ?? "";
                     _state.LastImportDirectory = workspace.LastImportDirectory ?? "";

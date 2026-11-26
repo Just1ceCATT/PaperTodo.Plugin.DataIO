@@ -314,6 +314,8 @@ public sealed class ImportIdentityServiceTests
         service.Reconcile(new Dictionary<string, PaperSnapshot>());
 
         Assert.Empty(state.ImportLinks);
+        // 删除必须留下墓碑，否则 Runtime 的权威快照会把这条映射原样复活。
+        Assert.True(state.RemovedLinks.ContainsKey("s"));
         Assert.True(service.HasChanges);
     }
 
