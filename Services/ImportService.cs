@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -161,7 +162,7 @@ internal sealed class ImportService
                     result.FailedPapers++;
                     result.Failures.Add(Failure(i, importPaper, ex));
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
                 {
                     result.FailedPapers++;
                     result.Failures.Add(new ImportFailure(i + 1, DisplayTitle(importPaper), importPaper.Source.Type, "unknown", ex.Message));
@@ -178,16 +179,31 @@ internal sealed class ImportService
                     cancellationToken.ThrowIfCancellationRequested();
                     var (paper, localId, createdNow) = processed[i];
                     _progress?.Report($"正在还原 {i + 1}/{processed.Count}：{DisplayTitle(paper)}");
-                    await RepairAsync(
-                        paper,
-                        localId,
-                        createdNow,
-                        settings,
-                        plan.SupportsPaperLinks,
-                        plan.SupportsReminders,
-                        idMap,
-                        result,
-                        cancellationToken);
+                    try
+                    {
+                        await RepairAsync(
+                            paper,
+                            localId,
+                            createdNow,
+                            settings,
+                            plan.SupportsPaperLinks,
+                            plan.SupportsReminders,
+                            idMap,
+                            result,
+                            cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // 第一遍已经写入纸片；第二遍的宿主异常不能冲出 ImportAsync，
+                        // 否则调用方拿不到 ImportResult，用户只看到“操作失败”却已有半写入数据。
+                        result.Warnings.Add(
+                            $"纸片“{DisplayTitle(paper)}”的顺序/关联/提醒还原失败：{ex.Message}");
+                    }
+
                     await HostGateway.YieldAsync();
                 }
             }
@@ -314,17 +330,17 @@ internal sealed class ImportService
                 createdNow: false,
                 result,
                 cancellationToken,
-                abortOnUpdate: true);
+                abortOnUpdate: true,
+                expectedLocalContent: current.Content);
             if (imagesHandled)
             {
                 await HostGateway.YieldAsync();
                 return (targetId, false, true);
             }
 
-            // 图片完全没能写回（权限变化、宿主不支持等）：移除所有图片引用，只保留文字。
-            (content, var removed) = ImageReferenceScanner.RemoveUnresolvedReferences(
-                source.Content ?? "",
-                _ => false);
+            // 图片完全没能写回（权限变化、宿主不支持等）：只移除清单中确认无法写回的引用；
+            // 用户手写链接以及本机可能仍然有效的引用保持原样。
+            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "");
             if (removed > 0)
             {
                 result.Warnings.Add(
@@ -363,13 +379,19 @@ internal sealed class ImportService
     {
         if (paper.UsesRelativeImageLinks)
         {
-            var files = paper.Images
+            var manifestFiles = paper.Images
+                .Select(image => image.File)
+                .ToHashSet(StringComparer.Ordinal);
+            var restorableFiles = paper.Images
                 .Where(image => image.Restorable)
                 .Select(image => image.File)
                 .ToHashSet(StringComparer.Ordinal);
+
+            // 只删除清单里确实存在、但无法写回的引用；
+            // 用户手写的 images/... 链接不在清单中，必须原样保留。
             return ImageReferenceScanner.RemoveUnresolvedReferences(
                 content,
-                url => files.Contains(url));
+                url => !manifestFiles.Contains(url) || restorableFiles.Contains(url));
         }
 
         // 没有随包图片的普通 JSON：引用可能在本机仍然有效，不擅自删除。
@@ -378,13 +400,89 @@ internal sealed class ImportService
             return (content, 0);
         }
 
-        var ids = paper.Images
+        var manifestIds = paper.Images
+            .Select(image => image.SourceImageId)
+            .ToHashSet(StringComparer.Ordinal);
+        var restorableIds = paper.Images
             .Where(image => image.Restorable)
             .Select(image => image.SourceImageId)
             .ToHashSet(StringComparer.Ordinal);
         return ImageReferenceScanner.RemoveUnresolvedReferences(
             content,
-            url => url.StartsWith("i:", StringComparison.Ordinal) && ids.Contains(url[2..]));
+            url => !url.StartsWith("i:", StringComparison.Ordinal) ||
+                   !manifestIds.Contains(url[2..]) ||
+                   restorableIds.Contains(url[2..]));
+    }
+
+    /// <summary>把外部清单里的文件名清洗成 Windows 可用的图片名，并按字符边界截断。</summary>
+    private static string SanitizeImageFileName(string file)
+    {
+        var name = Path.GetFileName(file);
+        var builder = new StringBuilder(name.Length);
+        foreach (var character in name)
+        {
+            var invalid = character < ' ' ||
+                          character == '' ||
+                          character is '*' or '?' or '"' or '<' or '>' or '|';
+            builder.Append(invalid ? '_' : character);
+        }
+
+        var sanitized = builder.ToString().Trim().TrimEnd('.');
+        if (sanitized.Length == 0)
+        {
+            return "image";
+        }
+
+        const int maxNameLength = 200;
+        if (sanitized.Length > maxNameLength)
+        {
+            // 避免按 char 截断时把代理对切成两半。
+            var cut = maxNameLength;
+            if (char.IsHighSurrogate(sanitized[cut - 1]))
+            {
+                cut--;
+            }
+
+            sanitized = sanitized[..cut];
+        }
+
+        return sanitized;
+    }
+
+    /// <summary>
+    /// 判断当前正文是否只比基线多了本次追加的图片引用。
+    /// 宿主追加引用时可能补充换行，因此逐条从尾部剥离后按正文等价比较。
+    /// </summary>
+    private static bool HasOnlyOurAppendedChanges(
+        string? current,
+        string baseline,
+        IReadOnlyList<string> appended)
+    {
+        if (current is null)
+        {
+            return false;
+        }
+
+        var remainder = current;
+        for (var index = appended.Count - 1; index >= 0; index--)
+        {
+            var reference = appended[index].Trim();
+            if (reference.Length == 0)
+            {
+                continue;
+            }
+
+            var position = remainder.LastIndexOf(reference, StringComparison.Ordinal);
+            if (position < 0 ||
+                !string.IsNullOrWhiteSpace(remainder[(position + reference.Length)..]))
+            {
+                return false;
+            }
+
+            remainder = remainder[..position];
+        }
+
+        return MarkdownNormalize.ContentEquivalent(remainder, baseline);
     }
 
     /// <summary>更新待办纸片：先完整匹配并校验权限，再统一写入，避免“改一半才报失败”。</summary>
@@ -684,7 +782,8 @@ internal sealed class ImportService
         bool createdNow,
         ImportResult result,
         CancellationToken cancellationToken,
-        bool abortOnUpdate = false)
+        bool abortOnUpdate = false,
+        string? expectedLocalContent = null)
     {
         // 只写回正文实际引用的图片，避免为清单里未被引用的图片留下孤儿资源。
         var images = FilterReferencedImages(importPaper);
@@ -752,11 +851,7 @@ internal sealed class ImportService
                     continue;
                 }
 
-                var imageName = Path.GetFileName(image.File);
-                if (imageName.Length > 200)
-                {
-                    imageName = imageName[..200];
-                }
+                var imageName = SanitizeImageFileName(image.File);
 
                 try
                 {
@@ -776,8 +871,9 @@ internal sealed class ImportService
                     firstFailure ??= ex.Message;
                     break;
                 }
-                catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not OutOfMemoryException)
                 {
+                    // 单张图片的 IO/权限/参数异常只影响这一张，不能中断整张纸片的其余图片。
                     failed++;
                     firstFailure ??= ex.Message;
                 }
@@ -835,20 +931,43 @@ internal sealed class ImportService
         if (abortOnUpdate)
         {
             // 更新时图片失败不能连带丢掉文字：移除无法写回的引用，其余正文照常写入。
+            // 但只删除“清单里确实登记过的引用”；用户手写的其它 images/ 链接必须保留。
             var mappedIds = newIds.Values.ToHashSet(StringComparer.Ordinal);
             var resolvedFiles = idsByFile.Keys.ToHashSet(StringComparer.Ordinal);
+            var manifestFiles = importPaper.Images
+                .Select(image => image.File)
+                .ToHashSet(StringComparer.Ordinal);
+            var manifestIds = importPaper.Images
+                .Select(image => image.SourceImageId)
+                .ToHashSet(StringComparer.Ordinal);
             (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
                 finalContent,
                 url => url.StartsWith("images/", StringComparison.Ordinal)
-                    ? resolvedFiles.Contains(url)
-                    : url.StartsWith("i:", StringComparison.Ordinal) &&
+                    ? !manifestFiles.Contains(url) || resolvedFiles.Contains(url)
+                    : !url.StartsWith("i:", StringComparison.Ordinal) ||
+                      !manifestIds.Contains(url[2..]) ||
                       mappedIds.Contains(url[2..]));
         }
 
         try
         {
-            // 全部图片都能复用且正文没有变化时，不触发无意义的保存。
             var current = await TryGetNoteAsync(paperId);
+
+            // 图片写回期间用户可能在编辑器里继续修改目标笔记；
+            // 追加图片本身会改变正文（尾部多出引用），因此按“基线 + 本次追加的引用”识别，
+            // 只要出现其它改动就放弃覆盖。
+            if (abortOnUpdate &&
+                current is { ContentAvailable: true } &&
+                expectedLocalContent is not null &&
+                !HasOnlyOurAppendedChanges(current.Content, expectedLocalContent, appended))
+            {
+                await TryRollbackAppendedImagesAsync(paperId, appended, result);
+                throw new PaperTodoPluginException(
+                    "local_changed",
+                    "本地笔记在图片写回期间被修改，已跳过更新，请重新导入后确认。");
+            }
+
+            // 全部图片都能复用且正文没有变化时，不触发无意义的保存。
             if (current is { ContentAvailable: true } &&
                 string.Equals(current.Content, finalContent, StringComparison.Ordinal))
             {
@@ -870,13 +989,44 @@ internal sealed class ImportService
             await TryRollbackAppendedImagesAsync(paperId, appended, result);
             throw;
         }
-        catch (Exception ex) when (ex is PaperTodoPluginException or InvalidOperationException)
+        catch (PaperTodoPluginException ex) when (ex.Code == "local_changed")
+        {
+            // 本地在确认后被修改：这是安全中止，必须让调用方把原因报给用户。
+            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            throw;
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             await TryRollbackAppendedImagesAsync(paperId, appended, result);
             result.FailedImages += newIds.Count;
             result.Warnings.Add(
                 $"纸片“{DisplayTitle(importPaper)}”的图片已写入，但正文更新失败：" +
                 $"{ex.Message}；已尝试清理追加的图片引用。");
+
+            // 新建纸片当初为了追加图片先移除了正文引用；正文写回失败时必须把
+            // 文件中的原始引用写回，避免永久残留 ![]() 空引用。
+            if (!abortOnUpdate && createdNow &&
+                !string.Equals(
+                    BuildCreateContent(importPaper),
+                    importPaper.Source.Content ?? "",
+                    StringComparison.Ordinal))
+            {
+                try
+                {
+                    await _gateway.OnUiAsync(() => _gateway.Context.Workspace.WriteNote(new WriteNoteRequest
+                    {
+                        PaperId = paperId,
+                        Content = importPaper.Source.Content ?? "",
+                        Mode = NoteWriteMode.Replace
+                    }));
+                }
+                catch (Exception restoreEx) when (restoreEx is not OutOfMemoryException)
+                {
+                    result.Warnings.Add(
+                        $"纸片“{DisplayTitle(importPaper)}”的原始图片引用也未能写回：{restoreEx.Message}");
+                }
+            }
+
             return false;
         }
 
