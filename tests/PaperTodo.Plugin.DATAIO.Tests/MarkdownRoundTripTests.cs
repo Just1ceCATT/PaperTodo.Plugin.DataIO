@@ -154,21 +154,65 @@ public sealed class MarkdownRoundTripTests
     }
 
     [Fact]
-    public void Legacy_unavailable_placeholder_is_recognized()
+    public void Note_lines_equal_to_marker_comments_round_trip_without_backslash()
     {
+        // 正文里恰好出现 title-empty / fence-closed 标记行：导出时转义，
+        // 回导必须原样还原，不能残留反斜杠或丢失该行。
+        var content =
+            "<!-- papertodo-dataio:title-empty -->\n" +
+            "<!-- papertodo-dataio:fence-closed -->\n" +
+            "普通正文";
         var plan = RoundTrip(new ExportPaper
         {
-            SourceId = "s5",
+            SourceId = "s6",
             Type = "note",
-            Title = "旧版不可读",
+            Title = "标记行",
             ContentAvailable = true,
-            Content = "（正文不可读取，未导出）"
+            Content = content
         });
 
         Assert.Null(plan.FatalError);
         var paper = Assert.Single(plan.Papers);
-        Assert.False(paper.Source.ContentAvailable);
-        Assert.Equal("", paper.Source.Content);
+        Assert.True(paper.Source.ContentAvailable);
+        Assert.Equal(content, paper.Source.Content);
+    }
+
+    [Fact]
+    public void Note_whose_text_equals_legacy_placeholder_is_preserved()
+    {
+        // v2 文件里正文恰好是这句占位文案时，它可能是真正的笔记内容，
+        // 不能按旧版兼容规则清空。
+        var content = "（正文不可读取，未导出）";
+        var plan = RoundTrip(new ExportPaper
+        {
+            SourceId = "s5",
+            Type = "note",
+            Title = "真实内容",
+            ContentAvailable = true,
+            Content = content
+        });
+
+        Assert.Null(plan.FatalError);
+        var paper = Assert.Single(plan.Papers);
+        Assert.True(paper.Source.ContentAvailable);
+        Assert.Equal(content, paper.Source.Content);
+    }
+
+    [Fact]
+    public void Legacy_placeholder_file_without_v2_marker_is_still_recognized()
+    {
+        // 旧版导出没有 content-unavailable 标记，正文只有占位文案；
+        // 识别只应作用于旧格式标记，不能波及 v2/普通 Markdown。
+        var markdown =
+            "<!-- papertodo:type=note sourceId=s5 -->\n" +
+            "# 旧版不可读\n\n" +
+            "（正文不可读取，未导出）\n";
+
+        var document = MarkdownImportParser.Parse(markdown, "legacy.md");
+        var paper = Assert.Single(document.Papers);
+
+        Assert.False(paper.ContentAvailable);
+        Assert.Equal("", paper.Content);
     }
 
     [Theory]

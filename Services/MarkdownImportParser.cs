@@ -41,7 +41,7 @@ internal static partial class MarkdownImportParser
     {
         var lines = MarkdownNormalize.NormalizeLineEndings(markdown).Split('\n');
 
-        var markers = new List<(int Line, string Type, string SourceId)>();
+        var markers = new List<(int Line, string Type, string SourceId, bool V2)>();
         var fenceCharacter = '\0';
         for (var index = 0; index < lines.Length; index++)
         {
@@ -77,14 +77,17 @@ internal static partial class MarkdownImportParser
                 markers.Add((
                     index,
                     match.Groups[1].Value.ToLowerInvariant(),
-                    match.Groups[2].Success ? match.Groups[2].Value : ""));
+                    match.Groups[2].Success ? match.Groups[2].Value : "",
+                    trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase)));
             }
         }
 
         var papers = new List<ExportPaper>();
         if (markers.Count == 0)
         {
-            papers.Add(ParseSection(lines, 0, lines.Length, null, "", filePath, papers.Count));
+            // 没有分节标记的普通 Markdown：绝不按旧版占位文案改写正文。
+            papers.Add(ParseSection(
+                lines, 0, lines.Length, null, "", filePath, papers.Count, v2Format: true));
         }
         else
         {
@@ -99,7 +102,8 @@ internal static partial class MarkdownImportParser
                     markers[index].Type,
                     markers[index].SourceId,
                     filePath,
-                    papers.Count));
+                    papers.Count,
+                    markers[index].V2));
             }
         }
 
@@ -125,7 +129,8 @@ internal static partial class MarkdownImportParser
         string? markedType,
         string sourceId,
         string filePath,
-        int paperIndex)
+        int paperIndex,
+        bool v2Format)
     {
         var bodyStart = start;
         string? title = null;
@@ -146,6 +151,13 @@ internal static partial class MarkdownImportParser
             bodyStart++;
         }
 
+        // 导出格式在标题后固定空一行作为结构分隔；只跳过这一行，
+        // 正文自身以空行开头时（文件里会有两个空行）仍保留用户内容。
+        if (title is not null && bodyStart < end && lines[bodyStart].Length == 0)
+        {
+            bodyStart++;
+        }
+
         var type = markedType ?? InferType(lines, bodyStart, end);
         var paper = new ExportPaper
         {
@@ -163,7 +175,7 @@ internal static partial class MarkdownImportParser
         }
         else
         {
-            ParseNoteBody(paper, lines, bodyStart, end);
+            ParseNoteBody(paper, lines, bodyStart, end, v2Format);
         }
 
         return paper;
@@ -172,7 +184,12 @@ internal static partial class MarkdownImportParser
     /// <summary>
     /// 解析笔记正文：识别“正文不可读取”标记，并还原导出时为躲避分节扫描而加的转义。
     /// </summary>
-    private static void ParseNoteBody(ExportPaper paper, string[] lines, int start, int end)
+    private static void ParseNoteBody(
+        ExportPaper paper,
+        string[] lines,
+        int start,
+        int end,
+        bool v2Format)
     {
         var bodyLines = new List<string>(Math.Max(0, end - start));
         var unavailable = false;
@@ -200,12 +217,17 @@ internal static partial class MarkdownImportParser
         }
 
         // 不可读的笔记不保留占位文案，导入后按“正文缺失”处理，避免把提示写进真正的笔记。
+        // 不额外 Trim：正文首尾的空行与行尾空白都是用户内容的一部分，
+        // 只由 TrimTrailingBlankAndSeparator 去掉往返结构（末尾空行与分节分隔线）。
         var content = unavailable
             ? ""
-            : MarkdownNormalize.TrimTrailingBlankAndSeparator(string.Join("\n", bodyLines).Trim('\n').TrimEnd());
+            : MarkdownNormalize.TrimTrailingBlankAndSeparator(string.Join("\n", bodyLines));
 
-        // 兼容旧版导出：当时没有独立标记，正文只有一条占位文案。
-        if (!unavailable && string.Equals(content, LegacyUnavailablePlaceholder, StringComparison.Ordinal))
+        // 兼容旧版导出：旧格式没有独立标记，正文只有一条占位文案。
+        // v2 文件与普通 Markdown 的正文可能恰好就是这句话，不能据此清空真正的笔记。
+        if (!unavailable &&
+            !v2Format &&
+            string.Equals(content, LegacyUnavailablePlaceholder, StringComparison.Ordinal))
         {
             unavailable = true;
             content = "";
@@ -392,7 +414,10 @@ internal static partial class MarkdownImportParser
         }
 
         var withoutBackslash = line.Remove(start, 1);
-        return IsSectionMarkerLine(withoutBackslash) || IsContentUnavailableMarker(withoutBackslash)
+        return IsSectionMarkerLine(withoutBackslash) ||
+               IsContentUnavailableMarker(withoutBackslash) ||
+               IsEmptyTitleMarker(withoutBackslash) ||
+               IsFenceClosedMarker(withoutBackslash)
             ? withoutBackslash
             : line;
     }
