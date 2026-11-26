@@ -1063,7 +1063,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             }
 
             _linkPushPending = false;
-            RuntimeLinkProtocol.DeletePendingLinks();
+            RuntimeLinkProtocol.DeletePendingState(TryGetCurrentWorkspaceFileName());
         }
         catch (Exception)
         {
@@ -1072,11 +1072,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
     }
 
-    /// <summary>Runtime 暂时不可用时把映射写入待推送日志，等 Runtime 恢复后合并。</summary>
+    /// <summary>
+    /// Runtime 暂时不可用时把完整工作区状态（映射、历史、上次目录）写入按工作区隔离的
+    /// 待推送日志，等 Runtime 恢复后合并；只传链接时其余字段沿用当前状态。
+    /// </summary>
     private void MarkPushPending(IReadOnlyDictionary<string, ImportIdentityLink>? links = null)
     {
         _linkPushPending = true;
-        RuntimeLinkProtocol.WritePendingLinks(links ?? _state.ImportLinks);
+        var state = RuntimeLinkProtocol.FromState(_state);
+        if (links is not null)
+        {
+            state.ImportLinks = new Dictionary<string, ImportIdentityLink>(links, StringComparer.Ordinal);
+        }
+
+        RuntimeLinkProtocol.WritePendingState(state, TryGetCurrentWorkspaceFileName());
     }
 
     /// <summary>首次展示状态栏时带上“状态已损坏并备份”的提示。</summary>

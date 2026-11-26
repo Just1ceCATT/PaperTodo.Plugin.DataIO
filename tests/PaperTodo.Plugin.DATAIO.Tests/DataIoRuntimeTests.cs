@@ -107,20 +107,26 @@ public sealed class DataIoRuntimeTests
     }
 
     [Fact]
-    public void Corrupt_state_keeps_raw_backup_when_saving()
+    public void Corrupt_state_is_reported_once_and_not_kept_in_saved_state()
     {
         const string corrupt = "{\"importLinks\":{\"s1\":";
         var state = new FakeRuntimeState { Json = corrupt };
         var papers = new FakeRuntimePapers();
         using var runtime = new DataIoRuntime(NewContext(state, papers));
 
+        // 本次进程仍应告知 Body 发现过损坏；原始内容已另存为独立备份文件。
         papers.Raise("tool", RuntimeLinkProtocol.CreateMergeRequest(
             1,
             Workspace(("s2", "p2", "2026-11-24T10:00:00+08:00"))));
+        var reply = Assert.Single(papers.Posted);
+        Assert.True(RuntimeLinkProtocol.TryRead(
+            reply.Message, out _, out _, out _, out var corruptFlag));
+        Assert.True(corruptFlag);
 
+        // 保存后的状态不再内嵌损坏原文，避免每次启动重复告警。
         var saved = RuntimeLinkProtocol.ParseState(state.Json, out var backup);
         Assert.Equal("p2", saved.ImportLinks["s2"].LocalPaperId);
-        Assert.Equal(corrupt, backup);
+        Assert.Null(backup);
     }
 
     private static RuntimeWorkspaceState Workspace(

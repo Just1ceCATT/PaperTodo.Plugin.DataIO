@@ -168,6 +168,56 @@ public sealed class RuntimeLinkProtocolTests
         Assert.NotNull(workspace.History);
     }
 
+    [Theory]
+    [InlineData("data.json", "data")]
+    [InlineData("data2.json", "data2")]
+    [InlineData(@"C:\PaperTodo\data3.json", "data3")]
+    [InlineData("", "default")]
+    [InlineData(null, "default")]
+    [InlineData("weird name!.json", "weird_name_")]
+    public void Workspace_key_isolates_pending_files(string? fileName, string expected)
+    {
+        Assert.Equal(expected, RuntimeLinkProtocol.WorkspaceKey(fileName));
+    }
+
+    [Fact]
+    public void Pending_state_round_trips_history_and_directories_per_workspace()
+    {
+        var workspaceFileName = "dataio-test-" + Guid.NewGuid().ToString("N") + ".json";
+        try
+        {
+            var state = new RuntimeWorkspaceState
+            {
+                ImportLinks = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal)
+                {
+                    ["s1"] = Link("p1", "2026-11-24T10:00:00+08:00")
+                },
+                History = [Entry("import", "2026-11-24T10:00:00+08:00", "a.json")],
+                LastExportDirectory = @"D:\export",
+                LastImportDirectory = @"D:\import"
+            };
+
+            RuntimeLinkProtocol.WritePendingState(state, workspaceFileName);
+            var restored = RuntimeLinkProtocol.TryReadPendingState(workspaceFileName);
+
+            Assert.NotNull(restored);
+            Assert.Equal("p1", Assert.Single(restored!.ImportLinks).Value.LocalPaperId);
+            Assert.Single(restored.History);
+            Assert.Equal(@"D:\export", restored.LastExportDirectory);
+            Assert.Equal(@"D:\import", restored.LastImportDirectory);
+
+            // 不同工作区使用不同日志文件，互不覆盖。
+            var otherKey = workspaceFileName + ".other";
+            Assert.NotEqual(
+                RuntimeLinkProtocol.PendingStatePath(workspaceFileName),
+                RuntimeLinkProtocol.PendingStatePath(otherKey));
+        }
+        finally
+        {
+            RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
+        }
+    }
+
     private static ImportIdentityLink Link(string paperId, string importedAt) => new()
     {
         LocalPaperId = paperId,

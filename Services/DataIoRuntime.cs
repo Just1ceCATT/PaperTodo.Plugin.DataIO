@@ -17,6 +17,9 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
     private readonly IDisposable _subscription;
     private volatile bool _disposed;
 
+    /// <summary>本次进程启动时发现过损坏状态；只用于向 Body 提示一次，不写入持久化状态。</summary>
+    private readonly bool _startupCorrupt;
+
     public DataIoRuntime(PaperPluginRuntimeContext context)
     {
         _context = context;
@@ -26,8 +29,23 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
             _state.CorruptBackup = corruptBackup;
         }
 
-        // Runtime 不可用期间落盘的待推送映射：先按当前工作区纸片校验，再合并并删除日志。
-        var pending = RuntimeLinkProtocol.TryReadPendingLinks();
+        // Runtime 不可用期间落盘的待推送状态：日志按工作区隔离，
+        // 先按当前工作区纸片校验映射，再连同历史与上次目录一起合并并删除日志。
+        var workspaceFileName = TryGetWorkspaceFileName(context);
+
+        // 状态文件损坏过一次就永久带“损坏标记”，会让每次启动都重复告警。
+        // 原始内容另存为独立备份后清空标记；备份写失败时保持原状，宁可重复告警也不丢数据。
+        _startupCorrupt = !string.IsNullOrEmpty(_state.CorruptBackup);
+        if (_startupCorrupt &&
+            RuntimeLinkProtocol.WriteCorruptBackup(_state.CorruptBackup!, workspaceFileName))
+        {
+            lock (_gate)
+            {
+                _state.CorruptBackup = null;
+                SaveLocked();
+            }
+        }
+        var pending = RuntimeLinkProtocol.TryReadPendingState(workspaceFileName);
         if (pending is not null)
         {
             try
@@ -35,19 +53,19 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                 var known = context.Workspace.ListPapers()
                     .Select(paper => paper.Id)
                     .ToHashSet(StringComparer.Ordinal);
-                var filtered = RuntimeLinkProtocol.FilterKnownLinks(pending, known);
-                if (ImportLinkMerge.MergeInto(_state.ImportLinks, filtered))
+                var incoming = new RuntimeWorkspaceState
+                {
+                    ImportLinks = RuntimeLinkProtocol.FilterKnownLinks(pending.ImportLinks, known),
+                    History = pending.History,
+                    LastExportDirectory = pending.LastExportDirectory,
+                    LastImportDirectory = pending.LastImportDirectory
+                };
+                if (RuntimeLinkProtocol.MergeState(_state, incoming))
                 {
                     Save();
                 }
 
-                // 日志里没有任何属于本工作区的目标时，可能是其它工作区的待推送数据，先保留。
-                if (filtered.Count > 0 ||
-                    pending.Count == 0 ||
-                    RuntimeLinkProtocol.PendingLinksOlderThan(TimeSpan.FromDays(30)))
-                {
-                    RuntimeLinkProtocol.DeletePendingLinks();
-                }
+                RuntimeLinkProtocol.DeletePendingState(workspaceFileName);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -60,6 +78,20 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         // 宿主以折叠/胶囊状态恢复工具纸片时会延迟构建正文外壳，展开后可能只留下空白窗口。
         // Runtime 比 Body 更早稳定，启动后主动请求一次“展开”，强制宿主走正常的正文构建路径。
         _ = Task.Run(() => NormalizeStartupPresentationAsync());
+    }
+
+    /// <summary>当前工作区数据文件名（data.json / data2.json），用于隔离待推送日志。</summary>
+    private static string? TryGetWorkspaceFileName(PaperPluginRuntimeContext context)
+    {
+        try
+        {
+            var status = context.Workspace.GetDataReloadStatus();
+            return string.IsNullOrWhiteSpace(status.DataFileName) ? null : status.DataFileName;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private async Task NormalizeStartupPresentationAsync()
@@ -190,9 +222,10 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
         lock (_gate)
         {
             snapshot = _state.Clone();
-            // 原始损坏内容只留在持久化文件里，不随每次快照发给 Body。
+            // 原始损坏内容只留在备份文件里，不随快照发给 Body；
+            // 仅在本次进程首次发现损坏时提示，清空标记后不再重复。
             snapshot.CorruptBackup = null;
-            corrupt = !string.IsNullOrEmpty(_state.CorruptBackup);
+            corrupt = _startupCorrupt;
         }
 
         _context.Papers.PostToBody(

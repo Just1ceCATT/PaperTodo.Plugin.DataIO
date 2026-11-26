@@ -249,6 +249,7 @@ internal static class RuntimeLinkProtocol
                 !string.Equals(link.Type, other.Type, StringComparison.Ordinal) ||
                 !string.Equals(link.Title, other.Title, StringComparison.Ordinal) ||
                 !string.Equals(link.LocalFingerprint, other.LocalFingerprint, StringComparison.Ordinal) ||
+                link.LocalFingerprintUnknown != other.LocalFingerprintUnknown ||
                 !string.Equals(link.LastImportedAt, other.LastImportedAt, StringComparison.Ordinal) ||
                 !(link.PreviousLocalPaperIds ?? []).SequenceEqual(
                     other.PreviousLocalPaperIds ?? [], StringComparer.Ordinal))
@@ -260,28 +261,52 @@ internal static class RuntimeLinkProtocol
         return true;
     }
 
-    /// <summary>待推送映射日志：Runtime 暂时不可用时落盘，Runtime 启动或恢复后合并回权威状态。</summary>
-    public static string? PendingLinksPath
+    /// <summary>
+    /// 待推送工作区状态日志：Runtime 暂时不可用时落盘，Runtime 启动或恢复后合并回权威状态。
+    /// 文件名按工作区隔离（data.json → data，data2.json → data2），
+    /// 避免任一工作区保存成功时删除其它工作区尚未推送的数据。
+    /// </summary>
+    public static string? PendingStatePath(string? workspaceFileName)
     {
-        get
+        try
         {
-            try
-            {
-                var directory = Path.GetDirectoryName(typeof(DataIoPlugin).Assembly.Location);
-                return string.IsNullOrEmpty(directory)
-                    ? null
-                    : Path.Combine(directory, ".runtime", "import-links.pending.json");
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
-            {
-                return null;
-            }
+            var directory = Path.GetDirectoryName(typeof(DataIoPlugin).Assembly.Location);
+            return string.IsNullOrEmpty(directory)
+                ? null
+                : Path.Combine(
+                    directory,
+                    ".runtime",
+                    $"import-links.pending.{WorkspaceKey(workspaceFileName)}.json");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
         }
     }
 
-    public static void WritePendingLinks(IReadOnlyDictionary<string, ImportIdentityLink> links)
+    /// <summary>把工作区文件名归一化成安全的日志键；无法识别时落到 default。</summary>
+    internal static string WorkspaceKey(string? workspaceFileName)
     {
-        var path = PendingLinksPath;
+        if (string.IsNullOrWhiteSpace(workspaceFileName))
+        {
+            return "default";
+        }
+
+        var name = Path.GetFileNameWithoutExtension(workspaceFileName);
+        var builder = new System.Text.StringBuilder(name.Length);
+        foreach (var character in name)
+        {
+            builder.Append(char.IsLetterOrDigit(character)
+                ? char.ToLowerInvariant(character)
+                : '_');
+        }
+
+        return builder.Length == 0 ? "default" : builder.ToString();
+    }
+
+    public static void WritePendingState(RuntimeWorkspaceState state, string? workspaceFileName)
+    {
+        var path = PendingStatePath(workspaceFileName);
         if (path is null)
         {
             return;
@@ -289,33 +314,27 @@ internal static class RuntimeLinkProtocol
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-
-            // 日志文件由所有工作区共享：先合并已有内容再写，避免后写的工作区覆盖先写的数据。
-            var merged = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal);
-            if (TryReadPendingLinks() is { } existing)
+            // 同一工作区可能已有待推送内容：先读取再合并，保留较新的映射与历史。
+            var merged = new RuntimeWorkspaceState();
+            if (TryReadPendingState(workspaceFileName) is { } existing)
             {
-                ImportLinkMerge.MergeInto(merged, existing);
+                MergeState(merged, existing);
             }
 
-            ImportLinkMerge.MergeInto(
-                merged,
-                new Dictionary<string, ImportIdentityLink>(links, StringComparer.Ordinal));
+            MergeState(merged, state);
 
-            var json = SerializeState(new RuntimeWorkspaceState { ImportLinks = merged });
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, json);
-            File.Move(temp, path, overwrite: true);
+            // 原子写入 + 落盘：日志本身是崩溃恢复凭据，不能留下半截 JSON。
+            JsonFiles.WriteAllTextAtomic(path, SerializeState(merged));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             // 日志只是兜底；失败时继续依赖纸片镜像。
         }
     }
 
-    public static Dictionary<string, ImportIdentityLink>? TryReadPendingLinks()
+    public static RuntimeWorkspaceState? TryReadPendingState(string? workspaceFileName)
     {
-        var path = PendingLinksPath;
+        var path = PendingStatePath(workspaceFileName);
         if (path is null || !File.Exists(path))
         {
             return null;
@@ -323,36 +342,45 @@ internal static class RuntimeLinkProtocol
 
         try
         {
-            var pending = ParseState(File.ReadAllText(path), out _);
-            return pending.ImportLinks.Count > 0 ? pending.ImportLinks : null;
+            return ParseState(File.ReadAllText(path), out _);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             return null;
         }
     }
 
-    public static bool PendingLinksOlderThan(TimeSpan age)
+    /// <summary>
+    /// 把损坏状态的原始内容另存为独立备份文件。状态文件随后会以空状态覆盖，
+    /// 备份文件保证原始内容不丢，也避免“损坏标记”被永久带入每次保存。
+    /// </summary>
+    public static bool WriteCorruptBackup(string content, string? workspaceFileName)
     {
-        var path = PendingLinksPath;
-        if (path is null || !File.Exists(path))
-        {
-            return false;
-        }
-
         try
         {
-            return DateTime.UtcNow - File.GetLastWriteTimeUtc(path) > age;
+            var directory = Path.GetDirectoryName(typeof(DataIoPlugin).Assembly.Location);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return false;
+            }
+
+            var path = Path.Combine(
+                directory,
+                ".runtime",
+                $"state-corrupt.{WorkspaceKey(workspaceFileName)}.bak");
+            JsonFiles.WriteAllTextAtomic(path, content);
+            return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
+            // 备份失败时保留原位内容：调用方不应清空状态。
             return false;
         }
     }
 
-    public static void DeletePendingLinks()
+    public static void DeletePendingState(string? workspaceFileName)
     {
-        var path = PendingLinksPath;
+        var path = PendingStatePath(workspaceFileName);
         if (path is null)
         {
             return;
@@ -362,7 +390,7 @@ internal static class RuntimeLinkProtocol
         {
             File.Delete(path);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
             // 忽略：下次 Runtime 启动会再次合并同一条目（合并是幂等的）。
         }
