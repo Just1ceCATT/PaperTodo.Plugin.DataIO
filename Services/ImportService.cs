@@ -417,20 +417,39 @@ internal sealed class ImportService
         return (targetId, false, false);
     }
 
-    /// <summary>正文是否引用了清单声明过、但无法写回的图片；更新需要移除这些引用。</summary>
+    /// <summary>正文是否引用了无法写回的图片；更新需要移除这些引用。</summary>
     internal static bool HasUnrestorableDeclaredReferences(ImportPaper paper)
     {
-        if (paper.UnavailableImageIds.Count == 0 && paper.UnavailableImageFiles.Count == 0)
+        var content = paper.Source.Content ?? "";
+        if (paper.UsesRelativeImageLinks)
         {
+            // Markdown 压缩包内残留的 i: 引用来自导出时读取失败的图片，本机无法保证指向同一张图。
+            if (ImageReferenceScanner.Enumerate(content).Count > 0)
+            {
+                return true;
+            }
+
+            return paper.UnavailableImageFiles.Count > 0 &&
+                   ImageReferenceScanner.EnumerateRelativeImageLinks(content)
+                       .Any(paper.UnavailableImageFiles.Contains);
+        }
+
+        if (!paper.HasImageManifest &&
+            paper.Images.Count == 0 &&
+            paper.UnavailableImageIds.Count == 0)
+        {
+            // 普通 JSON 没有图片清单：正文里的 i: 引用在同一工作区通常仍然有效，不能擅自移除。
             return false;
         }
 
-        var content = paper.Source.Content ?? "";
-        return paper.UsesRelativeImageLinks
-            ? ImageReferenceScanner.EnumerateRelativeImageLinks(content)
-                .Any(paper.UnavailableImageFiles.Contains)
-            : ImageReferenceScanner.Enumerate(content)
-                .Any(reference => paper.UnavailableImageIds.Contains(reference.ImageId));
+        // 有图片清单时，正文中的 i: 引用全部来自来源机器：
+        // 不在清单里说明导出时就没有读到该图片，其 ID 在本机可能正好命中另一张图，必须移除。
+        var restorableIds = paper.Images
+            .Where(image => image.Restorable)
+            .Select(image => image.SourceImageId)
+            .ToHashSet(StringComparer.Ordinal);
+        return ImageReferenceScanner.Enumerate(content)
+            .Any(reference => !restorableIds.Contains(reference.ImageId));
     }
 
     /// <summary>移除没有可用资产、确定无法写回的图片引用；保留其余正文。</summary>
@@ -450,11 +469,12 @@ internal sealed class ImportService
                 .Select(image => image.File)
                 .ToHashSet(StringComparer.Ordinal);
 
-            // 只删除清单里确实存在、但无法写回的引用；
-            // 用户手写的 images/... 链接不在清单中，必须原样保留。
+            // 用户手写的 images/... 链接不在清单中，必须原样保留；
+            // 但 Markdown 压缩包里的 i: 引用是导出时读取失败的图片，本机 ID 可能指向别的图，必须移除。
             return ImageReferenceScanner.RemoveUnresolvedReferences(
                 content,
-                url => !manifestFiles.Contains(url) || restorableFiles.Contains(url));
+                url => !url.StartsWith("i:", StringComparison.Ordinal) &&
+                       (!manifestFiles.Contains(url) || restorableFiles.Contains(url)));
         }
 
         // 普通 JSON（没有图片清单）：引用可能在本机仍然有效，不擅自删除。
@@ -464,10 +484,8 @@ internal sealed class ImportService
             return (content, 0);
         }
 
-        var manifestIds = paper.Images
-            .Select(image => image.SourceImageId)
-            .Concat(paper.UnavailableImageIds)
-            .ToHashSet(StringComparer.Ordinal);
+        // 有清单时正文里的 i: 引用全部来自来源机器：清单未登记说明导出时未包含该图，
+        // 其 ID 在本机可能正好命中另一张图片（图片 ID 是工作区级连续编号），必须移除。
         var restorableIds = paper.Images
             .Where(image => image.Restorable)
             .Select(image => image.SourceImageId)
@@ -475,7 +493,6 @@ internal sealed class ImportService
         return ImageReferenceScanner.RemoveUnresolvedReferences(
             content,
             url => !url.StartsWith("i:", StringComparison.Ordinal) ||
-                   !manifestIds.Contains(url[2..]) ||
                    restorableIds.Contains(url[2..]));
     }
 
@@ -908,14 +925,11 @@ internal sealed class ImportService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var image = images[index];
-                if (!image.Restorable)
-                {
-                    skipped++;
-                    continue;
-                }
 
                 // 同一工作区重新导入时，本地正文里的图片往往与文件内容一致，
                 // 直接复用本机图片 ID，避免重复写入和正文图片 ID 每次导入都变化。
+                // 必须在“不可写回”判断之前尝试：一张 3000 像素的 GIF 虽然无法重新压缩，
+                // 但本机正文引用的很可能就是同一张图，跳过复用会把本来有效的引用删掉。
                 // 逐字节比对在后台线程执行：多张大图时这类比较会长时间占用 UI 线程。
                 var reusableId = reusableLocalImages is null
                     ? null
@@ -929,6 +943,12 @@ internal sealed class ImportService
                 {
                     newIds[image.SourceImageId] = reusableId;
                     idsByFile[image.File] = reusableId;
+                    continue;
+                }
+
+                if (!image.Restorable)
+                {
+                    skipped++;
                     continue;
                 }
 
@@ -1019,16 +1039,14 @@ internal sealed class ImportService
                 .Select(image => image.File)
                 .Concat(importPaper.UnavailableImageFiles)
                 .ToHashSet(StringComparer.Ordinal);
-            var manifestIds = importPaper.Images
-                .Select(image => image.SourceImageId)
-                .Concat(importPaper.UnavailableImageIds)
-                .ToHashSet(StringComparer.Ordinal);
             (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
                 finalContent,
                 url => url.StartsWith("images/", StringComparison.Ordinal)
-                    ? !manifestFiles.Contains(url) || resolvedFiles.Contains(url)
-                    : !url.StartsWith("i:", StringComparison.Ordinal) ||
-                      !manifestIds.Contains(url[2..]) ||
+                    ? // 用户手写的相对链接不在清单中，保留；清单内的只保留成功写回的。
+                      !manifestFiles.Contains(url) || resolvedFiles.Contains(url)
+                    : // 正文此时已用新图片 ID 改写：仍不是本机新 ID 的 i: 引用无法写回，必须移除，
+                      // 否则会在本机命中另一张同号图片或显示破图。
+                      !url.StartsWith("i:", StringComparison.Ordinal) ||
                       mappedIds.Contains(url[2..]));
         }
 

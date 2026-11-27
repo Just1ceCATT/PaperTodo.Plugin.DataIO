@@ -59,6 +59,7 @@ public sealed class ImportServiceTests
             TargetLocallyModified = true,
             TargetLocalStateUnknown = true,
             TargetImagesAtRisk = true,
+            UpdateBlockedReason = "截断",
             UpdateDiff = [new DiffLine('-', "旧", 1, 0)],
             UpdateHasChanges = true,
             UpdateHasMetaChanges = true
@@ -74,6 +75,7 @@ public sealed class ImportServiceTests
         Assert.False(paper.TargetLocallyModified);
         Assert.False(paper.TargetLocalStateUnknown);
         Assert.False(paper.TargetImagesAtRisk);
+        Assert.Null(paper.UpdateBlockedReason);
         Assert.Null(paper.UpdateDiff);
         Assert.False(paper.UpdateHasChanges);
         Assert.False(paper.UpdateHasMetaChanges);

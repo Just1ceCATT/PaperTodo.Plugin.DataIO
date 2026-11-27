@@ -47,6 +47,38 @@ public sealed class ImportImageSafetyTests
     }
 
     [Fact]
+    public void Reference_missing_from_manifest_requires_removal_on_update()
+    {
+        // 压缩包清单只包含 001；正文还引用了导出时未读到的 002，
+        // 本机同号图片可能是另一张图，更新必须移除该引用。
+        var paper = JsonPaper("![a](i:001)\n![b](i:002)");
+        paper.HasImageManifest = true;
+        paper.Images.Add(Image("001", "images/p/001.png", restorable: true));
+
+        Assert.True(ImportService.HasUnrestorableDeclaredReferences(paper));
+    }
+
+    [Fact]
+    public void Fully_restorable_manifest_needs_no_removal()
+    {
+        var paper = JsonPaper("![a](i:001)");
+        paper.HasImageManifest = true;
+        paper.Images.Add(Image("001", "images/p/001.png", restorable: true));
+
+        Assert.False(ImportService.HasUnrestorableDeclaredReferences(paper));
+    }
+
+    [Fact]
+    public void Markdown_package_leftover_id_reference_requires_removal_on_update()
+    {
+        var paper = JsonPaper("![a](images/p/001.png)\n![b](i:002)");
+        paper.UsesRelativeImageLinks = true;
+        paper.Images.Add(Image("002", "images/p/001.png", restorable: true));
+
+        Assert.True(ImportService.HasUnrestorableDeclaredReferences(paper));
+    }
+
+    [Fact]
     public void Relative_link_without_asset_blocks_update()
     {
         var paper = JsonPaper("![image|100%](images/p/001.png)");
