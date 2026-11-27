@@ -268,9 +268,15 @@ internal static class ImageReferenceScanner
             if (lineEnd < start)
             {
                 lineEnd = FindLineEnd(markdown, start);
+                failedClose = -1;
             }
 
-            var close = markdown.IndexOf("](", start + 2, StringComparison.Ordinal);
+            // 上次失败的 "](" 若仍在当前行、且位于本次起点之后，它仍然是离起点最近的
+            // 候选：起点到该位置之间不可能存在另一个 "]("（否则上次找到的就不是它）。
+            // 直接复用候选位置，避免每个 "![" 都重新扫描到行尾退化成 O(n²)。
+            var close = failedClose >= 0 && start + 2 <= failedClose && failedClose < lineEnd
+                ? failedClose
+                : markdown.IndexOf("](", start + 2, StringComparison.Ordinal);
             if (close < 0 || close >= lineEnd)
             {
                 // 本行剩余位置都不可能有可用的 "]("：直接跳到下一行。
