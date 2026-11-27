@@ -101,6 +101,14 @@ internal static partial class MarkdownImportParser
                     match.Groups[1].Value.ToLowerInvariant(),
                     match.Groups[2].Success ? match.Groups[2].Value : "",
                     trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase)));
+
+                // 超过上限立即失败，不再继续扫描并收集必然被拒绝的后续标记。
+                if (markers.Count > ImportPlanParser.MaxPapers)
+                {
+                    throw new ImportFileLimitException(
+                        $"Markdown 文件包含超过 {ImportPlanParser.MaxPapers} 张纸片，" +
+                        "超过单次导入上限；请拆分后再导入。");
+                }
             }
         }
 

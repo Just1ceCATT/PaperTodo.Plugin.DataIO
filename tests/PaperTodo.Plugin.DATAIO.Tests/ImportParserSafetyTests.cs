@@ -107,4 +107,28 @@ public sealed class ImportParserSafetyTests
         Assert.Throws<ImportFileEncodingException>(
             () => JsonFiles.DecodeText(bytes, "broken.md"));
     }
+
+    [Fact]
+    public void Export_json_with_too_many_declared_papers_is_rejected_early()
+    {
+        // 只按数组长度预检，不依赖完整反序列化：上百万张空纸片也应在构建对象前被拒。
+        var builder = new StringBuilder();
+        builder.Append("{\"format\":\"papertodo.paper-export\",\"schemaVersion\":1,\"papers\":[");
+        for (var index = 0; index <= ImportPlanParser.MaxPapers; index++)
+        {
+            if (index > 0)
+            {
+                builder.Append(',');
+            }
+
+            builder.Append("{}");
+        }
+
+        builder.Append("]}");
+
+        var plan = ImportPlanParser.Parse(builder.ToString());
+
+        Assert.NotNull(plan.FatalError);
+        Assert.Contains("上限", plan.FatalError);
+    }
 }

@@ -617,6 +617,14 @@ internal static class ImportPlanParser
             skippedPluginBodies += built.SkippedPluginBodies;
             missingSourceIds += built.MissingSourceIds;
             workspaceDetails.Add($"{name}（{built.Document.Papers.Count} 张）");
+
+            // 累计超限就立即停止，避免多个工作区各自接近 64 MiB 时把数 GB 的纸片对象全部留在内存里。
+            if (combined.Papers.Count > MaxPapers)
+            {
+                return Fatal(
+                    $"备份合并后已有 {combined.Papers.Count} 张纸片，超过单次导入上限 {MaxPapers} 张；" +
+                    "请解压后逐个工作区导入。");
+            }
         }
 
         if (combined.Papers.Count == 0)
@@ -1234,6 +1242,18 @@ internal static class ImportPlanParser
             return new ImportPlan
             {
                 FatalError = "文件缺少 schemaVersion，无法确认导出格式版本；请重新用 DataIO 导出。"
+            };
+        }
+
+        // 在反序列化整个文档之前先按数组长度拒绝超限文件：64 MiB 的 JSON 可以塞进
+        // 上百万张最小纸片，完整反序列化会额外占用数百 MB 内存，之后才发现超过 200 张上限。
+        if (TryGetProperty(root, "papers", out var declaredPapers) &&
+            declaredPapers.ValueKind == JsonValueKind.Array &&
+            declaredPapers.GetArrayLength() > MaxPapers)
+        {
+            return new ImportPlan
+            {
+                FatalError = $"文件包含 {declaredPapers.GetArrayLength()} 张纸片，超过单个工作区 {MaxPapers} 张上限。"
             };
         }
 
