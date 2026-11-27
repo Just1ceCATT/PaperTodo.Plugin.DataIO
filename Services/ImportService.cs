@@ -1057,7 +1057,17 @@ internal sealed class ImportService
         }
         catch (OperationCanceledException)
         {
-            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            // 回滚本身也可能因宿主关闭而失败；绝不能用它的异常替换原始取消，
+            // 否则调用方会把“已取消”误判成未知失败。
+            try
+            {
+                await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // 回滚失败只影响残留的图片引用，保留原始取消语义。
+            }
+
             throw;
         }
 
@@ -1178,7 +1188,17 @@ internal sealed class ImportService
         }
         catch (OperationCanceledException)
         {
-            await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            // 回滚本身也可能因宿主关闭而失败；绝不能用它的异常替换原始取消，
+            // 否则调用方会把“已取消”误判成未知失败。
+            try
+            {
+                await TryRollbackAppendedImagesAsync(paperId, appended, result);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // 回滚失败只影响残留的图片引用，保留原始取消语义。
+            }
+
             throw;
         }
         catch (PaperTodoPluginException ex) when (ex.Code == "local_changed")
