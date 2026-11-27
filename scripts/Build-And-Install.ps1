@@ -1,13 +1,23 @@
 ﻿param(
     # PaperTodo 仓库根目录，构建脚本会安装到 <PaperTodoRoot>\plugins\<插件 id>\
-    [string]$PaperTodoRoot = "Z:\tool\PaperTodo-dev",
+    # 留空时使用与本仓库同级的 PaperTodo-dev。
+    [string]$PaperTodoRoot = "",
 
     # 可选：PaperTodo 若从发布目录运行，把产物同步到该目录的 plugins 根。
-    # 例如 "Z:\tool\PaperTodo-dev\输出\PaperTodo-v4.0.0-beta2\plugins"
+    # 例如 "<PaperTodoRoot>\输出\PaperTodo-v4.0.0-beta2\plugins"
     [string]$AdditionalPluginsRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($PaperTodoRoot)) {
+    # 仓库放在 <tool>\PaperTodo.Plugin.DATAIO，宿主通常在 <tool>\PaperTodo-dev。
+    $PaperTodoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\..\PaperTodo-dev"))
+}
+
+if (-not (Test-Path -LiteralPath $PaperTodoRoot -PathType Container)) {
+    throw "未找到 PaperTodo 源码目录：$PaperTodoRoot。请用 -PaperTodoRoot 指定。"
+}
 
 # 复用 PaperTodo 提供的共享构建/安装脚本，保证产物清理和部署规则与官方一致。
 $sharedScript = Join-Path $PaperTodoRoot "plugin-samples\Build-And-Install-NativePlugin.ps1"
@@ -16,6 +26,9 @@ if (-not (Test-Path -LiteralPath $sharedScript -PathType Leaf)) {
 }
 
 $projectPath = Join-Path $PSScriptRoot "..\PaperTodo.Plugin.DATAIO.csproj"
+
+# 让 csproj 的 ProjectReference 跟随同一个宿主目录（环境变量会作为 MSBuild 属性传入）。
+$env:PaperTodoRoot = $PaperTodoRoot
 
 & $sharedScript -ProjectPath $projectPath -PaperTodoRoot $PaperTodoRoot
 
