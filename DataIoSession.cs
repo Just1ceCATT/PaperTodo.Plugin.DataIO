@@ -698,6 +698,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         ClearPreviewCache();
         _view.PreviewLoader = null;
         _view.HoverPreviewLoader = null;
+        // StaysOpen 的悬停卡片不会随视图卸载自动关闭，会话销毁时必须显式收起。
+        _view.CancelHoverPreview();
 
         _view.ModeChanged -= OnModeChanged;
         _view.ExportFormatChanged -= OnExportFormatChanged;
@@ -791,6 +793,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     }
 
     private async Task RefreshAsync(bool force = false)
+    {
+        // 刷新由事件与防抖触发，调用方普遍丢弃返回的 Task；
+        // 这里整体兜底，避免历史/导入分支的异常变成未观察任务异常。
+        try
+        {
+            await RefreshCoreAsync(force);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            SetStatus($"刷新列表失败：{ex.Message}");
+        }
+    }
+
+    private async Task RefreshCoreAsync(bool force = false)
     {
         if (_disposed || (_busy && !force))
         {
@@ -1042,10 +1058,6 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _miniView?.Update(_state.History, _theme);
     }
 
-    /// <summary>
-    /// 与 Runtime 对账：把旧版纸片镜像迁移进 Runtime，并取回权威快照。
-    /// 返回 false 表示本次没能取得权威数据，调用方应提示降级。
-    /// </summary>
     /// <summary>启动时的一次性同步：失败或会话销毁取消都不应成为未观察的任务异常。</summary>
     private async Task RunInitialSyncAsync()
     {
@@ -1059,6 +1071,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
     }
 
+    /// <summary>
+    /// 与 Runtime 对账：把旧版纸片镜像迁移进 Runtime，并取回权威快照。
+    /// 返回 false 表示本次没能取得权威数据，调用方应提示降级。
+    /// </summary>
     private async Task<bool> SyncWorkspaceStateAsync(CancellationToken cancellationToken)
     {
         await _linkSyncLock.WaitAsync(cancellationToken);
@@ -1085,20 +1101,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             // 记录发起同步时的本地状态版本；期间若登记了新映射，快照只能合并不能替换。
             _linkSyncVersionAtRequest = Interlocked.Read(ref _stateMutationVersion);
 
-            // 只把当前工作区仍存在（或仍有历史副本）的映射迁移进 Runtime，
-            // 避免工具纸片隐藏期间错过的删除事件把死映射反向种进权威副本。
-            var request = RuntimeLinkProtocol.FromState(_state);
-            (request.ImportLinks, _linkSyncValidated) =
-                await FilterKnownLinksAsync(request.ImportLinks, cancellationToken);
-
-            // 过滤期间会话可能已被销毁：此时不能再向 Runtime 推送或写日志。
-            if (_disposed)
-            {
-                return false;
-            }
-
             try
             {
+                // 只把当前工作区仍存在（或仍有历史副本）的映射迁移进 Runtime，
+                // 避免工具纸片隐藏期间错过的删除事件把死映射反向种进权威副本。
+                var request = RuntimeLinkProtocol.FromState(_state);
+                (request.ImportLinks, _linkSyncValidated) =
+                    await FilterKnownLinksAsync(request.ImportLinks, cancellationToken);
+
+                // 过滤期间会话可能已被销毁：此时不能再向 Runtime 推送或写日志。
+                if (_disposed)
+                {
+                    return false;
+                }
+
                 if (!_context.Runtime.Post(
                         RuntimeLinkProtocol.CreateMergeRequest(requestId, request)))
                 {

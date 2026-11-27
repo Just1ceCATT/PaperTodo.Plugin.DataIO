@@ -899,6 +899,10 @@ public partial class DataIoView : UserControl
 
     private void OnViewLoaded(object sender, RoutedEventArgs e)
     {
+        // 视图可能被 PaperTodo 卸载后重新装载：重新订阅悬停计时器，避免重复或丢失。
+        _hoverTimer.Tick -= OnHoverTimerTick;
+        _hoverTimer.Tick += OnHoverTimerTick;
+
         var window = Window.GetWindow(this);
         if (ReferenceEquals(window, _hostWindow))
         {
@@ -918,6 +922,8 @@ public partial class DataIoView : UserControl
     {
         CancelHover();
         DetachHostWindow();
+        // 卸载时解除计时器订阅，避免调度器继续持有视图；重新装载时会再订阅。
+        _hoverTimer.Tick -= OnHoverTimerTick;
     }
 
     private void DetachHostWindow()
