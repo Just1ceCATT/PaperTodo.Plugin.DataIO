@@ -80,7 +80,18 @@ internal static class MarkdownExportService
             }
         }
 
-        return builder.ToString();
+        var markdown = builder.ToString();
+
+        // 导入端按行数限额，导出端也必须遵守：否则 200 篇短行正文可能生成
+        // 字节数未超限、行数却超过 200 万的文件，直到需要恢复时才发现无法导入。
+        if (MarkdownImportParser.CountLines(markdown) > MarkdownImportParser.MaxMarkdownLines)
+        {
+            throw new InvalidOperationException(
+                $"导出 Markdown 超过 {MarkdownImportParser.MaxMarkdownLines} 行的导入上限，" +
+                "生成的文件将无法被本插件重新导入；请减少纸片数量或改用 JSON 导出。");
+        }
+
+        return markdown;
     }
 
     private static void AppendTitle(StringBuilder builder, string? title)
