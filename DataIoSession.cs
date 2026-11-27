@@ -1219,18 +1219,24 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         try
         {
             var requestId = Interlocked.Increment(ref _replaceRequestId);
+
+            // 先登记待确认请求再投递：若宿主同步送达回执，CompleteReplaceAck 也能匹配到它。
+            // 只有存在待推送日志时才需要确认；没有日志时无需等待。
+            var hadPending = _linkPushPending;
+            if (hadPending)
+            {
+                Interlocked.Exchange(ref _awaitingReplaceAck, requestId);
+            }
+
             if (!_context.Runtime.Post(
                     RuntimeLinkProtocol.CreateReplace(requestId, RuntimeLinkProtocol.FromState(_state))))
             {
-                MarkPushPending();
-                return;
-            }
+                if (hadPending)
+                {
+                    Interlocked.CompareExchange(ref _awaitingReplaceAck, 0, requestId);
+                }
 
-            // 投递成功不等于落盘成功：只有存在待推送日志时才需要等待 Runtime 回执，
-            // 收到回执后再删除日志；保存失败或超时则保留日志供下次启动合并。
-            if (_linkPushPending)
-            {
-                Interlocked.Exchange(ref _awaitingReplaceAck, requestId);
+                MarkPushPending();
             }
         }
         catch (Exception)
