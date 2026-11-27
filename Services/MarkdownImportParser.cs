@@ -373,13 +373,26 @@ internal static partial class MarkdownImportParser
         return todos;
     }
 
-    /// <summary>统计换行数量；不分配任何字符串数组。</summary>
+    /// <summary>
+    /// 统计归一化后的行数；不分配任何字符串数组。
+    /// 必须同时识别 \r：NormalizeLineEndings 会把孤立 \r 也转成 \n，
+    /// 只统计 \n 的话，纯 \r 文件可以绕过行数上限并在 Split 时耗尽内存。
+    /// </summary>
     internal static int CountLines(string text)
     {
         var lines = 1;
-        foreach (var character in text)
+        for (var index = 0; index < text.Length; index++)
         {
-            if (character == '\n')
+            var character = text[index];
+            if (character == '\r')
+            {
+                lines++;
+                if (index + 1 < text.Length && text[index + 1] == '\n')
+                {
+                    index++;
+                }
+            }
+            else if (character == '\n')
             {
                 lines++;
             }
