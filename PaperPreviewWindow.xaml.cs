@@ -63,6 +63,12 @@ internal partial class PaperPreviewWindow : Window
     private bool _closeAnimated;
     private PreviewContent? _current;
 
+    /// <summary>“已复制”提示的复位计时器；关闭窗口时必须停止，否则计时器会继续持有整个窗口。</summary>
+    private DispatcherTimer? _copyTimer;
+
+    /// <summary>窗口已完成关闭（WPF Window 没有 IsClosed 属性）。</summary>
+    private bool _closed;
+
     public PaperPreviewWindow(
         PaperBodyTheme theme,
         Color tint,
@@ -155,6 +161,11 @@ internal partial class PaperPreviewWindow : Window
     /// <summary>关闭前先做淡出收缩；动画完成后再次 Close，第二次直接放行。</summary>
     protected override void OnClosing(CancelEventArgs e)
     {
+        // 关闭后不再需要加载正文，也不应让“已复制”计时器继续持有窗口。
+        _copyTimer?.Stop();
+        _copyTimer = null;
+        _loadToken++;
+
         if (!_closeAnimated && AnimationsEnabled && IsLoaded)
         {
             _closeAnimated = true;
@@ -185,6 +196,12 @@ internal partial class PaperPreviewWindow : Window
         }
 
         base.OnClosing(e);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _closed = true;
+        base.OnClosed(e);
     }
 
     private string? CurrentKey => _keys.Count == 0 ? null : _keys[_index];
@@ -366,8 +383,9 @@ internal partial class PaperPreviewWindow : Window
             // 预览是辅助操作，读取失败时保留窗口并展示占位，不打断用户。
         }
 
-        if (token != _loadToken)
+        if (token != _loadToken || _closed)
         {
+            // 加载期间窗口已关闭：不再读取图片、构建视觉树或更新已释放的控件。
             return;
         }
 
@@ -688,11 +706,24 @@ internal partial class PaperPreviewWindow : Window
         }
 
         CopyButton.Content = "已复制";
+
+        // 连续点击时复用同一个计时器：旧实现每次点击都新建一个匿名计时器，
+        // 全部持有窗口引用直到各自触发，关闭窗口也不会停止。
+        _copyTimer?.Stop();
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
+        _copyTimer = timer;
         timer.Tick += (_, _) =>
         {
             timer.Stop();
-            CopyButton.Content = "复制正文";
+            if (ReferenceEquals(_copyTimer, timer))
+            {
+                _copyTimer = null;
+            }
+
+            if (!_closed)
+            {
+                CopyButton.Content = "复制正文";
+            }
         };
         timer.Start();
     }

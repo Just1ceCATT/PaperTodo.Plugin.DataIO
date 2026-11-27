@@ -550,43 +550,49 @@ public partial class DataIoView : UserControl
         CancelHover();
         _suppressSelectionEvents = true;
 
-        foreach (var oldRow in _allRows)
+        try
         {
-            oldRow.PropertyChanged -= OnRowPropertyChanged;
+            foreach (var oldRow in _allRows)
+            {
+                oldRow.PropertyChanged -= OnRowPropertyChanged;
+            }
+
+            _allRows.Clear();
+            _noteRows.Clear();
+            _todoRows.Clear();
+
+            var selected = selectedKeys is null
+                ? null
+                : new HashSet<string>(selectedKeys, StringComparer.Ordinal);
+
+            foreach (var row in rows)
+            {
+                // 不可选中的行（如缺少 papers.create 权限）无论选择集里有没有它的键，
+                // 都不能显示成已勾选，否则界面有勾但统计与实际导入都不包含它。
+                row.IsSelected = selected is null
+                    ? row.CanSelect
+                    : selected.Contains(row.Key) && row.CanSelect;
+                row.PropertyChanged += OnRowPropertyChanged;
+                _allRows.Add(row);
+
+                if (row.Type == "todo")
+                {
+                    // 每组第一行不画顶线，其余行画在顶边；必须在加入绑定集合前设置。
+                    row.ShowTopSeparator = _todoRows.Count > 0;
+                    _todoRows.Add(row);
+                }
+                else
+                {
+                    row.ShowTopSeparator = _noteRows.Count > 0;
+                    _noteRows.Add(row);
+                }
+            }
         }
-
-        _allRows.Clear();
-        _noteRows.Clear();
-        _todoRows.Clear();
-
-        var selected = selectedKeys is null
-            ? null
-            : new HashSet<string>(selectedKeys, StringComparer.Ordinal);
-
-        foreach (var row in rows)
+        finally
         {
-            // 不可选中的行（如缺少 papers.create 权限）无论选择集里有没有它的键，
-            // 都不能显示成已勾选，否则界面有勾但统计与实际导入都不包含它。
-            row.IsSelected = selected is null
-                ? row.CanSelect
-                : selected.Contains(row.Key) && row.CanSelect;
-            row.PropertyChanged += OnRowPropertyChanged;
-            _allRows.Add(row);
-
-            if (row.Type == "todo")
-            {
-                // 每组第一行不画顶线，其余行画在顶边；必须在加入绑定集合前设置。
-                row.ShowTopSeparator = _todoRows.Count > 0;
-                _todoRows.Add(row);
-            }
-            else
-            {
-                row.ShowTopSeparator = _noteRows.Count > 0;
-                _noteRows.Add(row);
-            }
+            // 中途异常不能再让抑制标志保持为 true，否则之后所有勾选都不再通知会话。
+            _suppressSelectionEvents = false;
         }
-
-        _suppressSelectionEvents = false;
     }
 
     public IReadOnlyList<string> GetSelectedKeys(string type) =>
@@ -639,12 +645,18 @@ public partial class DataIoView : UserControl
     {
         var rows = type == "todo" ? _todoRows : _noteRows;
         _suppressSelectionEvents = true;
-        foreach (var row in rows.Where(r => r.CanSelect))
+        try
         {
-            row.IsSelected = value;
+            foreach (var row in rows.Where(r => r.CanSelect))
+            {
+                row.IsSelected = value;
+            }
+        }
+        finally
+        {
+            _suppressSelectionEvents = false;
         }
 
-        _suppressSelectionEvents = false;
         RaiseSelectionChanged(type);
         // 行级事件只同步可见行；这里再通知会话把同一类型隐藏的条目一起选中/清空。
         TypeBatchSelectionRequested?.Invoke(this, (type, value));
@@ -654,12 +666,18 @@ public partial class DataIoView : UserControl
     {
         var rows = type == "todo" ? _todoRows : _noteRows;
         _suppressSelectionEvents = true;
-        foreach (var row in rows.Where(r => r.CanSelect))
+        try
         {
-            row.IsSelected = !row.IsSelected;
+            foreach (var row in rows.Where(r => r.CanSelect))
+            {
+                row.IsSelected = !row.IsSelected;
+            }
+        }
+        finally
+        {
+            _suppressSelectionEvents = false;
         }
 
-        _suppressSelectionEvents = false;
         RaiseSelectionChanged(type);
     }
 
@@ -915,6 +933,9 @@ public partial class DataIoView : UserControl
 
     private void OnHostWindowDeactivated(object? sender, EventArgs e) => CancelHover();
 
+    /// <summary>纸片隐藏或会话销毁时由会话调用，确保 StaysOpen 的悬停卡片不会残留。</summary>
+    public void CancelHoverPreview() => CancelHover();
+
     private void CancelHover()
     {
         _hoverTimer.Stop();
@@ -1007,7 +1028,16 @@ public partial class DataIoView : UserControl
             return;
         }
 
-        ShowHoverCard(content);
+        try
+        {
+            ShowHoverCard(content);
+        }
+        catch (Exception)
+        {
+            // async void 内未捕获的异常会直接终止宿主进程；悬停卡片只是辅助功能，
+            // 这里连同后续的界面构建一起兜底，失败时静默收起。
+            CancelHover();
+        }
     }
 
     private void ShowHoverCard(PreviewContent content)
