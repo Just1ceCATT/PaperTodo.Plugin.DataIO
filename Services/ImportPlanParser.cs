@@ -1591,9 +1591,18 @@ internal static class ImportPlanParser
                 continue;
             }
 
+            // 超长来源 ID 稍后会整张跳过，不加入查重集合：
+            // 既避免把数十 MB 的字符串留到构建阶段，也避免它进入下面的错误提示。
+            if (paper.SourceId.Length > MaxSourceIdChars)
+            {
+                continue;
+            }
+
             if (!sourceIds.Add(paper.SourceId))
             {
-                plan.FatalError = $"文件包含重复的 sourceId：{paper.SourceId}。";
+                // 来源 ID 长度未受 256 字符限制时可能极长，提示必须截断，
+                // 否则几十 MB 的文本会让 WPF 对话框卡死。
+                plan.FatalError = $"文件包含重复的 sourceId：{ShortenForMessage(paper.SourceId)}。";
                 return plan;
             }
         }

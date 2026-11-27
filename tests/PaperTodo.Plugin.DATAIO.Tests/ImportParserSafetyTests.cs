@@ -131,4 +131,41 @@ public sealed class ImportParserSafetyTests
         Assert.NotNull(plan.FatalError);
         Assert.Contains("上限", plan.FatalError);
     }
+
+    [Fact]
+    public void Duplicate_source_id_message_is_shortened()
+    {
+        // 正常长度：仍然按重复来源 ID 报错。
+        var duplicated = "0123456789abcdef0123456789abcdef";
+        var json =
+            "{\"format\":\"papertodo.paper-export\",\"schemaVersion\":1,\"papers\":[" +
+            $"{{\"sourceId\":\"{duplicated}\",\"type\":\"note\",\"title\":\"A\",\"content\":\"\"}}," +
+            $"{{\"sourceId\":\"{duplicated}\",\"type\":\"note\",\"title\":\"B\",\"content\":\"\"}}" +
+            "]}";
+
+        var plan = ImportPlanParser.Parse(json);
+
+        Assert.NotNull(plan.FatalError);
+        Assert.Contains("重复的 sourceId", plan.FatalError);
+        Assert.True(plan.FatalError!.Length < 200);
+    }
+
+    [Fact]
+    public void Overlong_source_ids_are_skipped_without_giant_messages()
+    {
+        // 超过 256 字符的来源 ID 会整张跳过，不应把超长文本拼进提示或查重错误。
+        var huge = new string('a', 10_000);
+        var json =
+            "{\"format\":\"papertodo.paper-export\",\"schemaVersion\":1,\"papers\":[" +
+            "{\"sourceId\":\"okid\",\"type\":\"note\",\"title\":\"保留\",\"content\":\"正文\"}," +
+            $"{{\"sourceId\":\"{huge}\",\"type\":\"note\",\"title\":\"A\",\"content\":\"\"}}," +
+            $"{{\"sourceId\":\"{huge}\",\"type\":\"note\",\"title\":\"B\",\"content\":\"\"}}" +
+            "]}";
+
+        var plan = ImportPlanParser.Parse(json);
+
+        Assert.Null(plan.FatalError);
+        Assert.NotEmpty(plan.Warnings);
+        Assert.All(plan.Warnings, warning => Assert.True(warning.Length < 500));
+    }
 }
