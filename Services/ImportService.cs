@@ -304,6 +304,11 @@ internal sealed class ImportService
     {
         var source = importPaper.Source;
 
+        // 同一工作区重导时，文件里的 sourceId 就是目标纸片自己的 ID：图片 ID 也属于同一图片库，
+        // 不能按“跨机器可能命中另一张图”的规则移除清单外引用。
+        var sameWorkspace = !string.IsNullOrWhiteSpace(source.SourceId) &&
+                            string.Equals(source.SourceId, targetId, StringComparison.Ordinal);
+
         // 只信任明确标记为“正文可读”且确实带有正文的笔记；否则不能用来清空本地正文。
         if (source.ContentAvailable != true || source.Content is null)
         {
@@ -340,7 +345,7 @@ internal sealed class ImportService
         // 不能把“正文相同”当成“无事可做”，否则这些引用永远不会被清理；
         // 同理，有随包图片时也要走图片写回/复用流程。
         if (importPaper.Images.Count == 0 &&
-            !HasUnrestorableDeclaredReferences(importPaper) &&
+            !HasUnrestorableDeclaredReferences(importPaper, sameWorkspace) &&
             MarkdownNormalize.ContentEquivalent(current.Content, source.Content))
         {
             return (targetId, false, false);
@@ -376,7 +381,7 @@ internal sealed class ImportService
 
             // 图片完全没能写回（权限变化、 PaperTodo 不支持等）：只移除清单中确认无法写回的引用；
             // 用户手写链接以及本机可能仍然有效的引用保持原样。
-            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "");
+            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "", sameWorkspace);
             if (removed > 0)
             {
                 result.Warnings.Add(
@@ -388,7 +393,7 @@ internal sealed class ImportService
         {
             // 没有随包图片时（例如普通 JSON），只移除已知无法还原的相对链接；
             // 同一工作区的 i: 引用保持原样。
-            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "");
+            (content, var removed) = StripUnrestorableReferences(importPaper, source.Content ?? "", sameWorkspace);
             if (removed > 0)
             {
                 var reason = GetImageRestoreBlocker(importPaper) ?? "图片无法写回";
@@ -433,9 +438,18 @@ internal sealed class ImportService
         return (targetId, false, false);
     }
 
-    /// <summary>正文是否引用了无法写回的图片；更新需要移除这些引用。</summary>
-    internal static bool HasUnrestorableDeclaredReferences(ImportPaper paper)
+    /// <summary>
+    /// 正文是否引用了无法写回的图片；更新需要移除这些引用。
+    /// sameWorkspace 为 true 时（导出纸片 ID 与本地更新目标相同），图片 ID 就是本机 ID，
+    /// 清单缺失只说明导出时没读到，不代表本地引用失效，不能按“跨机器”规则移除。
+    /// </summary>
+    internal static bool HasUnrestorableDeclaredReferences(ImportPaper paper, bool sameWorkspace = false)
     {
+        if (sameWorkspace)
+        {
+            return false;
+        }
+
         var content = paper.Source.Content ?? "";
         if (paper.UsesRelativeImageLinks)
         {
@@ -471,8 +485,15 @@ internal sealed class ImportService
     /// <summary>移除没有可用资产、确定无法写回的图片引用；保留其余正文。</summary>
     private static (string Content, int Removed) StripUnrestorableReferences(
         ImportPaper paper,
-        string content)
+        string content,
+        bool sameWorkspace)
     {
+        if (sameWorkspace)
+        {
+            // 同一工作区：正文里的 i: 引用指向本机图片库，即使清单缺失也仍然有效。
+            return (content, 0);
+        }
+
         if (paper.UsesRelativeImageLinks)
         {
             // 清单登记过但校验失败的图片也算“清单里的引用”：它确实无法写回，必须移除。
@@ -1083,21 +1104,39 @@ internal sealed class ImportService
         {
             // 更新时图片失败不能连带丢掉文字：移除无法写回的引用，其余正文照常写入。
             // 但只删除“清单里确实登记过的引用”；用户手写的其它 images/ 链接必须保留。
+            var sameWorkspaceImageIds = !string.IsNullOrWhiteSpace(importPaper.Source.SourceId) &&
+                                        string.Equals(
+                                            importPaper.Source.SourceId,
+                                            paperId,
+                                            StringComparison.Ordinal);
             var mappedIds = newIds.Values.ToHashSet(StringComparer.Ordinal);
             var resolvedFiles = idsByFile.Keys.ToHashSet(StringComparer.Ordinal);
             var manifestFiles = importPaper.Images
                 .Select(image => image.File)
                 .Concat(importPaper.UnavailableImageFiles)
                 .ToHashSet(StringComparer.Ordinal);
-            (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
-                finalContent,
-                url => url.StartsWith("images/", StringComparison.Ordinal)
-                    ? // 用户手写的相对链接不在清单中，保留；清单内的只保留成功写回的。
-                      !manifestFiles.Contains(url) || resolvedFiles.Contains(url)
-                    : // 正文此时已用新图片 ID 改写：仍不是本机新 ID 的 i: 引用无法写回，必须移除，
-                      // 否则会在本机命中另一张同号图片或显示破图。
-                      !url.StartsWith("i:", StringComparison.Ordinal) ||
-                      mappedIds.Contains(url[2..]));
+            if (sameWorkspaceImageIds)
+            {
+                // 同一工作区：未映射的 i: 引用本来就在本机图片库里，保留即可。
+                // 只有相对链接（Markdown 包）仍按清单判断。
+                (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
+                    finalContent,
+                    url => !url.StartsWith("images/", StringComparison.Ordinal) ||
+                           !manifestFiles.Contains(url) ||
+                           resolvedFiles.Contains(url));
+            }
+            else
+            {
+                (finalContent, _) = ImageReferenceScanner.RemoveUnresolvedReferences(
+                    finalContent,
+                    url => url.StartsWith("images/", StringComparison.Ordinal)
+                        ? // 用户手写的相对链接不在清单中，保留；清单内的只保留成功写回的。
+                          !manifestFiles.Contains(url) || resolvedFiles.Contains(url)
+                        : // 正文此时已用新图片 ID 改写：仍不是本机新 ID 的 i: 引用无法写回，必须移除，
+                          // 否则会在本机命中另一张同号图片或显示破图。
+                          !url.StartsWith("i:", StringComparison.Ordinal) ||
+                          mappedIds.Contains(url[2..]));
+            }
         }
 
         try
