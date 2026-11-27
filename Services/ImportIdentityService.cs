@@ -76,6 +76,21 @@ internal sealed class ImportIdentityService
 
         var papers = await _gateway.OnUiAsync(
             () => _gateway.Context.Workspace.ListPapers());
+
+        // 列表缺少工具纸片自身，说明 PaperTodo 数据尚未就绪（其他路径同样以此判断完整性）。
+        // 此时若继续按列表清理映射，会把暂时不可见的纸片永久标记为已删除，
+        // 之后再次导入这些纸片就会新建重复副本。
+        if (papers.Count == 0 ||
+            papers.All(paper => !string.Equals(
+                paper.Id,
+                _gateway.Context.PaperId,
+                StringComparison.Ordinal)))
+        {
+            throw new PaperTodoPluginException(
+                "state_incomplete",
+                "本地纸片列表暂时不完整，已中止本次更新校验，请稍后重试。");
+        }
+
         var papersById = papers.ToDictionary(p => p.Id, StringComparer.Ordinal);
 
         Dictionary<string, TodoSnapshot[]> todosByPaper = new(StringComparer.Ordinal);

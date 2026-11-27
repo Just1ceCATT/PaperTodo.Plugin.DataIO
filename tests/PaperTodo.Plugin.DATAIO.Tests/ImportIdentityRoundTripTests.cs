@@ -39,6 +39,8 @@ public sealed class ImportIdentityRoundTripTests
         {
             var state = new DataIoState();
             var workspace = new FakeWorkspace();
+            // 真实工作区列表一定包含工具纸片自身；解析更新目标用它判断列表是否完整。
+            workspace.Papers.Add(new PaperSnapshot("tool", "note", "DataIO", true, false, false, "builtin.markdown"));
             var gateway = new HostGateway(NewContext(workspace), Dispatcher.CurrentDispatcher);
             var identity = new ImportIdentityService(gateway, state);
 

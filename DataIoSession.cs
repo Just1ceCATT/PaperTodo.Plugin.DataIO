@@ -2361,10 +2361,16 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         // 换文件时重新允许一次“映射不可用”的提示。
         _importLinksDegraded = false;
 
-        // 按当前设置解析可更新的本地纸片；解析失败时按全部新建处理并给出提示。
+        // 按当前设置解析可更新的本地纸片。解析失败（列表暂时不完整等）时不能继续：
+        // 按新建处理会把已导入过的纸片再建一份，造成重复数据。
         if (!await RefreshUpdateTargetsAsync(plan, _settings, CancellationToken.None))
         {
-            plan.Warnings.Add("无法校验本地更新目标，本次将按新建处理。");
+            _view.ShowAlertDialog(
+                "无法读取导入文件",
+                "无法校验本地纸片状态（PaperTodo 可能正在恢复数据），已取消本次导入。" +
+                "请稍后重新选择文件。");
+            SetStatus("无法校验本地纸片状态，已取消导入。");
+            return;
         }
 
         if (_disposed)
@@ -2645,6 +2651,10 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         paper.TargetLocallyModified = false;
                         paper.TargetLocalStateUnknown = false;
                         paper.TargetImagesAtRisk = false;
+                        // 用户明确选择“新增”：必须清掉与“跳过更新”相关的标记，
+                        // 否则导入服务仍会把它当成无法处理的更新而跳过。
+                        paper.UpdateBlockedReason = null;
+                        paper.UpdateSkipReason = null;
                         paper.UpdateDiff = null;
                         paper.UpdateHasChanges = false;
                         kept.Add(paper);
