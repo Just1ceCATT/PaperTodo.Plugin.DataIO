@@ -76,6 +76,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     private bool _busy;
     private bool _disposed;
 
+    /// <summary>会话级取消源：销毁时中止解析、同步等后台工作，避免销毁后继续读写状态。</summary>
+    private readonly CancellationTokenSource _lifetime = new();
+
     /// <summary>列表搜索关键字；空串表示不过滤。</summary>
     private string _searchQuery = "";
 
@@ -230,7 +233,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _view.Dispatcher.InvokeAsync(() => _ = RefreshAsync(), DispatcherPriority.Loaded);
         // Runtime 可能在 Body 创建后稍晚才启动；先异步拉取一次映射，后续导入前还会再校验。
         _view.Dispatcher.InvokeAsync(
-            () => _ = SyncWorkspaceStateAsync(CancellationToken.None),
+            () => _ = RunInitialSyncAsync(),
             DispatcherPriority.Background);
     }
 
@@ -636,7 +639,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     {
         try
         {
-            var resolved = await RefreshUpdateTargetsAsync(plan, _settings, CancellationToken.None);
+            var resolved = await RefreshUpdateTargetsAsync(plan, _settings, _lifetime.Token);
             if (_disposed ||
                 _mode != DataIoMode.Import ||
                 !ReferenceEquals(_importPlan, plan))
@@ -677,6 +680,17 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         catch (ObjectDisposedException)
         {
             // 已结束的操作无需取消。
+        }
+
+        try
+        {
+            // 会话级取消：选文件解析、映射同步等未登记到 _operation 的工作也要停止，
+            // 否则它们会在销毁后继续写待推送日志或刷新界面。
+            _lifetime.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 已取消/释放无需重复处理。
         }
         _debounce.Stop();
         _debounce.Tick -= OnDebounceTick;
@@ -1032,6 +1046,19 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// 与 Runtime 对账：把旧版纸片镜像迁移进 Runtime，并取回权威快照。
     /// 返回 false 表示本次没能取得权威数据，调用方应提示降级。
     /// </summary>
+    /// <summary>启动时的一次性同步：失败或会话销毁取消都不应成为未观察的任务异常。</summary>
+    private async Task RunInitialSyncAsync()
+    {
+        try
+        {
+            await SyncWorkspaceStateAsync(_lifetime.Token);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // 导入前会再次校验映射，这里的失败不影响正确性。
+        }
+    }
+
     private async Task<bool> SyncWorkspaceStateAsync(CancellationToken cancellationToken)
     {
         await _linkSyncLock.WaitAsync(cancellationToken);
@@ -1047,7 +1074,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 await Task.Delay(120, cancellationToken);
             }
 
-            if (!_context.Runtime.IsAvailable)
+            if (!_context.Runtime.IsAvailable || _disposed)
             {
                 return false;
             }
@@ -1064,6 +1091,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             (request.ImportLinks, _linkSyncValidated) =
                 await FilterKnownLinksAsync(request.ImportLinks, cancellationToken);
 
+            // 过滤期间会话可能已被销毁：此时不能再向 Runtime 推送或写日志。
+            if (_disposed)
+            {
+                return false;
+            }
+
             try
             {
                 if (!_context.Runtime.Post(
@@ -1074,6 +1107,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 }
 
                 await waiter.Task.WaitAsync(TimeSpan.FromMilliseconds(800), cancellationToken);
+                if (_disposed)
+                {
+                    return false;
+                }
+
                 // 只有按当前工作区校验过镜像，才允许后续用本地状态替换 Runtime。
                 _linkSynced = _linkSyncValidated;
                 if (_linkPushPending)
@@ -2414,7 +2452,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         // 按当前设置解析可更新的本地纸片。解析失败（列表暂时不完整等）时不能继续：
         // 按新建处理会把已导入过的纸片再建一份，造成重复数据。
-        if (!await RefreshUpdateTargetsAsync(plan, _settings, CancellationToken.None))
+        if (!await RefreshUpdateTargetsAsync(plan, _settings, _lifetime.Token))
         {
             _view.ShowAlertDialog(
                 "无法读取导入文件",
@@ -2517,6 +2555,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 // 解析可能只完成了一部分；清空目标，避免把半成品计划当成有效结果。
                 ClearUpdateTargets(plan);
                 return false;
+            }
+
+            // 解析期间会话可能已被销毁（切换工作区、重建正文）：不要再写入迁移结果。
+            if (_disposed)
+            {
+                throw new OperationCanceledException();
             }
 
             if (_identity.ConsumeChanges())
