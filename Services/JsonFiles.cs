@@ -83,15 +83,28 @@ internal static class JsonFiles
 
     private static string DecodeStrict(Encoding encoding, ReadOnlySpan<byte> bytes, string name)
     {
+        string text;
         try
         {
-            return encoding.GetString(bytes);
+            text = encoding.GetString(bytes);
         }
         catch (DecoderFallbackException)
         {
             throw new ImportFileEncodingException(
                 $"文件“{name}”的文本编码无效或不是 UTF-8，无法读取；请用 UTF-8 编码重新保存后再导入。");
         }
+
+        // 无 BOM 的 UTF-16LE 纯 ASCII 文本（如 61 00 62 00）也是合法的 UTF-8 字节，
+        // 严格解码不会报错，却会把 NUL 当成正文导入，甚至在“更新”时覆盖本地正文。
+        // 文本文件不该包含 NUL，出现即按编码错误拒绝。
+        if (text.Contains('\0'))
+        {
+            throw new ImportFileEncodingException(
+                $"文件“{name}”包含空字符，可能不是 UTF-8 编码的文本（例如无 BOM 的 UTF-16）；" +
+                "请用 UTF-8 重新保存后再导入。");
+        }
+
+        return text;
     }
 
     /// <summary>

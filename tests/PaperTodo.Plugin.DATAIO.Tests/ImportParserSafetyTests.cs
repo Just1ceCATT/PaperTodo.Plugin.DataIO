@@ -168,4 +168,14 @@ public sealed class ImportParserSafetyTests
         Assert.NotEmpty(plan.Warnings);
         Assert.All(plan.Warnings, warning => Assert.True(warning.Length < 500));
     }
+
+    [Fact]
+    public void Utf16_without_bom_is_rejected_instead_of_importing_nuls()
+    {
+        // “ab” 的 UTF-16LE 字节（无 BOM）是合法 UTF-8，但会解码出 NUL。
+        byte[] bytes = [0x61, 0x00, 0x62, 0x00];
+
+        Assert.Throws<ImportFileEncodingException>(
+            () => JsonFiles.DecodeText(bytes, "nobom.md"));
+    }
 }
