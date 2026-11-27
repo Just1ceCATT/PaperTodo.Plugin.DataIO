@@ -81,6 +81,10 @@ internal sealed class ExportService
             }
 
             document.Papers.Add(exportPaper);
+
+            // HostGateway 在 UI 线程上同步执行 API：不主动让出会让上百张大笔记的导出
+            // 在“正在读取数据…”期间完全无响应。
+            await HostGateway.YieldAsync();
         }
 
         if (skippedProviderBodies > 0)

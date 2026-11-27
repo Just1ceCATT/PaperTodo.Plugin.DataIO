@@ -464,17 +464,48 @@ internal static class RuntimeLinkProtocol
         }
     }
 
+    /// <summary>
+    /// 状态文件读取上限。正常内容（最多 4096 条映射 + 20 条历史）远小于该值；
+    /// 被外部程序替换成数 GB 文件时必须拒绝整读，否则崩溃恢复阶段会耗尽内存。
+    /// </summary>
+    private const long MaxStateFileBytes = 16L * 1024 * 1024;
+
+    /// <summary>有上限地读取状态文件；不存在或超限时返回 null。</summary>
+    private static string? TryReadStateFile(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length > MaxStateFileBytes)
+            {
+                return null;
+            }
+
+            return File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     public static RuntimeWorkspaceState? TryReadPendingState(string? workspaceFileName)
     {
         var path = PendingStatePath(workspaceFileName);
-        if (path is null || !File.Exists(path))
+        if (path is null)
+        {
+            return null;
+        }
+
+        var text = TryReadStateFile(path);
+        if (text is null)
         {
             return null;
         }
 
         try
         {
-            var state = ParseState(File.ReadAllText(path), out var corruptBackup);
+            var state = ParseState(text, out var corruptBackup);
             if (!string.IsNullOrEmpty(corruptBackup))
             {
                 // 待推送日志同样是崩溃恢复凭据：损坏时另存 .bak 后再清除，
@@ -535,14 +566,20 @@ internal static class RuntimeLinkProtocol
     public static RuntimeWorkspaceState? TryReadLegacyPendingState()
     {
         var path = LegacyPendingStatePath;
-        if (path is null || !File.Exists(path))
+        if (path is null)
+        {
+            return null;
+        }
+
+        var text = TryReadStateFile(path);
+        if (text is null)
         {
             return null;
         }
 
         try
         {
-            var state = ParseState(File.ReadAllText(path), out var corruptBackup);
+            var state = ParseState(text, out var corruptBackup);
             if (!string.IsNullOrEmpty(corruptBackup))
             {
                 WriteCorruptBackup(corruptBackup, "legacy");

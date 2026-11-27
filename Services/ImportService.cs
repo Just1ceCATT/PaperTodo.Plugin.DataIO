@@ -51,7 +51,7 @@ internal sealed class ImportService
             }
             catch (PaperTodoPluginException ex)
             {
-                result.FatalError = $"读取现有纸片失败：{ex.Message}";
+                result.FatalError = $"读取现有纸片失败：{HostErrorText.Describe(ex)}";
                 result.StoppedEarly = true;
                 return result;
             }
@@ -166,7 +166,7 @@ internal sealed class ImportService
                     result.FailedPapers++;
                     result.Failures.Add(Failure(i, importPaper, ex));
                     result.StoppedEarly = true;
-                    result.FatalError = $"导入被中止（{ex.Code}）：{ex.Message}";
+                    result.FatalError = $"导入被中止：{HostErrorText.Describe(ex)}";
                     break;
                 }
                 catch (PaperTodoPluginException ex)
@@ -1742,7 +1742,7 @@ internal sealed class ImportService
         "target_changed";
 
     private static ImportFailure Failure(int index, ImportPaper paper, PaperTodoPluginException ex) =>
-        new(index + 1, DisplayTitle(paper), paper.Source.Type, ex.Code, ex.Message);
+        new(index + 1, DisplayTitle(paper), paper.Source.Type, ex.Code, HostErrorText.Describe(ex));
 
     private static string DisplayTitle(ImportPaper paper) =>
         string.IsNullOrWhiteSpace(paper.Source.Title) ? "（无标题）" : paper.Source.Title;

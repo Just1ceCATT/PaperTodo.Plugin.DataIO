@@ -117,6 +117,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本次会话有尚未推送到 Runtime 的工作区状态变化。</summary>
     private bool _linkPushPending;
 
+    /// <summary>最近一次状态落盘失败（磁盘满、文件被占用等），需要在结果中提示用户。</summary>
+    private bool _stateSaveFailed;
+
     /// <summary>Runtime 状态损坏的提示是否已展示。</summary>
     private bool _runtimeCorruptWarned;
 
@@ -129,8 +132,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本会话是否已请求 PaperTodo 重建“胶囊→展开”外形，避免重复抖动。</summary>
     private bool _shellRestoreRequested;
 
-    /// <summary>进程内自愈重建次数上限，防止 PaperTodo 持续失败时反复重建。</summary>
-    private static int _autoReloadCount;
+    /// <summary>本会话内自愈重建次数上限，防止 PaperTodo 持续失败时反复重建。</summary>
+    private int _autoReloadCount;
     private const int MaxAutoReloads = 2;
 
     /// <summary>
@@ -289,6 +292,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         if (e.NewValue is true)
         {
             ScheduleRenderedCheck(0);
+        }
+        else
+        {
+            // 正文隐藏时 StaysOpen 的悬停卡片不会再收到 MouseLeave，必须主动收起。
+            _view.CancelHoverPreview();
         }
     }
 
@@ -490,6 +498,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     {
         if (!visible)
         {
+            // 纸片折叠/隐藏时关闭悬停卡片，避免它残留在桌面上无法自动关闭。
+            _view.CancelHoverPreview();
             return;
         }
 
@@ -556,7 +566,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
     public void OnSettingsChanged(string settingsJson)
     {
-        if (!_disposed && !_view.Dispatcher.CheckAccess())
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (!_view.Dispatcher.CheckAccess())
         {
             // PaperTodo 可能在后台线程投递设置变更；界面与选中状态只能在 UI 线程修改。
             _view.Dispatcher.BeginInvoke(() => OnSettingsChanged(settingsJson));
@@ -583,7 +598,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     {
         try
         {
-            var resolved = await RefreshUpdateTargetsAsync(plan, CancellationToken.None);
+            var resolved = await RefreshUpdateTargetsAsync(plan, _settings, CancellationToken.None);
             if (_disposed ||
                 _mode != DataIoMode.Import ||
                 !ReferenceEquals(_importPlan, plan))
@@ -785,7 +800,17 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             ReconcileImportLinks();
 
             // 只有数据真的变化时才丢弃预览缓存；否则勾选、搜索等操作会让悬停预览反复重读。
-            var signature = ComputeDataSignature();
+            // 指纹会拼接全部待办文本（上限 200×200 条），属于纯计算，放到后台线程避免卡住界面。
+            var papersSnapshot = _papers;
+            var todosSnapshot = _todosByPaper;
+            var signature = await Task.Run(() => ComputeDataSignature(papersSnapshot, todosSnapshot));
+
+            // 计算期间会话可能被销毁，或已有更新的一次刷新接管了数据；本次结果不再有意义。
+            if (_disposed || !ReferenceEquals(papersSnapshot, _papers))
+            {
+                return;
+            }
+
             if (_noteContentDirty || !string.Equals(signature, _dataSignature, StringComparison.Ordinal))
             {
                 _dataSignature = signature;
@@ -1373,13 +1398,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     }
 
     /// <summary>纸片与待办快照的轻量指纹，用于判断预览缓存是否仍然有效。</summary>
-    private string ComputeDataSignature()
+    private static string ComputeDataSignature(
+        IReadOnlyList<PaperSnapshot> papers,
+        IReadOnlyDictionary<string, TodoSnapshot[]> todosByPaper)
     {
         const char fieldSeparator = (char)0x1f;
         const char recordSeparator = (char)0x1e;
 
-        var builder = new StringBuilder(_papers.Count * 64);
-        foreach (var paper in _papers)
+        var builder = new StringBuilder(papers.Count * 64);
+        foreach (var paper in papers)
         {
             builder
                 .Append(paper.Id).Append(fieldSeparator)
@@ -1390,7 +1417,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 .Append(recordSeparator);
         }
 
-        foreach (var (paperId, todos) in _todosByPaper)
+        foreach (var (paperId, todos) in todosByPaper)
         {
             builder.Append(paperId).Append(fieldSeparator);
             foreach (var todo in todos)
@@ -1945,6 +1972,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         // 关闭纸片时取消导出，避免在已销毁的会话上继续弹结果框。
         using var cts = new CancellationTokenSource();
         _operation = cts;
+        _stateSaveFailed = false;
 
         // 先只读取正文，用图片引用决定保存对话框应显示 zip 还是单一文件。
         SetStatus("正在读取数据…");
@@ -2112,6 +2140,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 + (imageCapture.ImageCaptureTruncated ? 1 : 0)
         });
 
+        if (_stateSaveFailed)
+        {
+            status += "（操作记录未能保存到本地状态）";
+            SetStatus(status);
+        }
+
         var stats = new List<(string Label, string Value)>
         {
             ("导出纸片", $"{document.Papers.Count} 张"),
@@ -2261,6 +2295,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 return found;
             });
 
+            if (_disposed)
+            {
+                return;
+            }
+
             IReadOnlyList<string>? selectedWorkspaces = null;
             if (coreWorkspaces.Count > 1)
             {
@@ -2279,6 +2318,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 selectedWorkspaces is null
                     ? ImportPlanParser.ParseFile(dialog.FileName)
                     : ImportPlanParser.ParseCoreBackup(dialog.FileName, selectedWorkspaces));
+
+            if (_disposed)
+            {
+                return;
+            }
         }
         catch (OutOfMemoryException)
         {
@@ -2312,9 +2356,14 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         _importLinksDegraded = false;
 
         // 按当前设置解析可更新的本地纸片；解析失败时按全部新建处理并给出提示。
-        if (!await RefreshUpdateTargetsAsync(plan, CancellationToken.None))
+        if (!await RefreshUpdateTargetsAsync(plan, _settings, CancellationToken.None))
         {
             plan.Warnings.Add("无法校验本地更新目标，本次将按新建处理。");
+        }
+
+        if (_disposed)
+        {
+            return;
         }
 
         _importPlan = plan;
@@ -2350,14 +2399,23 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// </summary>
     private async Task<bool> RefreshUpdateTargetsAsync(
         ImportPlan plan,
+        DataIoSettings settings,
         CancellationToken cancellationToken)
     {
         await _resolveLock.WaitAsync(cancellationToken);
         try
         {
+            // 会话可能在等待锁或读取纸片期间被销毁（切换工作区、重建正文）：
+            // 此时继续解析只会在旧会话上弹幽灵对话框、并写入待推送日志。
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_disposed)
+            {
+                throw new OperationCanceledException();
+            }
+
             ClearUpdateTargets(plan);
 
-            if (!_settings.UpdateImportedPapers)
+            if (!settings.UpdateImportedPapers)
             {
                 return true;
             }
@@ -2388,7 +2446,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         "若此前导入过同一文件，建议稍后重试以免产生重复纸片。");
                 }
 
-                await _identity.ResolveAsync(plan, _settings, cancellationToken);
+                await _identity.ResolveAsync(plan, settings, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -2418,13 +2476,28 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             return;
         }
 
+        // 取消源必须在第一个 await 之前登记：用户可能在更新预览/确认对话框打开时
+        // 切换工作区，宿主会销毁本会话；Dispose 只能取消已登记的操作。
+        using var cts = new CancellationTokenSource();
+        _operation = cts;
+
+        // 固定本次操作使用的设置：预览期间主窗口修改设置时，预览承诺与实际执行必须一致。
+        var operationSettings = _settings;
+        _stateSaveFailed = false;
+
         // 选择文件到点击导入之间本地可能已变化；先按当前状态重新解析更新目标与指纹。
-        if (!await RefreshUpdateTargetsAsync(_importPlan, CancellationToken.None))
+        if (!await RefreshUpdateTargetsAsync(_importPlan, operationSettings, cts.Token))
         {
             SetStatus("无法重新校验本地纸片状态，已中止导入，请稍后重试。");
             return;
         }
 
+        if (_disposed)
+        {
+            return;
+        }
+
+        cts.Token.ThrowIfCancellationRequested();
         RefreshImportView();
 
         var selected = GetImportSelectedPapers();
@@ -2477,7 +2550,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
             // 关闭删除时，更新预览里的删除行不会真正删除，需要明确告知，避免误读差异。
             IReadOnlyList<string> previewWarnings = _importPlan.Warnings;
-            if (!_settings.DeleteMissingTodos &&
+            if (!operationSettings.DeleteMissingTodos &&
                 updateCandidates.Any(paper =>
                     string.Equals(paper.Source.Type, "todo", StringComparison.OrdinalIgnoreCase)))
             {
@@ -2500,8 +2573,16 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 return;
             }
 
+            // 对话框打开期间会话可能已被销毁：继续执行会在旧会话上弹窗并写入数据。
+            if (_disposed)
+            {
+                return;
+            }
+
+            cts.Token.ThrowIfCancellationRequested();
+
             // 预览期间本地纸片可能被修改/删除，重新解析后再应用用户选择。
-            if (!await RefreshUpdateTargetsAsync(_importPlan, CancellationToken.None))
+            if (!await RefreshUpdateTargetsAsync(_importPlan, operationSettings, cts.Token))
             {
                 RefreshImportView();
                 SetStatus("无法重新校验本地纸片状态，已取消导入。");
@@ -2610,7 +2691,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             }
         }
 
-        if (_settings.ConfirmBeforeImport && !updatePreviewShown)
+        if (operationSettings.ConfirmBeforeImport && !updatePreviewShown)
         {
             var confirmation = ImportSummaryBuilder.BuildConfirmation(selected, _importPlan);
             if (!_view.ShowConfirmDialog(
@@ -2625,6 +2706,13 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             }
         }
 
+        if (_disposed)
+        {
+            return;
+        }
+
+        cts.Token.ThrowIfCancellationRequested();
+
         // 必须复制文件格式能力标志（提醒/关联纸片），否则 Markdown 更新会按
         // “文件中没有”清除本地关联与提醒。
         var filtered = _importPlan.WithPapers(selected);
@@ -2635,14 +2723,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 .Select(p => p.Source.Content));
         var embeddedImageCount = selected.Sum(p => p.Images.Count);
 
-        using var cts = new CancellationTokenSource();
-        _operation = cts;
         string summary;
         try
         {
             var progress = new Progress<string>(SetStatus);
             var result = await new ImportService(_gateway, progress)
-                .ImportAsync(filtered, _settings, cts.Token);
+                .ImportAsync(filtered, operationSettings, cts.Token);
 
             if (unchangedPapers.Count > 0)
             {
@@ -2708,6 +2794,13 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             if (_identity.ConsumeChanges())
             {
                 SaveWorkspaceState();
+            }
+
+            if (_stateSaveFailed)
+            {
+                result.Warnings.Add(
+                    "导入映射未能保存到本地状态（磁盘空间不足或文件被占用）；" +
+                    "重启 PaperTodo 后可能需要重新导入以避免生成重复纸片。");
             }
 
             if (!_disposed)
@@ -2865,7 +2958,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
         catch (PaperTodoPluginException ex)
         {
-            SetStatus($"操作被拒绝：{ex.Code} · {ex.Message}");
+            SetStatus($"操作被拒绝：{HostErrorText.Describe(ex)}");
         }
         catch (Exception ex)
         {
@@ -2927,6 +3020,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         {
             // 状态保存失败不应中断已完成的导入/导出；
             // 映射同时会推送到 Runtime，下一次成功保存时会补上纸片级镜像。
+            // 但要记住失败，在操作结果里提示，否则重启后映射丢失会被当成“重复纸片”问题。
+            _stateSaveFailed = true;
         }
     }
 
@@ -3091,11 +3186,8 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         return Directory.Exists(documents) ? documents : null;
     }
 
-    private static string DescribeError(PaperTodoPluginException ex) => ex.Code switch
-    {
-        "permission_denied" => $"缺少权限：{ex.Message}",
-        "session_closed" => "当前纸片会话已失效。",
-        "data_reload_in_progress" => "正在重载数据，请稍后重试。",
-        _ => $"读取失败（{ex.Code}）：{ex.Message}"
-    };
+    private static string DescribeError(PaperTodoPluginException ex) =>
+        ex.Code == "permission_denied"
+            ? $"缺少权限：{ex.Message}"
+            : HostErrorText.Describe(ex);
 }
