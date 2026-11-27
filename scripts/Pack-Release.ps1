@@ -45,6 +45,15 @@ if ($csprojVersion -ne $version) {
     throw "版本不一致：plugin.json=$version，csproj=$csprojVersion。请先统一版本号。"
 }
 
+# CHANGELOG 必须包含当前版本小节，避免发布说明漏更。
+$changelogPath = Join-Path $repoRoot "CHANGELOG.md"
+if (Test-Path -LiteralPath $changelogPath -PathType Leaf) {
+    $changelog = Get-Content -LiteralPath $changelogPath -Raw -Encoding UTF8
+    if ($changelog -notmatch ("(?m)^##\s+" + [regex]::Escape($version) + "(\s|$)")) {
+        throw "CHANGELOG.md 缺少 $version 的更新小节，请先补充发布说明。"
+    }
+}
+
 $publishDir = Join-Path $OutputRoot "publish"
 $pluginDir = Join-Path $OutputRoot $pluginId
 $zipPath = Join-Path $OutputRoot "$pluginId-$version-$Runtime.zip"
@@ -57,6 +66,13 @@ foreach ($path in @($publishDir, $pluginDir, $zipPath)) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
+
+# 真正的干净构建：仅删除 dist 不足以防止增量编译复用旧的对象文件。
+Write-Host "清理 Release 中间产物…"
+& dotnet clean $projectPath -c Release --nologo -v quiet
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet clean 失败（退出码 $LASTEXITCODE）。"
+}
 
 Write-Host "发布 $pluginId $version ($Runtime)…"
 & dotnet publish $projectPath `
@@ -118,7 +134,18 @@ finally {
 }
 $hash = -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
 
+# 校验值必须落盘：下载页与自动化发布都需要直接消费，而不是从控制台复制。
+# 使用 .NET 写入不带 BOM 的 ASCII，保持 sha256 文件格式通用。
+$shaPath = "$zipPath.sha256"
+[System.IO.File]::WriteAllText($shaPath, "$hash  $([System.IO.Path]::GetFileName($zipPath))`n")
+
+# 中间 publish 目录含宿主契约 DLL，与成品目录同处 dist 容易被误发布，打包完成后清除。
+if (Test-Path -LiteralPath $publishDir) {
+    Remove-Item -LiteralPath $publishDir -Recurse -Force
+}
+
 Write-Host ""
 Write-Host "成品目录：$pluginDir"
 Write-Host "Release 包：$zipPath"
+Write-Host "SHA256 文件：$shaPath"
 Write-Host "SHA256：$hash"
