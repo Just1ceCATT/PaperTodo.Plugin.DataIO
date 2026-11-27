@@ -48,7 +48,7 @@ DataIO 是手动的数据导入导出工具，不是云同步、自动同步或�
 
 1. 从 GitHub Releases 下载最新版本。
 2. **先从托盘退出 PaperTodo**。
-3. 把 Release 压缩包里的 `papertodo.dataio.native` 文件夹整体放到 PaperTodo 程序目录下的 `plugins\` 中，结构应类似：
+3. 把 Release 压缩包里的 `papertodo.dataio.native` 文件夹解压后整体放到 PaperTodo 程序目录下的 `plugins\` 中，结构应类似：
 
    ```text
    PaperTodo/
