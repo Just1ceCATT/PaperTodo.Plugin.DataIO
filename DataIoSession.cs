@@ -2269,7 +2269,18 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                     ? ImportPlanParser.ParseFile(dialog.FileName)
                     : ImportPlanParser.ParseCoreBackup(dialog.FileName, selectedWorkspaces));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (OutOfMemoryException)
+        {
+            // 极端畸形文件仍可能在解析阶段耗尽内存。此时宿主进程尚未被强制终止，
+            // 必须收尾并明确告知用户，而不是让异常逃逸后崩溃、丢掉未保存的纸片内容。
+            var retained = _importFilePath is null ? "" : "\n\n仍保留之前选择的文件。";
+            var message = "文件内容过多，内存不足，无法读取该导入文件。请拆分后再导入。";
+            SetStatus(message);
+            _view.ShowAlertDialog("无法读取文件", message + retained);
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidDataException or ImportFileRejectedException)
         {
             var message = $"读取导入文件失败：{ex.Message}";
             var retained = _importFilePath is null ? "" : "\n\n仍保留之前选择的文件。";

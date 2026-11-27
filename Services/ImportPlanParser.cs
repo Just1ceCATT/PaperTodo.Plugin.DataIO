@@ -7,6 +7,15 @@ using PaperTodo.Plugin;
 
 namespace PaperTodo.Plugin.DataIo;
 
+/// <summary>导入文件本身可读但内容不被接受（超出上限、编码不符等）；消息可直接展示给用户。</summary>
+internal class ImportFileRejectedException(string message) : Exception(message);
+
+/// <summary>导入文件超出解析上限（行数、纸片数等）时抛出。</summary>
+internal sealed class ImportFileLimitException(string message) : ImportFileRejectedException(message);
+
+/// <summary>导入文件不是受支持的文本编码时抛出。</summary>
+internal sealed class ImportFileEncodingException(string message) : ImportFileRejectedException(message);
+
 /// <summary>
 /// 读取并校验导入文件。整个过程只处理内存数据，不接触 PaperTodo API，可安全地在后台线程运行。
 /// </summary>
@@ -252,6 +261,11 @@ internal static class ImportPlanParser
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             return ParseArchive(archive, path);
         }
+        catch (ImportFileRejectedException ex)
+        {
+            // 压缩包本身完好，只是内容超出上限或编码不符：必须展示真实原因，不能报“已损坏”。
+            return Fatal(ex.Message);
+        }
         catch (InvalidDataException)
         {
             return Fatal("压缩包已损坏或不是有效的 zip 文件。");
@@ -473,7 +487,8 @@ internal static class ImportPlanParser
             error = ex.Message;
             return false;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidDataException or ImportFileRejectedException)
         {
             error = $"读取备份压缩包失败：{ex.Message}";
             return false;
@@ -520,6 +535,10 @@ internal static class ImportPlanParser
             }
 
             return ParseCoreBackup(chosen);
+        }
+        catch (ImportFileRejectedException ex)
+        {
+            return Fatal(ex.Message);
         }
         catch (InvalidDataException)
         {
@@ -739,13 +758,9 @@ internal static class ImportPlanParser
             return null;
         }
 
-        // 自动识别 UTF-8 / UTF-16 LE / UTF-16 BE 的 BOM。
-        // 压缩包内的 Markdown 可能来自其它编辑器，按 UTF-8 硬解会静默变成乱码。
-        using var reader = new StreamReader(
-            new MemoryStream(bytes, writable: false),
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            detectEncodingFromByteOrderMarks: true);
-        return reader.ReadToEnd();
+        // 自动识别 BOM；没有 BOM 时按严格 UTF-8 解码。
+        // 压缩包内的 Markdown 可能来自其它编辑器，宽松解码会静默把 GBK 等编码变成乱码。
+        return JsonFiles.DecodeText(bytes, entry.FullName);
     }
 
     /// <summary>
@@ -1121,6 +1136,25 @@ internal static class ImportPlanParser
 
     public static ImportPlan Parse(string json)
     {
+        // 在构建 DOM 之前排除数组/标量根节点：64 MiB 的 JSON 数组解析成 DOM 需要约 900 MiB 内存，
+        // 而这类内容必然不是可导入的数据文件。允许 "/" 开头，保留 JSON 注释语法。
+        var firstMeaningful = 0;
+        while (firstMeaningful < json.Length &&
+               (char.IsWhiteSpace(json[firstMeaningful]) || json[firstMeaningful] == '\uFEFF'))
+        {
+            firstMeaningful++;
+        }
+
+        if (firstMeaningful >= json.Length)
+        {
+            return new ImportPlan { FatalError = "文件内容为空。" };
+        }
+
+        if (json[firstMeaningful] is not ('{' or '/'))
+        {
+            return UnsupportedPlan();
+        }
+
         JsonDocument document;
         try
         {

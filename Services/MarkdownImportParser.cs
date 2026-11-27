@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace PaperTodo.Plugin.DataIo;
@@ -12,6 +13,12 @@ namespace PaperTodo.Plugin.DataIo;
 /// </summary>
 internal static partial class MarkdownImportParser
 {
+    /// <summary>
+    /// 解析前允许的最大行数。64 MiB 文件若全是换行会被 Split 拆成数千万个字符串，
+    /// 单个文件就能占用近 1 GiB 内存；正常导入（200 张、单张 10 万字符）远达不到该上限。
+    /// </summary>
+    internal const int MaxMarkdownLines = 2_000_000;
+
     /// <summary>正文不可读取的笔记使用的标记，避免把占位文案当作真正文导入。</summary>
     internal const string ContentUnavailableMarker = "papertodo-dataio:content-unavailable";
 
@@ -39,6 +46,15 @@ internal static partial class MarkdownImportParser
 
     public static ExportDocument Parse(string markdown, string filePath)
     {
+        // 在 Split 之前限制行数：否则畸形文件会在分配阶段耗尽内存。
+        var lineCount = CountLines(markdown);
+        if (lineCount > MaxMarkdownLines)
+        {
+            throw new ImportFileLimitException(
+                $"Markdown 文件包含 {lineCount} 行，超过 {MaxMarkdownLines} 行的解析上限；" +
+                "请拆分后再导入。");
+        }
+
         var lines = MarkdownNormalize.NormalizeLineEndings(markdown).Split('\n');
 
         var markers = new List<(int Line, string Type, string SourceId, bool V2)>();
@@ -80,6 +96,15 @@ internal static partial class MarkdownImportParser
                     match.Groups[2].Success ? match.Groups[2].Value : "",
                     trimmed.Contains("-dataio:v2", StringComparison.OrdinalIgnoreCase)));
             }
+        }
+
+        // 分节标记已全部扫出：在构建纸片对象之前拒绝超限文件，
+        // 避免为几十万张必然被导入端跳过的纸片分配对象。
+        if (markers.Count > ImportPlanParser.MaxPapers)
+        {
+            throw new ImportFileLimitException(
+                $"Markdown 文件包含 {markers.Count} 张纸片，超过单次导入上限 " +
+                $"{ImportPlanParser.MaxPapers} 张；请拆分后再导入。");
         }
 
         var papers = new List<ExportPaper>();
@@ -273,18 +298,32 @@ internal static partial class MarkdownImportParser
         var todos = new List<ExportTodo>();
         ExportTodo? current = null;
 
+        // 续行必须累积到 StringBuilder：`text += ...` 每读一行都复制整段已累积文本，
+        // 上千万行续行会退化为 O(n²)（实测 20 万行约 7 秒），且发生在长度上限检查之前。
+        StringBuilder? currentText = null;
+
+        void Flush()
+        {
+            if (current is not null && currentText is not null)
+            {
+                current.Text = currentText.ToString();
+            }
+        }
+
         for (var index = start; index < end; index++)
         {
             var line = lines[index];
             var match = CheckboxPattern().Match(line);
             if (match.Success)
             {
+                Flush();
                 current = new ExportTodo
                 {
                     Text = Unescape(match.Groups[2].Value),
                     Done = match.Groups[1].Value is "x" or "X",
                     Order = todos.Count
                 };
+                currentText = null;
                 todos.Add(current);
                 continue;
             }
@@ -292,11 +331,30 @@ internal static partial class MarkdownImportParser
             // 续行缩进 4 个空格（或 1 个 Tab），与 PaperTodo 原生导出保持一致。
             if (current != null && IsContinuation(line))
             {
-                current.Text += "\n" + Unescape(line[line[0] == '\t' ? 1.. : 4..]);
+                currentText ??= new StringBuilder(current.Text);
+                currentText
+                    .Append('\n')
+                    .Append(Unescape(line[line[0] == '\t' ? 1.. : 4..]));
             }
         }
 
+        Flush();
         return todos;
+    }
+
+    /// <summary>统计换行数量；不分配任何字符串数组。</summary>
+    internal static int CountLines(string text)
+    {
+        var lines = 1;
+        foreach (var character in text)
+        {
+            if (character == '\n')
+            {
+                lines++;
+            }
+        }
+
+        return lines;
     }
 
     private static bool IsContinuation(string line) =>

@@ -11,6 +11,11 @@ internal static class JsonFiles
 
     private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
 
+    /// <summary>严格 UTF-8：遇到非法字节直接失败，不能静默替换成 U+FFFD 把乱码当成正文导入。</summary>
+    private static readonly UTF8Encoding StrictUtf8 = new(
+        encoderShouldEmitUTF8Identifier: false,
+        throwOnInvalidBytes: true);
+
     public static string ReadAllText(string path)
     {
         var info = new FileInfo(path);
@@ -24,8 +29,55 @@ internal static class JsonFiles
             throw new InvalidDataException("导入文件超过 64 MiB 上限。");
         }
 
-        // File.ReadAllText 会自动识别并跳过 UTF-8 BOM。
-        return File.ReadAllText(path, Encoding.UTF8);
+        return DecodeText(File.ReadAllBytes(path), Path.GetFileName(path));
+    }
+
+    /// <summary>
+    /// 按 BOM 识别 UTF-8/UTF-16/UTF-32；没有 BOM 时按严格 UTF-8 解码。
+    /// 旧实现使用宽松 UTF-8，GBK/Big5 文件会被静默解码成乱码，随后把乱码当作真实内容导入，
+    /// 甚至覆盖已有的本地纸片；这里改为明确报错，提示用户改用 UTF-8 保存。
+    /// </summary>
+    internal static string DecodeText(ReadOnlySpan<byte> bytes, string name)
+    {
+        if (bytes.StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }))
+        {
+            return DecodeStrictUtf8(bytes[3..], name);
+        }
+
+        if (bytes.StartsWith(new byte[] { 0xFF, 0xFE, 0x00, 0x00 }))
+        {
+            return new UTF32Encoding(bigEndian: false, byteOrderMark: false).GetString(bytes[4..]);
+        }
+
+        if (bytes.StartsWith(new byte[] { 0x00, 0x00, 0xFE, 0xFF }))
+        {
+            return new UTF32Encoding(bigEndian: true, byteOrderMark: false).GetString(bytes[4..]);
+        }
+
+        if (bytes.StartsWith(new byte[] { 0xFF, 0xFE }))
+        {
+            return new UnicodeEncoding(bigEndian: false, byteOrderMark: false).GetString(bytes[2..]);
+        }
+
+        if (bytes.StartsWith(new byte[] { 0xFE, 0xFF }))
+        {
+            return new UnicodeEncoding(bigEndian: true, byteOrderMark: false).GetString(bytes[2..]);
+        }
+
+        return DecodeStrictUtf8(bytes, name);
+    }
+
+    private static string DecodeStrictUtf8(ReadOnlySpan<byte> bytes, string name)
+    {
+        try
+        {
+            return StrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new ImportFileEncodingException(
+                $"文件“{name}”不是 UTF-8 编码，无法读取；请用 UTF-8 编码重新保存后再导入。");
+        }
     }
 
     /// <summary>
