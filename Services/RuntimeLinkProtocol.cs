@@ -15,6 +15,8 @@ internal static class RuntimeLinkProtocol
     public const string MergeType = "workspace.merge";
     /// <summary>映射/历史变化后的权威替换：Runtime 以整份快照为准（显式删除语义）。</summary>
     public const string ReplaceType = "workspace.replace";
+    /// <summary>Runtime 确认替换已保存后的回执：Body 收到后才删除待推送恢复日志。</summary>
+    public const string ReplaceAckType = "workspace.replace.ack";
     public const string SnapshotType = "workspace.snapshot";
 
     private static readonly JsonSerializerOptions Options = new()
@@ -34,9 +36,19 @@ internal static class RuntimeLinkProtocol
             },
             Options);
 
-    public static JsonElement CreateReplace(RuntimeWorkspaceState state) =>
+    public static JsonElement CreateReplace(long requestId, RuntimeWorkspaceState state) =>
         JsonSerializer.SerializeToElement(
-            new RuntimeWorkspaceMessage { Type = ReplaceType, Workspace = state.Clone() },
+            new RuntimeWorkspaceMessage
+            {
+                Type = ReplaceType,
+                RequestId = requestId,
+                Workspace = state.Clone()
+            },
+            Options);
+
+    public static JsonElement CreateReplaceAck(long requestId) =>
+        JsonSerializer.SerializeToElement(
+            new RuntimeWorkspaceMessage { Type = ReplaceAckType, RequestId = requestId },
             Options);
 
     public static JsonElement CreateSnapshot(

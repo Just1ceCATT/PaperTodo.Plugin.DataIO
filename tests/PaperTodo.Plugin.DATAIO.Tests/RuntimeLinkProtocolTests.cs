@@ -35,6 +35,26 @@ public sealed class RuntimeLinkProtocolTests
     }
 
     [Fact]
+    public void Replace_carries_request_id_and_ack_round_trips()
+    {
+        var replace = RuntimeLinkProtocol.CreateReplace(42, new RuntimeWorkspaceState());
+
+        Assert.True(RuntimeLinkProtocol.TryRead(
+            replace, out var type, out var requestId, out var workspace, out _));
+        Assert.Equal(RuntimeLinkProtocol.ReplaceType, type);
+        Assert.Equal(42, requestId);
+        Assert.NotNull(workspace);
+
+        var ack = RuntimeLinkProtocol.CreateReplaceAck(42);
+
+        Assert.True(RuntimeLinkProtocol.TryRead(
+            ack, out var ackType, out var ackRequestId, out var ackWorkspace, out _));
+        Assert.Equal(RuntimeLinkProtocol.ReplaceAckType, ackType);
+        Assert.Equal(42, ackRequestId);
+        Assert.Null(ackWorkspace);
+    }
+
+    [Fact]
     public void Merge_prefers_newer_import_time()
     {
         var target = new RuntimeWorkspaceState

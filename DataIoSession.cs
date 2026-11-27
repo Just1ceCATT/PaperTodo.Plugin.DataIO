@@ -117,6 +117,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本次会话有尚未推送到 Runtime 的工作区状态变化。</summary>
     private bool _linkPushPending;
 
+    /// <summary>Replace 请求序号；Runtime 用它回执，Body 只认最新一次请求。</summary>
+    private long _replaceRequestId;
+
+    /// <summary>正在等待 Runtime 保存确认的 Replace 序号；0 表示没有待确认请求。</summary>
+    private long _awaitingReplaceAck;
+
     /// <summary>最近一次状态落盘失败（磁盘满、文件被占用等），需要在结果中提示用户。</summary>
     private bool _stateSaveFailed;
 
@@ -250,14 +256,42 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 out var type,
                 out var requestId,
                 out var workspace,
-                out var corrupt) ||
-            !string.Equals(type, RuntimeLinkProtocol.SnapshotType, StringComparison.Ordinal))
+                out var corrupt))
+        {
+            return false;
+        }
+
+        if (string.Equals(type, RuntimeLinkProtocol.ReplaceAckType, StringComparison.Ordinal))
+        {
+            CompleteReplaceAck(requestId);
+            return true;
+        }
+
+        if (!string.Equals(type, RuntimeLinkProtocol.SnapshotType, StringComparison.Ordinal))
         {
             return false;
         }
 
         ApplyRuntimeSnapshot(requestId, workspace, corrupt);
         return true;
+    }
+
+    /// <summary>
+    /// Runtime 确认替换已保存：此时才能删除待推送日志。
+    /// Post 只代表消息已投递，保存失败时不会有回执，日志必须保留供下次启动恢复。
+    /// </summary>
+    private void CompleteReplaceAck(long requestId)
+    {
+        if (requestId <= 0 ||
+            requestId != Interlocked.Read(ref _awaitingReplaceAck))
+        {
+            // 迟到或过期的回执：更新的请求仍未确认，不能删除日志。
+            return;
+        }
+
+        Interlocked.Exchange(ref _awaitingReplaceAck, 0);
+        _linkPushPending = false;
+        RuntimeLinkProtocol.DeletePendingState(_workspaceFileName);
     }
 
     public void RefreshFromModel() => ScheduleRefresh();
@@ -1130,15 +1164,20 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         try
         {
+            var requestId = Interlocked.Increment(ref _replaceRequestId);
             if (!_context.Runtime.Post(
-                    RuntimeLinkProtocol.CreateReplace(RuntimeLinkProtocol.FromState(_state))))
+                    RuntimeLinkProtocol.CreateReplace(requestId, RuntimeLinkProtocol.FromState(_state))))
             {
                 MarkPushPending();
                 return;
             }
 
-            _linkPushPending = false;
-            RuntimeLinkProtocol.DeletePendingState(_workspaceFileName);
+            // 投递成功不等于落盘成功：只有存在待推送日志时才需要等待 Runtime 回执，
+            // 收到回执后再删除日志；保存失败或超时则保留日志供下次启动合并。
+            if (_linkPushPending)
+            {
+                Interlocked.Exchange(ref _awaitingReplaceAck, requestId);
+            }
         }
         catch (Exception)
         {

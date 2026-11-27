@@ -274,8 +274,21 @@ internal sealed class DataIoRuntime : IPaperPluginRuntime
                     SaveLocked();
                 }
 
+                // 只有保存成功才回执。保存抛异常时不会走到这里，
+                // Body 会保留待推送日志，下次启动继续合并，避免“投递成功即删除”丢失映射。
+                ReplyReplaceAck(paperId, requestId);
                 break;
         }
+    }
+
+    private void ReplyReplaceAck(string paperId, long requestId)
+    {
+        if (requestId <= 0)
+        {
+            return;
+        }
+
+        _context.Papers.PostToBody(paperId, RuntimeLinkProtocol.CreateReplaceAck(requestId));
     }
 
     private void ReplySnapshot(string paperId, long requestId)

@@ -42,7 +42,7 @@ public sealed class DataIoRuntimeTests
             Workspace(
                 ("s1", "p1", "2026-11-24T10:00:00+08:00"),
                 ("s2", "p2", "2026-11-24T10:00:00+08:00"))));
-        papers.Raise("tool", RuntimeLinkProtocol.CreateReplace(new RuntimeWorkspaceState
+        papers.Raise("tool", RuntimeLinkProtocol.CreateReplace(7, new RuntimeWorkspaceState
         {
             ImportLinks = new Dictionary<string, ImportIdentityLink>(StringComparer.Ordinal)
             {
@@ -63,6 +63,15 @@ public sealed class DataIoRuntimeTests
         Assert.False(saved.ImportLinks.ContainsKey("s2"));
         Assert.Single(saved.History);
         Assert.Equal(@"D:\import", saved.LastImportDirectory);
+
+        // 保存成功后必须回执，Body 才能安全删除待推送日志。
+        var ack = Assert.Single(papers.Posted, posted =>
+            RuntimeLinkProtocol.TryRead(
+                posted.Message, out var type, out var requestId, out _, out _) &&
+            type == RuntimeLinkProtocol.ReplaceAckType);
+        Assert.True(RuntimeLinkProtocol.TryRead(
+            ack.Message, out _, out var ackRequestId, out _, out _));
+        Assert.Equal(7, ackRequestId);
     }
 
     [Fact]
