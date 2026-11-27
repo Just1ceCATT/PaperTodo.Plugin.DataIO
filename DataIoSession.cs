@@ -2765,7 +2765,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                     $"{unchangedPapers.Count} 张笔记内容与本地一致，已自动跳过。");
             }
 
-            result.SkippedPapers = skippedTitles.Count;
+            // 累加而不是覆盖：ImportService 已把解析阶段跳过的纸张计入 SkippedPapers，
+            // 这里再加上更新预览中跳过的纸张，否则结果里的“跳过”会少于实际列出的数量。
+            result.SkippedPapers += skippedTitles.Count;
             result.SkippedTitles.AddRange(skippedTitles);
 
             if (embeddedImageCount > 0)

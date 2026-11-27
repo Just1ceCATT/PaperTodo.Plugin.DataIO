@@ -81,6 +81,7 @@ internal sealed class ImportService
                 {
                     // 解析阶段已判定无法导入（第三方正文、正文缺失等）：绝不能再创建空纸片。
                     result.SkippedTitles.Add($"{DisplayTitle(importPaper)}（{skipReason}）");
+                    result.SkippedPapers++;
                     continue;
                 }
 
@@ -88,6 +89,7 @@ internal sealed class ImportService
                 {
                     // 已存在映射但本次读不到本地内容：按新建会产生重复纸片，只能跳过。
                     result.SkippedTitles.Add($"{DisplayTitle(importPaper)}（{updateSkipReason}）");
+                    result.SkippedPapers++;
                     continue;
                 }
 
