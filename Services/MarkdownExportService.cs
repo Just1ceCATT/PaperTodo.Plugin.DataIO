@@ -52,6 +52,23 @@ internal static class MarkdownExportService
             }
 
             builder.AppendLine(" -->");
+
+            // 截断标记必须写进 Markdown：否则回导更新时会用截断后的正文覆盖本地，
+            // 或在开启“删除文件外待办”时删掉被截掉的条目。
+            if (paper.ContentTruncated)
+            {
+                builder.Append("<!-- ")
+                    .Append(MarkdownImportParser.ContentTruncatedMarker)
+                    .AppendLine(" -->");
+            }
+
+            if (paper.TodosTruncated)
+            {
+                builder.Append("<!-- ")
+                    .Append(MarkdownImportParser.TodosTruncatedMarker)
+                    .AppendLine(" -->");
+            }
+
             AppendTitle(builder, paper.Title);
             if (isTodo)
             {

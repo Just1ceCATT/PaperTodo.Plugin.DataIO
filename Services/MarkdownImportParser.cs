@@ -25,6 +25,12 @@ internal static partial class MarkdownImportParser
     /// <summary>标题为空的纸片使用的标记；没有它时导入端会用文件名兜底标题。</summary>
     internal const string EmptyTitleMarker = "papertodo-dataio:title-empty";
 
+    /// <summary>正文在导出时被截断的标记；带此标记的纸片不能用于更新。</summary>
+    internal const string ContentTruncatedMarker = "papertodo-dataio:content-truncated";
+
+    /// <summary>待办在导出时被截断（数量或单条长度超限）的标记；带此标记的纸片不能用于更新。</summary>
+    internal const string TodosTruncatedMarker = "papertodo-dataio:todos-truncated";
+
     /// <summary>
     /// 导出时为未闭合代码围栏补的闭合标记；导入时据此移除人工补上的围栏行，
     /// 保持正文与导出前一致，同时避免围栏吞掉下一张纸片。
@@ -159,18 +165,41 @@ internal static partial class MarkdownImportParser
     {
         var bodyStart = start;
         string? title = null;
+        var contentTruncated = false;
+        var todosTruncated = false;
+
+        // 导出端写在标题前的结构标记：空标题、正文/待办截断。
         while (bodyStart < end && string.IsNullOrWhiteSpace(lines[bodyStart]))
         {
             bodyStart++;
         }
 
-        if (bodyStart < end && IsEmptyTitleMarker(lines[bodyStart]))
+        while (bodyStart < end)
         {
-            // 明确标记的空标题：保留为空，而不是用文件名兜底。
-            title = "";
+            if (IsEmptyTitleMarker(lines[bodyStart]))
+            {
+                // 明确标记的空标题：保留为空，而不是用文件名兜底。
+                title = "";
+            }
+            else if (IsContentTruncatedMarker(lines[bodyStart]))
+            {
+                contentTruncated = true;
+            }
+            else if (IsTodosTruncatedMarker(lines[bodyStart]))
+            {
+                todosTruncated = true;
+            }
+            else
+            {
+                break;
+            }
+
             bodyStart++;
         }
-        else if (bodyStart < end && lines[bodyStart].StartsWith("# ", StringComparison.Ordinal))
+
+        if (title is null &&
+            bodyStart < end &&
+            lines[bodyStart].StartsWith("# ", StringComparison.Ordinal))
         {
             title = lines[bodyStart][2..].Trim();
             bodyStart++;
@@ -191,7 +220,9 @@ internal static partial class MarkdownImportParser
             Type = type,
             // 文件里没有标题行时用文件名兜底；显式空标题标记保持为空。
             Title = title ?? FallbackTitle(filePath, paperIndex),
-            Show = true
+            Show = true,
+            ContentTruncated = contentTruncated,
+            TodosTruncated = todosTruncated
         };
 
         if (type == "todo")
@@ -392,6 +423,22 @@ internal static partial class MarkdownImportParser
                trimmed.Contains(FenceClosedMarker, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>判断一行是否是“正文被截断”标记。</summary>
+    internal static bool IsContentTruncatedMarker(string line) =>
+        IsMarkerLine(line, ContentTruncatedMarker);
+
+    /// <summary>判断一行是否是“待办被截断”标记。</summary>
+    internal static bool IsTodosTruncatedMarker(string line) =>
+        IsMarkerLine(line, TodosTruncatedMarker);
+
+    private static bool IsMarkerLine(string line, string marker)
+    {
+        var trimmed = line.Trim();
+        return trimmed.StartsWith("<!--", StringComparison.Ordinal) &&
+               trimmed.EndsWith("-->", StringComparison.Ordinal) &&
+               trimmed.Contains(marker, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsFenceLine(string line)
     {
         var trimmed = line.Trim();
@@ -462,12 +509,14 @@ internal static partial class MarkdownImportParser
         return false;
     }
 
-    /// <summary>行是否为四类插件标记之一（导出端转义判断与导入端还原共用）。</summary>
+    /// <summary>行是否为插件结构标记之一（导出端转义判断与导入端还原共用）。</summary>
     internal static bool IsAnyNoteMarkerLine(string line) =>
         IsSectionMarkerLine(line) ||
         IsContentUnavailableMarker(line) ||
         IsEmptyTitleMarker(line) ||
-        IsFenceClosedMarker(line);
+        IsFenceClosedMarker(line) ||
+        IsContentTruncatedMarker(line) ||
+        IsTodosTruncatedMarker(line);
 
     /// <summary>去掉导出时加到标记行开头的反斜杠。</summary>
     private static string UnescapeNoteMarkerLine(string line)

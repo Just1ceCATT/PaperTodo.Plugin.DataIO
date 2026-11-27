@@ -375,4 +375,40 @@ public sealed class MarkdownRoundTripTests
             }
         }
     }
+
+    [Fact]
+    public void Truncation_markers_round_trip_through_markdown()
+    {
+        // Markdown 曾被截断时必须把标记写进文件，否则回导更新会覆盖/删除本地内容。
+        var plan = RoundTrip(new ExportPaper
+        {
+            SourceId = "s-trunc",
+            Type = "todo",
+            Title = "截断待办",
+            TodosTruncated = true,
+            Todos = [new ExportTodo { Text = "一条", Order = 0 }]
+        });
+
+        var paper = Assert.Single(plan.Papers);
+        Assert.True(paper.Source.TodosTruncated);
+        Assert.False(paper.Source.ContentTruncated);
+    }
+
+    [Fact]
+    public void Content_truncation_marker_round_trips_through_markdown()
+    {
+        var plan = RoundTrip(new ExportPaper
+        {
+            SourceId = "s-trunc-note",
+            Type = "note",
+            Title = "截断笔记",
+            ContentAvailable = true,
+            ContentTruncated = true,
+            Content = "正文"
+        });
+
+        var paper = Assert.Single(plan.Papers);
+        Assert.True(paper.Source.ContentTruncated);
+        Assert.Equal("正文", paper.Source.Content);
+    }
 }
