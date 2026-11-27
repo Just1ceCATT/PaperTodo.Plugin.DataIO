@@ -134,6 +134,12 @@ internal sealed class ImportPaper
     /// </summary>
     public bool TargetImagesAtRisk { get; set; }
 
+    /// <summary>
+    /// 非空表示文件中的这张纸片在导出时被截断（待办数量/单条文本/正文超限），
+    /// 不能用它更新本地纸片，否则会误删或重复本地内容。
+    /// </summary>
+    public string? UpdateBlockedReason { get; set; }
+
     /// <summary>本地现有内容与导入内容的差异，供更新预览展示。</summary>
     public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
 

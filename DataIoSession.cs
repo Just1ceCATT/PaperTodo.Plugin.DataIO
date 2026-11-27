@@ -1496,6 +1496,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             warnings.Add("部分图片无法写回，更新时会移除对应引用");
         }
 
+        if (paper.UpdateBlockedReason is { } blocked)
+        {
+            warnings.Add($"{blocked}；只能选择“新增”");
+        }
+
         if (!selectable)
         {
             warnings.Add("缺少 papers.create 权限，无法新建");
@@ -2327,6 +2332,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             paper.TargetLocallyModified = false;
             paper.TargetLocalStateUnknown = false;
             paper.TargetImagesAtRisk = false;
+            paper.UpdateBlockedReason = null;
             paper.UpdateDiff = null;
             paper.UpdateHasChanges = false;
             paper.UpdateHasMetaChanges = false;
@@ -2551,6 +2557,17 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                         kept.Add(paper);
                         break;
                     default:
+                        // 文件中的纸片在导出时被截断：更新会被导入服务拒绝，
+                        // 这里直接按跳过处理，避免用户“全部更新”后得到一批失败项。
+                        if (paper.UpdateBlockedReason is not null)
+                        {
+                            skippedTitles.Add(
+                                (string.IsNullOrWhiteSpace(paper.Source.Title)
+                                    ? "（无标题）"
+                                    : paper.Source.Title) + "（文件在导出时被截断）");
+                            break;
+                        }
+
                         if (previewSnapshot.TryGetValue(paper, out var before) &&
                             (!string.Equals(before.UpdateTargetId, paper.UpdateTargetId, StringComparison.Ordinal) ||
                              !string.Equals(before.UpdateTargetFingerprint, paper.UpdateTargetFingerprint, StringComparison.Ordinal)))

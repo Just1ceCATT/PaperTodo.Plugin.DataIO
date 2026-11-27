@@ -88,6 +88,19 @@ internal sealed class ExportPaper
     public List<ExportTodo>? Todos { get; set; }
     public bool? ContentAvailable { get; set; }
     public string? Content { get; set; }
+
+    /// <summary>
+    /// 待办在导出时被截断（超过单张上限或单条文本过长）。这类文件不能作为权威数据
+    /// 用于“更新并删除文件中不存在的待办”，否则会把本地被截掉的待办误删。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool TodosTruncated { get; set; }
+
+    /// <summary>
+    /// 笔记正文在导出时被截断。更新会用截断后的正文覆盖本地内容，必须阻止。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ContentTruncated { get; set; }
 }
 
 internal sealed class ExportTodo

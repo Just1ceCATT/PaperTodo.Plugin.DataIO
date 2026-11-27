@@ -239,6 +239,14 @@ internal sealed class ImportService
         var source = importPaper.Source;
         var type = (source.Type ?? "").Trim().ToLowerInvariant();
 
+        // 截断的文件不是权威数据：允许新建，但绝不能用来覆盖本地纸片。
+        if (importPaper.UpdateBlockedReason is { } blocked)
+        {
+            throw new PaperTodoPluginException(
+                "truncated_source",
+                $"{blocked}，已跳过该纸片的更新；请选择“新增”或使用完整的导出文件。");
+        }
+
         var target = await _gateway.OnUiAsync(
             () => _gateway.Context.Workspace.GetPaper(targetId));
         if (target == null ||

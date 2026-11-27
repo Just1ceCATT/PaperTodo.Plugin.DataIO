@@ -282,24 +282,43 @@ internal sealed class ExportService
             }
 
             var todos = todosByPaper.TryGetValue(paper.Id, out var stored) ? stored : [];
+            var truncated = false;
             if (todos.Length > ImportPlanParser.MaxTodosPerPaper)
             {
-                // 导入端会整张跳过超过上限的待办纸片；导出端必须提前截断并明确告知，
+                // 导入端只接受单张纸片 200 条待办；导出端必须提前截断并明确告知，
                 // 否则备份看似成功，恢复时整张纸片（含标题）会被丢弃。
                 warnings.Add(
                     $"纸片“{DisplayTitle(paper.Title)}”有 {todos.Length} 条待办，" +
                     $"超过单张纸片 {ImportPlanParser.MaxTodosPerPaper} 条的可导入上限；" +
                     $"备份中只保留前 {ImportPlanParser.MaxTodosPerPaper} 条。");
-                exportPaper.Todos = todos
-                    .Take(ImportPlanParser.MaxTodosPerPaper)
-                    .Select(MapTodo)
-                    .ToList();
-            }
-            else
-            {
-                exportPaper.Todos = todos.Select(MapTodo).ToList();
+                todos = todos.Take(ImportPlanParser.MaxTodosPerPaper).ToArray();
+                truncated = true;
             }
 
+            var mapped = new List<ExportTodo>(todos.Length);
+            var overlong = 0;
+            foreach (var todo in todos)
+            {
+                var text = todo.Text ?? "";
+                if (text.Length > ImportPlanParser.MaxTodoTextChars)
+                {
+                    text = TruncateChars(text, ImportPlanParser.MaxTodoTextChars);
+                    overlong++;
+                }
+
+                mapped.Add(MapTodo(todo, text));
+            }
+
+            if (overlong > 0)
+            {
+                warnings.Add(
+                    $"纸片“{DisplayTitle(paper.Title)}”有 {overlong} 条待办超过 " +
+                    $"{ImportPlanParser.MaxTodoTextChars} 字符上限，备份中已截断。");
+                truncated = true;
+            }
+
+            exportPaper.Todos = mapped;
+            exportPaper.TodosTruncated = truncated;
             return exportPaper;
         }
 
@@ -315,6 +334,19 @@ internal sealed class ExportService
                 var note = await _gateway.OnUiAsync(() => _gateway.Context.Workspace.GetNote(paper.Id));
                 exportPaper.ContentAvailable = note?.ContentAvailable ?? false;
                 exportPaper.Content = note?.Content ?? "";
+
+                // 导入端会跳过超过 10 万字符的笔记；导出端绝不能输出“会被自己拒绝”的备份，
+                // 也不能静默截断——标记后导入端会禁止用该文件更新原笔记。
+                if (exportPaper.Content.Length > ImportPlanParser.MaxNoteChars)
+                {
+                    var original = exportPaper.Content.Length;
+                    exportPaper.Content = TruncateChars(exportPaper.Content, ImportPlanParser.MaxNoteChars);
+                    exportPaper.ContentTruncated = true;
+                    warnings.Add(
+                        $"笔记“{DisplayTitle(paper.Title)}”正文有 {original} 字符，超过 " +
+                        $"{ImportPlanParser.MaxNoteChars} 字符上限，备份中只保留前 " +
+                        $"{ImportPlanParser.MaxNoteChars} 字符；不能用它更新原笔记。");
+                }
             }
 
             return exportPaper;
@@ -328,9 +360,21 @@ internal sealed class ExportService
     private static string DisplayTitle(string? title) =>
         string.IsNullOrWhiteSpace(title) ? "（无标题）" : title;
 
-    private static ExportTodo MapTodo(TodoSnapshot todo) => new()
+    /// <summary>按字符数截断，且不切断代理对（emoji 等补充平面字符）。</summary>
+    private static string TruncateChars(string value, int maxChars)
     {
-        Text = todo.Text,
+        if (value.Length <= maxChars)
+        {
+            return value;
+        }
+
+        var cut = char.IsHighSurrogate(value[maxChars - 1]) ? maxChars - 1 : maxChars;
+        return value[..cut];
+    }
+
+    private static ExportTodo MapTodo(TodoSnapshot todo, string text) => new()
+    {
+        Text = text,
         Done = todo.Done,
         Order = todo.Order,
         ReminderAt = todo.ReminderAt,

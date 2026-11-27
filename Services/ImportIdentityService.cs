@@ -220,6 +220,16 @@ internal sealed class ImportIdentityService
             paper.UpdateTargetFingerprint = fingerprint;
             paper.UpdateTargetId = target.Id;
             paper.UpdateTargetTitle = target.Title;
+
+            // 文件中的这张纸片在导出时被截断：更新会误删本地待办或覆盖更长的正文，
+            // 必须阻止，只允许“新增”或使用完整导出文件。
+            paper.UpdateBlockedReason = sourceType == "todo"
+                ? (paper.Source.TodosTruncated
+                    ? "待办在导出时被截断（超过 200 条或单条过长），更新会误删或重复本地待办"
+                    : null)
+                : (paper.Source.ContentTruncated
+                    ? "笔记正文在导出时被截断，更新会覆盖更长的本地正文"
+                    : null);
             paper.TargetLocallyModified =
                 !link.LocalFingerprintUnknown &&
                 link.LocalFingerprint.Length > 0 &&

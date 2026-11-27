@@ -1573,8 +1573,14 @@ internal static class ImportPlanParser
 
             if (type == "note" && (source.Content?.Length ?? 0) > MaxNoteChars)
             {
-                plan.Warnings.Add($"跳过笔记“{source.Title}”：正文超过 {MaxNoteChars} 字符上限。");
-                continue;
+                // 整张跳过会让标题与全部正文一起丢失；截断并标记后至少能恢复前 10 万字符，
+                // 且标记会阻止用该文件更新原笔记，避免把本地正文截短。
+                var original = source.Content!.Length;
+                source.Content = TruncateChars(source.Content, MaxNoteChars);
+                source.ContentTruncated = true;
+                plan.Warnings.Add(
+                    $"笔记“{source.Title}”正文超过 {MaxNoteChars} 字符上限，" +
+                    $"已截断为前 {MaxNoteChars} 字符（原文 {original} 字符）；该文件不能用于更新原笔记。");
             }
 
             if (type == "todo")
@@ -1582,14 +1588,30 @@ internal static class ImportPlanParser
                 source.Todos ??= [];
                 if (source.Todos.Count > MaxTodosPerPaper)
                 {
-                    plan.Warnings.Add($"跳过待办纸片“{source.Title}”：待办数量 {source.Todos.Count} 超过 {MaxTodosPerPaper} 条上限。");
-                    continue;
+                    // 与导出端一致：截断而不是整张丢弃。标记后导入端不会用这份文件
+                    // 执行“更新并删除文件中不存在的待办”，防止误删本地被截掉的条目。
+                    var original = source.Todos.Count;
+                    source.Todos = source.Todos.Take(MaxTodosPerPaper).ToList();
+                    source.TodosTruncated = true;
+                    plan.Warnings.Add(
+                        $"待办纸片“{source.Title}”有 {original} 条待办，超过 {MaxTodosPerPaper} 条上限，" +
+                        $"已只导入前 {MaxTodosPerPaper} 条；该文件不能用于更新原纸片。");
                 }
 
-                if (source.Todos.Any(t => (t.Text?.Length ?? 0) > MaxTodoTextChars))
+                var overlongTodos = source.Todos
+                    .Where(t => (t.Text?.Length ?? 0) > MaxTodoTextChars)
+                    .ToList();
+                if (overlongTodos.Count > 0)
                 {
-                    plan.Warnings.Add($"跳过待办纸片“{source.Title}”：存在超过 {MaxTodoTextChars} 字符的待办。");
-                    continue;
+                    foreach (var todo in overlongTodos)
+                    {
+                        todo.Text = TruncateChars(todo.Text!, MaxTodoTextChars);
+                    }
+
+                    source.TodosTruncated = true;
+                    plan.Warnings.Add(
+                        $"待办纸片“{source.Title}”有 {overlongTodos.Count} 条待办超过 " +
+                        $"{MaxTodoTextChars} 字符上限，已截断；该文件不能用于更新原纸片。");
                 }
 
                 source.Todos.RemoveAll(t => string.IsNullOrWhiteSpace(t.Text));
