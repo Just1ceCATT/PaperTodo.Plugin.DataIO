@@ -1152,20 +1152,15 @@ internal static class ImportPlanParser
     public static ImportPlan Parse(string json)
     {
         // 在构建 DOM 之前排除数组/标量根节点：64 MiB 的 JSON 数组解析成 DOM 需要约 900 MiB 内存，
-        // 而这类内容必然不是可导入的数据文件。允许 "/" 开头，保留 JSON 注释语法。
-        var firstMeaningful = 0;
-        while (firstMeaningful < json.Length &&
-               (char.IsWhiteSpace(json[firstMeaningful]) || json[firstMeaningful] == '\uFEFF'))
-        {
-            firstMeaningful++;
-        }
-
+        // 而这类内容必然不是可导入的数据文件。必须先跳过注释再判断根节点，
+        // 否则 "/*...*/[ ... ]" 这类文件仍会先构建完整 DOM。
+        var firstMeaningful = SkipLeadingTrivia(json);
         if (firstMeaningful >= json.Length)
         {
             return new ImportPlan { FatalError = "文件内容为空。" };
         }
 
-        if (json[firstMeaningful] is not ('{' or '/'))
+        if (json[firstMeaningful] != '{')
         {
             return UnsupportedPlan();
         }
@@ -1443,6 +1438,52 @@ internal static class ImportPlanParser
                TryGetProperty(root, "colorScheme", out _) ||
                TryGetProperty(root, "markdownRenderMode", out _) ||
                TryGetProperty(root, "todoVisualSize", out _);
+    }
+
+    /// <summary>跳过前导空白与 JSON 注释，返回根节点起始位置。</summary>
+    private static int SkipLeadingTrivia(string json)
+    {
+        var index = 0;
+        while (index < json.Length)
+        {
+            var character = json[index];
+            if (char.IsWhiteSpace(character) || character == '\uFEFF')
+            {
+                index++;
+                continue;
+            }
+
+            if (character == '/' && index + 1 < json.Length)
+            {
+                if (json[index + 1] == '/')
+                {
+                    index += 2;
+                    while (index < json.Length && json[index] is not ('\r' or '\n'))
+                    {
+                        index++;
+                    }
+
+                    continue;
+                }
+
+                if (json[index + 1] == '*')
+                {
+                    var close = json.IndexOf("*/", index + 2, StringComparison.Ordinal);
+                    if (close < 0)
+                    {
+                        // 未闭合注释：交给 JSON 解析器报错。
+                        return index;
+                    }
+
+                    index = close + 2;
+                    continue;
+                }
+            }
+
+            return index;
+        }
+
+        return index;
     }
 
     /// <summary>属性名不区分大小写，兼容被其他工具改写为 PascalCase 的文件。</summary>

@@ -79,4 +79,32 @@ public sealed class ImportParserSafetyTests
         Assert.NotNull(plan.FatalError);
         Assert.Contains("不是可导入", plan.FatalError);
     }
+
+    [Fact]
+    public void Json_array_root_behind_comment_is_rejected_too()
+    {
+        var plan = ImportPlanParser.Parse("/* 注释 */ [0,0,0]");
+
+        Assert.NotNull(plan.FatalError);
+        Assert.Contains("不是可导入", plan.FatalError);
+    }
+
+    [Fact]
+    public void Carriage_return_only_file_cannot_bypass_line_limit()
+    {
+        var content = new string('\r', MarkdownImportParser.MaxMarkdownLines + 1);
+
+        Assert.Throws<ImportFileLimitException>(
+            () => MarkdownImportParser.Parse(content, "crlf.md"));
+    }
+
+    [Fact]
+    public void Invalid_utf16_with_bom_is_rejected()
+    {
+        // UTF-16 LE BOM 后面跟一个孤立的高代理项（不含低代理项）。
+        byte[] bytes = [0xFF, 0xFE, 0x00, 0xD8, 0x00, 0x00];
+
+        Assert.Throws<ImportFileEncodingException>(
+            () => JsonFiles.DecodeText(bytes, "broken.md"));
+    }
 }

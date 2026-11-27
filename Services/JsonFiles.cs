@@ -41,42 +41,56 @@ internal static class JsonFiles
     {
         if (bytes.StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }))
         {
-            return DecodeStrictUtf8(bytes[3..], name);
+            return DecodeStrict(StrictUtf8, bytes[3..], name);
         }
 
+        // UTF-16/UTF-32 同样必须是严格解码：宽松解码会把损坏字节替换成 U+FFFD，
+        // 结果仍是“可导入”的乱码正文，与严格校验的目标矛盾。
         if (bytes.StartsWith(new byte[] { 0xFF, 0xFE, 0x00, 0x00 }))
         {
-            return new UTF32Encoding(bigEndian: false, byteOrderMark: false).GetString(bytes[4..]);
+            return DecodeStrict(
+                new UTF32Encoding(bigEndian: false, byteOrderMark: false, throwOnInvalidCharacters: true),
+                bytes[4..],
+                name);
         }
 
         if (bytes.StartsWith(new byte[] { 0x00, 0x00, 0xFE, 0xFF }))
         {
-            return new UTF32Encoding(bigEndian: true, byteOrderMark: false).GetString(bytes[4..]);
+            return DecodeStrict(
+                new UTF32Encoding(bigEndian: true, byteOrderMark: false, throwOnInvalidCharacters: true),
+                bytes[4..],
+                name);
         }
 
         if (bytes.StartsWith(new byte[] { 0xFF, 0xFE }))
         {
-            return new UnicodeEncoding(bigEndian: false, byteOrderMark: false).GetString(bytes[2..]);
+            return DecodeStrict(
+                new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: true),
+                bytes[2..],
+                name);
         }
 
         if (bytes.StartsWith(new byte[] { 0xFE, 0xFF }))
         {
-            return new UnicodeEncoding(bigEndian: true, byteOrderMark: false).GetString(bytes[2..]);
+            return DecodeStrict(
+                new UnicodeEncoding(bigEndian: true, byteOrderMark: false, throwOnInvalidBytes: true),
+                bytes[2..],
+                name);
         }
 
-        return DecodeStrictUtf8(bytes, name);
+        return DecodeStrict(StrictUtf8, bytes, name);
     }
 
-    private static string DecodeStrictUtf8(ReadOnlySpan<byte> bytes, string name)
+    private static string DecodeStrict(Encoding encoding, ReadOnlySpan<byte> bytes, string name)
     {
         try
         {
-            return StrictUtf8.GetString(bytes);
+            return encoding.GetString(bytes);
         }
         catch (DecoderFallbackException)
         {
             throw new ImportFileEncodingException(
-                $"文件“{name}”不是 UTF-8 编码，无法读取；请用 UTF-8 编码重新保存后再导入。");
+                $"文件“{name}”的文本编码无效或不是 UTF-8，无法读取；请用 UTF-8 编码重新保存后再导入。");
         }
     }
 
