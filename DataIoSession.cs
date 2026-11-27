@@ -2926,13 +2926,6 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                 SaveWorkspaceState();
             }
 
-            if (_stateSaveFailed)
-            {
-                result.Warnings.Add(
-                    "导入映射未能保存到本地状态（磁盘空间不足或文件被占用）；" +
-                    "重启 PaperTodo 后可能需要重新导入以避免生成重复纸片。");
-            }
-
             if (!_disposed)
             {
                 RecordHistory(new DataIoHistoryEntry
@@ -2949,6 +2942,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
                     Cancelled = result.Cancelled,
                     StoppedEarly = result.StoppedEarly
                 });
+
+                // RecordHistory 内部还会保存一次状态；把失败提示放在它之后，
+                // 才能覆盖历史与映射的保存失败，否则提示几乎不可达。
+                if (_stateSaveFailed)
+                {
+                    result.Warnings.Add(
+                        "导入映射未能保存到本地状态（磁盘空间不足或文件被占用）；" +
+                        "重启 PaperTodo 后可能需要重新导入以避免生成重复纸片。");
+                }
 
                 ShowImportResult(result);
             }
