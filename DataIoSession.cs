@@ -1252,6 +1252,9 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// </summary>
     private void MarkPushPending(IReadOnlyDictionary<string, ImportIdentityLink>? links = null)
     {
+        // 日志即将写入比任何在途 Replace 更新的状态：作废等待中的回执，
+        // 否则迟到的回执会删掉尚未推送的新日志。
+        Interlocked.Exchange(ref _awaitingReplaceAck, 0);
         _linkPushPending = true;
         var state = RuntimeLinkProtocol.FromState(_state);
         if (links is not null)
