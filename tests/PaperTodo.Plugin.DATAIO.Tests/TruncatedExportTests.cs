@@ -71,6 +71,32 @@ public sealed class TruncatedExportTests
     }
 
     [Fact]
+    public void Link_to_paper_outside_file_is_flagged_for_preservation()
+    {
+        var paper = new ExportPaper
+        {
+            SourceId = "s1",
+            Type = "todo",
+            Title = "部分导出",
+            Todos =
+            [
+                new ExportTodo
+                {
+                    Text = "关联外部纸片",
+                    Order = 0,
+                    LinkedSourcePaperId = "not-exported"
+                }
+            ]
+        };
+
+        var plan = ImportPlanParser.Parse(Serialize(paper));
+
+        var imported = Assert.Single(plan.Papers);
+        Assert.True(imported.Source.Todos![0].LinkedTargetOutsideFile);
+        Assert.Equal(1, plan.UnresolvedLinks);
+    }
+
+    [Fact]
     public void Intact_paper_is_not_marked_truncated()
     {
         var paper = new ExportPaper

@@ -113,6 +113,13 @@ internal sealed class ExportTodo
     /// <summary>待办关联的文件/文件夹仅作参考，PaperTodo 无写入 API。</summary>
     public string? LinkedPath { get; set; }
     public bool? LinkedPathIsDirectory { get; set; }
+
+    /// <summary>
+    /// 关联目标没有包含在本次导出文件中（例如只导出了部分纸片，或目标由第三方插件绘制）。
+    /// 更新时不能据此清除本地关联：文件不是完整快照，目标“不在文件里”不代表它不存在。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool LinkedTargetOutsideFile { get; set; }
 }
 
 /// <summary>导出与导入共用的 JSON 选项。</summary>

@@ -156,6 +156,53 @@ public sealed class ImportIdentityServiceTests
             supportsReminders: false));
     }
 
+    [Fact]
+    public void Linked_todo_with_matching_local_mapping_is_not_a_meta_change()
+    {
+        var settings = new DataIoSettings();
+        var local = new[] { Todo("a", "A", 0, link: "local-target") };
+        var source = new[] { TodoSource("A", order: 0, linkedSourceId: "source-target") };
+        var sourceToLocal = new Dictionary<string, string> { ["source-target"] = "local-target" };
+        var localToSource = new Dictionary<string, string> { ["local-target"] = "source-target" };
+
+        // 本地是宿主生成的 GUID、文件里是来源机器 ID：通过映射比对后应视为一致。
+        Assert.False(ImportIdentityService.HasTodoMetaChanges(
+            local,
+            source,
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true,
+            sourceToLocal,
+            localToSource));
+    }
+
+    [Fact]
+    public void Link_to_paper_outside_export_is_not_a_meta_change()
+    {
+        var settings = new DataIoSettings();
+        var local = new[] { Todo("a", "A", 0, link: "some-local-paper") };
+        var source = new[]
+        {
+            new ExportTodo
+            {
+                Text = "A",
+                Order = 0,
+                LinkedSourcePaperId = "not-in-file",
+                LinkedTargetOutsideFile = true
+            }
+        };
+
+        // 更新时会保留本地关联，因此不应每次导入都出现“关联变化”。
+        Assert.False(ImportIdentityService.HasTodoMetaChanges(
+            local,
+            source,
+            settings,
+            supportsPaperLinks: true,
+            supportsReminders: true,
+            new Dictionary<string, string>(),
+            new Dictionary<string, string>()));
+    }
+
     private static TodoSnapshot Todo(
         string id,
         string text,

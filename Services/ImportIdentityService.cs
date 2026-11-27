@@ -91,6 +91,16 @@ internal sealed class ImportIdentityService
                     StringComparer.Ordinal);
         }
 
+        // 关联比较需要把文件里的来源 ID 映射到本机纸片 ID；直接比较两者永远不相等，
+        // 会让所有带关联的待办每次都显示“关联变化”。
+        var sourceToLocal = new Dictionary<string, string>(StringComparer.Ordinal);
+        var localToSource = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (linkSourceId, link) in _state.ImportLinks)
+        {
+            sourceToLocal[linkSourceId] = link.LocalPaperId;
+            localToSource.TryAdd(link.LocalPaperId, linkSourceId);
+        }
+
         foreach (var paper in plan.Papers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -149,7 +159,9 @@ internal sealed class ImportIdentityService
                     paper.Source.Todos,
                     settings,
                     plan.SupportsPaperLinks,
-                    plan.SupportsReminders);
+                    plan.SupportsReminders,
+                    sourceToLocal,
+                    localToSource);
             }
             else
             {
@@ -710,7 +722,9 @@ internal sealed class ImportIdentityService
         IReadOnlyList<ExportTodo>? sourceTodos,
         DataIoSettings settings,
         bool supportsPaperLinks,
-        bool supportsReminders)
+        bool supportsReminders,
+        IReadOnlyDictionary<string, string>? sourceToLocal = null,
+        IReadOnlyDictionary<string, string>? localToSource = null)
     {
         if (!settings.RestoreOrder && !settings.RestoreLinks && !settings.RestoreReminders)
         {
@@ -794,18 +808,46 @@ internal sealed class ImportIdentityService
         {
             foreach (var (item, match) in matched)
             {
+                if (item.LinkedTargetOutsideFile)
+                {
+                    // 目标不在文件中，更新会保留本地关联，不算差异。
+                    continue;
+                }
+
                 if (!string.IsNullOrWhiteSpace(item.LinkedSourcePaperId))
                 {
-                    if (!string.Equals(
-                            match.LinkedPaperId,
-                            item.LinkedSourcePaperId,
-                            StringComparison.Ordinal))
+                    if (sourceToLocal is not null &&
+                        sourceToLocal.TryGetValue(item.LinkedSourcePaperId, out var expectedLocalId))
                     {
-                        return true;
+                        if (!string.Equals(match.LinkedPaperId, expectedLocalId, StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+
+                        continue;
                     }
+
+                    // 目标尚未导入过、无法得知本机 ID：只有本地关联确实指向该来源纸片时才视为一致。
+                    if (localToSource is not null &&
+                        !string.IsNullOrWhiteSpace(match.LinkedPaperId) &&
+                        localToSource.TryGetValue(match.LinkedPaperId, out var actualSourceId) &&
+                        string.Equals(actualSourceId, item.LinkedSourcePaperId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    // 没有映射信息时退回旧逻辑：直接比较来源 ID 与本机 ID。
+                    if (sourceToLocal is null &&
+                        string.Equals(match.LinkedPaperId, item.LinkedSourcePaperId, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    return true;
                 }
-                else if (!string.IsNullOrWhiteSpace(match.LinkedPaperId) &&
-                         string.IsNullOrWhiteSpace(match.LinkedPath))
+
+                if (!string.IsNullOrWhiteSpace(match.LinkedPaperId) &&
+                    string.IsNullOrWhiteSpace(match.LinkedPath))
                 {
                     return true;
                 }

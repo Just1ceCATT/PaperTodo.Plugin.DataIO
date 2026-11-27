@@ -1622,6 +1622,9 @@ internal static class ImportPlanParser
                     if (!string.IsNullOrWhiteSpace(todo.LinkedSourcePaperId) &&
                         !sourceIds.Contains(todo.LinkedSourcePaperId))
                     {
+                        // 目标不在本次文件里：文件不是完整快照，更新时必须保留本地关联，
+                        // 否则“只导出部分纸片做同步”会悄悄清掉指向其它纸片的有效关联。
+                        todo.LinkedTargetOutsideFile = true;
                         plan.UnresolvedLinks++;
                     }
 

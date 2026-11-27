@@ -1535,6 +1535,19 @@ internal sealed class ImportService
                     continue;
                 }
 
+                if (original.LinkedTargetOutsideFile)
+                {
+                    // 目标没有被包含进本次导出文件（部分导出或第三方正文纸片）：
+                    // 文件不是完整快照，不能据此清除本地仍然有效的关联。
+                    if (!createdNow)
+                    {
+                        result.Warnings.Add(
+                            $"待办“{Shorten(original.Text)}”的关联目标不在导出文件中，本地关联保持不变。");
+                    }
+
+                    continue;
+                }
+
                 var hasTarget = idMap.TryGetValue(original.LinkedSourcePaperId, out var target);
                 var selfLink = hasTarget &&
                                string.Equals(target, newPaperId, StringComparison.Ordinal);
