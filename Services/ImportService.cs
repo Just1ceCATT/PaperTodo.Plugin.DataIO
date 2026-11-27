@@ -660,27 +660,45 @@ internal sealed class ImportService
             throw new PaperTodoPluginException("permission_denied", "缺少 todos.append 权限，无法追加待办。");
         }
 
-        // 第二阶段：权限确认后统一写入。
-        foreach (var (todoId, done) in doneChanges)
+        // 第二阶段：权限确认后统一写入。PaperTodo 没有事务：中途失败时已写入的改动不会回滚，
+        // 必须在结果里说明“部分完成”，否则统计会看起来像什么都没改。
+        var applied = 0;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
+            foreach (var (todoId, done) in doneChanges)
             {
-                PaperId = targetId,
-                TodoId = todoId,
-                Done = done
-            }));
-        }
+                cancellationToken.ThrowIfCancellationRequested();
+                await _gateway.OnUiAsync(() => _gateway.Context.Workspace.UpdateTodo(new UpdateTodoRequest
+                {
+                    PaperId = targetId,
+                    TodoId = todoId,
+                    Done = done
+                }));
+                applied++;
+            }
 
-        if (toAppend.Count > 0)
-        {
-            await _gateway.OnUiAsync(() => _gateway.Context.Workspace.AppendTodos(new AppendTodosRequest
+            if (toAppend.Count > 0)
             {
-                PaperId = targetId,
-                Todos = toAppend
-                    .Select(todo => new TodoCreateItem { Text = todo.Text, Done = todo.Done })
-                    .ToArray()
-            }));
+                await _gateway.OnUiAsync(() => _gateway.Context.Workspace.AppendTodos(new AppendTodosRequest
+                {
+                    PaperId = targetId,
+                    Todos = toAppend
+                        .Select(todo => new TodoCreateItem { Text = todo.Text, Done = todo.Done })
+                        .ToArray()
+                }));
+                applied += toAppend.Count;
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            if (applied > 0)
+            {
+                result.Warnings.Add(
+                    $"纸片“{DisplayTitle(importPaper)}”的待办更新在写入 {applied} 项后被中断，" +
+                    "已完成的部分不会回滚；请重新导入并确认剩余差异。");
+            }
+
+            throw;
         }
 
         if (removed.Count > 0)
@@ -694,12 +712,28 @@ internal sealed class ImportService
             }
             else if (_gateway.Can(PaperTodoPermissionNames.TodosDelete))
             {
-                foreach (var todo in removed)
+                var deleted = 0;
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await _gateway.OnUiAsync(() => _gateway.Context.Workspace.DeleteTodo(
-                        new DeleteTodoRequest { PaperId = targetId, TodoId = todo.Id }));
-                    result.DeletedTodos++;
+                    foreach (var todo in removed)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await _gateway.OnUiAsync(() => _gateway.Context.Workspace.DeleteTodo(
+                            new DeleteTodoRequest { PaperId = targetId, TodoId = todo.Id }));
+                        result.DeletedTodos++;
+                        deleted++;
+                    }
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    if (deleted > 0)
+                    {
+                        result.Warnings.Add(
+                            $"纸片“{DisplayTitle(importPaper)}”在删除 {deleted} 条文件外待办后被中断，" +
+                            "已删除的内容不会恢复；请重新导入并确认剩余差异。");
+                    }
+
+                    throw;
                 }
             }
             else
