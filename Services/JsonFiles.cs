@@ -18,18 +18,42 @@ internal static class JsonFiles
 
     public static string ReadAllText(string path)
     {
-        var info = new FileInfo(path);
-        if (!info.Exists)
+        if (!File.Exists(path))
         {
             throw new FileNotFoundException("导入文件不存在。", path);
         }
 
-        if (info.Length > MaxImportBytes)
+        return DecodeText(ReadAllBytesBounded(path), Path.GetFileName(path));
+    }
+
+    /// <summary>
+    /// 边读边累计并强制执行大小上限：先查 FileInfo.Length 再整体读取存在 TOCTOU，
+    /// 检查后文件被写大就会一次性读入超限内容。
+    /// </summary>
+    private static byte[] ReadAllBytesBounded(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (stream.Length > MaxImportBytes)
         {
             throw new InvalidDataException("导入文件超过 64 MiB 上限。");
         }
 
-        return DecodeText(File.ReadAllBytes(path), Path.GetFileName(path));
+        using var buffer = new MemoryStream((int)Math.Min(stream.Length, MaxImportBytes));
+        var chunk = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = stream.Read(chunk, 0, chunk.Length)) > 0)
+        {
+            total += read;
+            if (total > MaxImportBytes)
+            {
+                throw new InvalidDataException("导入文件超过 64 MiB 上限。");
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
     }
 
     /// <summary>
