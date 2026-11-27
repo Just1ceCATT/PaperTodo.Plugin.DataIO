@@ -132,8 +132,12 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>本会话是否已请求 PaperTodo 重建“胶囊→展开”外形，避免重复抖动。</summary>
     private bool _shellRestoreRequested;
 
-    /// <summary>本会话内自愈重建次数上限，防止 PaperTodo 持续失败时反复重建。</summary>
-    private int _autoReloadCount;
+    /// <summary>
+    /// 进程内自愈重建次数上限，防止 PaperTodo 持续失败时反复重建。
+    /// 必须是进程级：每次重建都会创建新会话，会话级计数会在每次重建后归零，
+    /// 无法阻止“空白→重建→仍空白→再重建”的循环。
+    /// </summary>
+    private static int _autoReloadCount;
     private const int MaxAutoReloads = 2;
 
     /// <summary>
@@ -631,7 +635,15 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         }
 
         _disposed = true;
-        _operation?.Cancel();
+        try
+        {
+            // 操作可能刚刚结束并释放了 CTS，而 _operation 要到外层 finally 才清空。
+            _operation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 已结束的操作无需取消。
+        }
         _debounce.Stop();
         _debounce.Tick -= OnDebounceTick;
         _subscription?.Dispose();
@@ -1539,7 +1551,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             warnings.Add(skipped);
         }
 
-        if (!selectable && paper.SkipReason is null)
+        if (!selectable && paper.SkipReason is null && paper.UpdateSkipReason is null)
         {
             warnings.Add("缺少 papers.create 权限，无法新建");
         }
