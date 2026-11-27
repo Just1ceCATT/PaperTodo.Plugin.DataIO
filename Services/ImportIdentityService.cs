@@ -134,6 +134,11 @@ internal sealed class ImportIdentityService
             {
                 if (!_gateway.Can(PaperTodoPermissionNames.TodosRead))
                 {
+                    // 按新建处理会产生重复纸片：本次跳过，等权限恢复后重新导入。
+                    paper.UpdateSkipReason = "缺少读取待办的权限，已跳过更新以免生成重复纸片";
+                    plan.Warnings.Add(
+                        $"纸片“{DisplayTitle(paper)}”的本地待办暂不可读，本次跳过；" +
+                        "恢复 todos.read 权限后重新导入即可更新原纸片。");
                     continue;
                 }
 
@@ -151,7 +156,8 @@ internal sealed class ImportIdentityService
                         TextDiff.TodoSnapshot(sourceTodos
                             .Where(todo => !string.IsNullOrWhiteSpace(todo.Text))
                             .OrderBy(todo => todo.Order)
-                            .Select(todo => (todo.Text, todo.Done)))),
+                            .Select(todo => (todo.Text, todo.Done))),
+                        cancellationToken),
                     cancellationToken);
                 paper.UpdateHasChanges = paper.UpdateDiff.Any(line => line.Kind is '-' or '+');
                 paper.UpdateHasMetaChanges = HasTodoMetaChanges(
@@ -188,7 +194,11 @@ internal sealed class ImportIdentityService
 
                 if (!_gateway.Can(PaperTodoPermissionNames.NotesRead))
                 {
-                    // 权限缺失只是暂时无法读取，保留映射，等权限恢复后继续更新。
+                    // 权限缺失只是暂时无法读取：保留映射并跳过，不能按新建处理产生副本。
+                    paper.UpdateSkipReason = "缺少读取笔记的权限，已跳过更新以免生成重复纸片";
+                    plan.Warnings.Add(
+                        $"纸片“{DisplayTitle(paper)}”的本地笔记暂不可读，本次跳过；" +
+                        "恢复 notes.read 权限后重新导入即可更新原纸片。");
                     continue;
                 }
 
@@ -196,6 +206,7 @@ internal sealed class ImportIdentityService
                     () => _gateway.Context.Workspace.GetNote(target.Id));
                 if (note is not { ContentAvailable: true })
                 {
+                    paper.UpdateSkipReason = "本地笔记正文暂不可读，已跳过更新以免生成重复纸片";
                     plan.Warnings.Add(
                         $"纸片“{DisplayTitle(paper)}”的本地笔记正文暂不可读，本次跳过更新。");
                     continue;
@@ -208,7 +219,7 @@ internal sealed class ImportIdentityService
                 (fingerprint, paper.UpdateDiff) = await Task.Run(
                     () => (
                         ComputeNoteFingerprint(localContent),
-                        TextDiff.Compute(localContent, sourceContent)),
+                        TextDiff.Compute(localContent, sourceContent, cancellationToken)),
                     cancellationToken);
 
                 // Markdown 包的正文用 images/ 链接，本地用 i:ID；图片内容一致时只是写法不同。
@@ -277,6 +288,26 @@ internal sealed class ImportIdentityService
                 // 纸片已随会话销毁、正在重载或权限暂时不可用时读不到指纹。
                 // 但导入已经写入纸片，映射必须照常登记：否则下次导入会把它当成新建副本。
                 // 指纹记为未知，更新预览会保守提示“无法确认本地是否修改”。
+                //
+                // 例外：导入过程中纸片已被删除时不能再登记映射并撤销墓碑，
+                // 否则会留下一段时间“映射指向已删除纸片”的不一致窗口。
+                if (_paperLookup is { } lookup)
+                {
+                    var confirmedDeleted = false;
+                    try
+                    {
+                        confirmedDeleted = lookup(localId) is null;
+                    }
+                    catch (PaperTodoPluginException)
+                    {
+                        // 暂时查不到纸片：按“未知”处理，照常登记映射。
+                    }
+
+                    if (confirmedDeleted)
+                    {
+                        continue;
+                    }
+                }
             }
 
             _state.ImportLinks.TryGetValue(sourceId, out var previous);

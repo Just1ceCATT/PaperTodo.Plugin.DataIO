@@ -1332,6 +1332,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
     /// <summary>缺少 papers.create 时，只有已命中更新目标的纸片仍可选择；无法导入的纸片永远不可选。</summary>
     private bool IsImportSelectable(ImportPaper paper) =>
         paper.SkipReason is null &&
+        paper.UpdateSkipReason is null &&
         (!string.IsNullOrWhiteSpace(paper.UpdateTargetId) ||
          _gateway.Can(PaperTodoPermissionNames.PapersCreate));
 
@@ -1531,6 +1532,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         if (paper.UpdateBlockedReason is { } blocked)
         {
             warnings.Add($"{blocked}；只能选择“新增”");
+        }
+
+        if (paper.UpdateSkipReason is { } skipped)
+        {
+            warnings.Add(skipped);
         }
 
         if (!selectable && paper.SkipReason is null)
@@ -2387,6 +2393,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             paper.TargetLocalStateUnknown = false;
             paper.TargetImagesAtRisk = false;
             paper.UpdateBlockedReason = null;
+            paper.UpdateSkipReason = null;
             paper.UpdateDiff = null;
             paper.UpdateHasChanges = false;
             paper.UpdateHasMetaChanges = false;

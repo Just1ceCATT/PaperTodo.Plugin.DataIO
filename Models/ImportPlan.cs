@@ -143,6 +143,12 @@ internal sealed class ImportPaper
     /// </summary>
     public string? UpdateBlockedReason { get; set; }
 
+    /// <summary>
+    /// 非空表示本次无法确认本地内容（权限暂时缺失、正文暂不可读），
+    /// 必须跳过而不是按新建处理，否则同一来源会生成重复纸片。
+    /// </summary>
+    public string? UpdateSkipReason { get; set; }
+
     /// <summary>本地现有内容与导入内容的差异，供更新预览展示。</summary>
     public IReadOnlyList<DiffLine>? UpdateDiff { get; set; }
 

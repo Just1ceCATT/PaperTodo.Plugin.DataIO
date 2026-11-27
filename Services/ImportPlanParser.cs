@@ -643,7 +643,7 @@ internal static class ImportPlanParser
         if (duplicateSourceId is not null)
         {
             return Fatal(
-                $"备份中多个工作区包含相同的纸片 ID（{duplicateSourceId.Key}），无法一次性合并导入；" +
+                $"备份中多个工作区包含相同的纸片 ID（{ShortenForMessage(duplicateSourceId.Key)}），无法一次性合并导入；" +
                 "请解压后逐个工作区导入。");
         }
 
@@ -704,6 +704,21 @@ internal static class ImportPlanParser
     }
 
     private static ImportPlan Fatal(string message) => new() { FatalError = message };
+
+    /// <summary>
+    /// 把外部文件里的任意字符串缩到适合展示的长度。
+    /// 类型名、来源 ID 没有长度上限，直接拼进警告会让 WPF 文本布局长时间卡顿。
+    /// </summary>
+    private static string ShortenForMessage(string? value)
+    {
+        const int maxChars = 80;
+        if (string.IsNullOrEmpty(value))
+        {
+            return "";
+        }
+
+        return value.Length <= maxChars ? value : value[..maxChars] + "…";
+    }
 
     /// <summary>按字符数截断，且不切断代理对（emoji 等补充平面字符）。</summary>
     private static string TruncateChars(string value, int maxChars)
@@ -1556,7 +1571,7 @@ internal static class ImportPlanParser
 
             if (type is not ("todo" or "note"))
             {
-                plan.Warnings.Add($"跳过未知类型“{source.Type}”的纸片“{source.Title}”。");
+                plan.Warnings.Add($"跳过未知类型“{ShortenForMessage(source.Type)}”的纸片“{source.Title}”。");
                 continue;
             }
 

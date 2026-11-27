@@ -248,4 +248,16 @@ public sealed class TextUtilitiesTests
         null,
         null,
         null);
+
+    [Fact]
+    public void Diff_honors_cancellation()
+    {
+        var before = string.Join("\n", Enumerable.Range(0, 2000).Select(i => "a" + i));
+        var after = string.Join("\n", Enumerable.Range(0, 2000).Select(i => "b" + i));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.Throws<OperationCanceledException>(
+            () => TextDiff.Compute(before, after, cts.Token));
+    }
 }

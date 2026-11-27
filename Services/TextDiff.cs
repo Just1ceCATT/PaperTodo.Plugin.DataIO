@@ -22,12 +22,16 @@ internal static class TextDiff
     /// <summary>LCS 动态规划允许的最大单元格数；超过后退化为整块替换。</summary>
     private const long MaxLcsCells = 2_000_000;
 
-    public static IReadOnlyList<DiffLine> Compute(string? before, string? after)
+    public static IReadOnlyList<DiffLine> Compute(
+        string? before,
+        string? after,
+        CancellationToken cancellationToken = default)
     {
         var oldLines = Split(before);
         var newLines = Split(after);
 
-        var operations = BuildOperations(oldLines, newLines);
+        var operations = BuildOperations(oldLines, newLines, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return BuildHunks(operations);
     }
 
@@ -42,7 +46,10 @@ internal static class TextDiff
     /// 生成完整的行级操作序列（相同、删除、新增）。先剥离公共前缀/后缀，
     /// 只对中间部分求 LCS；中间过大时退化为“先删后加”，避免占用过多内存。
     /// </summary>
-    private static List<DiffLine> BuildOperations(string[] oldLines, string[] newLines)
+    private static List<DiffLine> BuildOperations(
+        string[] oldLines,
+        string[] newLines,
+        CancellationToken cancellationToken)
     {
         var prefix = 0;
         while (prefix < oldLines.Length &&
@@ -69,7 +76,7 @@ internal static class TextDiff
 
         var oldMiddle = oldLines.AsSpan(prefix, oldLines.Length - prefix - suffix);
         var newMiddle = newLines.AsSpan(prefix, newLines.Length - prefix - suffix);
-        AppendMiddle(operations, oldMiddle, newMiddle, prefix);
+        AppendMiddle(operations, oldMiddle, newMiddle, prefix, cancellationToken);
 
         for (var i = 0; i < suffix; i++)
         {
@@ -87,7 +94,8 @@ internal static class TextDiff
         List<DiffLine> operations,
         ReadOnlySpan<string> oldMiddle,
         ReadOnlySpan<string> newMiddle,
-        int prefix)
+        int prefix,
+        CancellationToken cancellationToken)
     {
         if (oldMiddle.Length == 0)
         {
@@ -116,7 +124,7 @@ internal static class TextDiff
             return;
         }
 
-        var lcs = BuildLcsTable(oldMiddle, newMiddle);
+        var lcs = BuildLcsTable(oldMiddle, newMiddle, cancellationToken);
         var oldIndex = 0;
         var newIndex = 0;
         while (oldIndex < oldMiddle.Length && newIndex < newMiddle.Length)
@@ -178,13 +186,18 @@ internal static class TextDiff
     }
 
     /// <summary>lcs[i, j] 表示 old[i..] 与 new[j..] 的最长公共子序列长度。</summary>
-    private static int[,] BuildLcsTable(ReadOnlySpan<string> oldMiddle, ReadOnlySpan<string> newMiddle)
+    private static int[,] BuildLcsTable(
+        ReadOnlySpan<string> oldMiddle,
+        ReadOnlySpan<string> newMiddle,
+        CancellationToken cancellationToken)
     {
         var rows = oldMiddle.Length;
         var columns = newMiddle.Length;
         var lcs = new int[rows + 1, columns + 1];
         for (var i = rows - 1; i >= 0; i--)
         {
+            // 关闭纸片后取消需要尽快生效；2M 单元格的循环也要可中断。
+            cancellationToken.ThrowIfCancellationRequested();
             for (var j = columns - 1; j >= 0; j--)
             {
                 lcs[i, j] = string.Equals(oldMiddle[i], newMiddle[j], StringComparison.Ordinal)

@@ -60,6 +60,7 @@ public sealed class ImportServiceTests
             TargetLocalStateUnknown = true,
             TargetImagesAtRisk = true,
             UpdateBlockedReason = "截断",
+            UpdateSkipReason = "暂不可读",
             UpdateDiff = [new DiffLine('-', "旧", 1, 0)],
             UpdateHasChanges = true,
             UpdateHasMetaChanges = true
@@ -76,6 +77,7 @@ public sealed class ImportServiceTests
         Assert.False(paper.TargetLocalStateUnknown);
         Assert.False(paper.TargetImagesAtRisk);
         Assert.Null(paper.UpdateBlockedReason);
+        Assert.Null(paper.UpdateSkipReason);
         Assert.Null(paper.UpdateDiff);
         Assert.False(paper.UpdateHasChanges);
         Assert.False(paper.UpdateHasMetaChanges);
