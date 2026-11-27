@@ -218,6 +218,13 @@ internal sealed class ExportService
                 }
 
                 state.TotalBytes += image.Bytes.Length;
+
+                // 导出端与导入端共用同一套“能否写回”规则：只按 8 MiB 体积判断会把
+                // 需要压缩的 GIF/TIFF、超尺寸图片误报为可还原，备份看似完整却无法恢复。
+                var restorable = ImageCompressionService.CanPotentiallyWriteBack(
+                    image.Bytes,
+                    image.Mime,
+                    out var unrestorableReason);
                 state.Images.Add(new CapturedExportImage(
                     paper.SourceId,
                     image.ImageId,
@@ -227,7 +234,8 @@ internal sealed class ExportService
                         image.Mime),
                     image.Mime,
                     image.Bytes,
-                    image.Bytes.LongLength <= IPaperNoteAssetsApi.MaximumImageAppendBytes));
+                    restorable,
+                    unrestorableReason));
             }
             catch (OperationCanceledException)
             {
@@ -342,8 +350,15 @@ internal sealed record ExportImageCapture(
 
     public bool HasImages => Images.Count > 0;
 
-    /// <summary>超过插件追加上限、只能保留在压缩包里的图片数量。</summary>
+    /// <summary>无法按 PaperTodo 规则写回、只能保留在压缩包里的图片数量。</summary>
     public int OversizedImages => Images.Count(image => !image.Restorable);
+
+    /// <summary>无法写回的原因（去重），用于导出结果中的预检提示。</summary>
+    public IReadOnlyList<string> UnrestorableReasons => Images
+        .Where(image => !image.Restorable && image.UnrestorableReason.Length > 0)
+        .Select(image => image.UnrestorableReason)
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
 }
 
 /// <summary>一次导出的结果：正文文档、已读取的图片和图片统计。</summary>

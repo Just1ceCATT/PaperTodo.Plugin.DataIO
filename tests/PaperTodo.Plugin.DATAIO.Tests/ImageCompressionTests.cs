@@ -287,6 +287,62 @@ public sealed class ImageCompressionTests
         });
     }
 
+    [Fact]
+    public void Undecodable_payload_is_not_treated_as_restorable()
+    {
+        RunSta(() =>
+        {
+            // 只有 PNG 魔数、其余是无法解码的载荷：旧实现会按原字节“透传”并标记为可写回，
+            // 导致任意内容以图片身份进入 PaperTodo，或让超过 8 MiB 的坏图留下悬空引用。
+            var bytes = new byte[10 * 1024 * 1024];
+            bytes[0] = 0x89;
+            bytes[1] = 0x50;
+            bytes[2] = 0x4E;
+            bytes[3] = 0x47;
+            new Random(2024).NextBytes(bytes.AsSpan(4));
+
+            Assert.False(ImageCompressionService.TryPrepareForHost(
+                bytes,
+                "image/png",
+                out _,
+                out var reason));
+            Assert.Contains("解码", reason);
+        });
+    }
+
+    [Fact]
+    public void Export_restorability_matches_host_rules()
+    {
+        RunSta(() =>
+        {
+            // 小图可直接写回。
+            Assert.True(ImageCompressionService.CanPotentiallyWriteBack(
+                CreateNoisePng(64, 64, PixelFormats.Bgr24),
+                "image/png",
+                out _));
+
+            // 超过 2048 的 PNG 可压缩，仍标记为可写回。
+            Assert.True(ImageCompressionService.CanPotentiallyWriteBack(
+                CreateNoisePng(2600, 120, PixelFormats.Bgr24),
+                "image/png",
+                out _));
+
+            // 超过 2048 的 GIF 无法安全压缩，导出时必须提前提示不可写回。
+            Assert.False(ImageCompressionService.CanPotentiallyWriteBack(
+                CreateGif(2600, 100),
+                "image/gif",
+                out var reason));
+            Assert.Contains("GIF", reason);
+
+            // 尺寸超过 4096 无法写回。
+            Assert.False(ImageCompressionService.CanPotentiallyWriteBack(
+                CreateNoisePng(4200, 120, PixelFormats.Bgr24),
+                "image/png",
+                out var sizeReason));
+            Assert.Contains("4096", sizeReason);
+        });
+    }
+
     private static byte[] CreateGif(int width, int height)
     {
         var stride = width * 4;

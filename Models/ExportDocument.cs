@@ -52,8 +52,9 @@ internal sealed class ExportImage
     public string Sha256 { get; set; } = "";
 
     /// <summary>
-    /// false 表示图片超过插件直接追加的单图上限（8 MiB）。
-    /// 导入时会先按 PaperTodo 规则压缩再写回；GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。
+    /// false 表示图片无法按 PaperTodo 规则写回（GIF/TIFF 需要压缩、尺寸超过 4096 像素、
+    /// 原图超过 32 MiB 或无法解码），导入时只保留在压缩包中。
+    /// 需要压缩但格式可压缩的图片仍标记为 true，导入时会先压缩再写回。
     /// </summary>
     public bool Restorable { get; set; } = true;
 }

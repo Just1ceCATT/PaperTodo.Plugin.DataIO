@@ -51,10 +51,10 @@ internal static class ImageCompressionService
 
         if (!TryReadDimensions(source, out var width, out var height))
         {
-            // 无法读取尺寸时无法预测 PaperTodo 行为，按原字节透传，由 PaperTodo 在写入时决定；
-            // 不能因为读不出尺寸就在插件层提前拒绝图片。
-            result = new PreparedHostImage(source, NormalizeMime(mime), 0, 0, false);
-            return true;
+            // 连尺寸都读不出的字节不是有效图片：继续透传会让任意载荷以“图片”身份
+            // 进入 PaperTodo（或让超过 8 MiB 的坏图被误判为可写回，更新时留下悬空引用）。
+            failureReason = "无法解码图片";
+            return false;
         }
 
         if (width > MaxStoredDimension || height > MaxStoredDimension)
@@ -249,11 +249,59 @@ internal static class ImageCompressionService
             result = new CompressedImage(bytes, outputMime, resized.PixelWidth, resized.PixelHeight);
             return true;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             failureReason = "压缩失败";
             return false;
         }
+    }
+
+    /// <summary>
+    /// 仅按 PaperTodo 规则静态判断图片是否可能写回，不做实际压缩。
+    /// 导出预检必须与导入端使用同一套条件，否则会生成“看起来完整、恢复时却缺图”的备份。
+    /// 无法静态确认压缩结果的情况（例如超限但格式可压缩）按“可能写回”处理，
+    /// 最终以导入时的实际压缩结果为准。
+    /// </summary>
+    public static bool CanPotentiallyWriteBack(byte[] bytes, string? mime, out string reason)
+    {
+        reason = "";
+        if (!HasRecognizedImageSignature(bytes))
+        {
+            reason = "不是受支持的图片格式";
+            return false;
+        }
+
+        if (!TryReadDimensions(bytes, out var width, out var height))
+        {
+            reason = "无法解码图片";
+            return false;
+        }
+
+        if (width > MaxStoredDimension || height > MaxStoredDimension)
+        {
+            reason = $"图片尺寸超过 {MaxStoredDimension} 像素";
+            return false;
+        }
+
+        if (!RequiresHostCompression(bytes.Length, width, height))
+        {
+            return true;
+        }
+
+        if (bytes.Length > MaxSourceBytes)
+        {
+            reason = "原图超过 32 MiB，无法自动压缩";
+            return false;
+        }
+
+        var effectiveMime = DetectMime(bytes) ?? NormalizeMime(mime);
+        if (effectiveMime is "image/gif" or "image/tiff")
+        {
+            reason = "GIF/TIFF 压缩会丢失动画或额外帧";
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>只读取文件头中的像素尺寸，不解码像素。</summary>
@@ -278,7 +326,7 @@ internal static class ImageCompressionService
             height = frame.PixelHeight;
             return width > 0 && height > 0;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }
@@ -305,7 +353,7 @@ internal static class ImageCompressionService
             frame.Freeze();
             return frame.PixelWidth > 0 && frame.PixelHeight > 0;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             return false;
         }
@@ -323,7 +371,7 @@ internal static class ImageCompressionService
                 orientation = value;
             }
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             orientation = 1;
         }

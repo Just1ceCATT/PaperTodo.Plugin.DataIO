@@ -2072,7 +2072,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
         if (imageCapture.OversizedImages > 0)
         {
-            status += $"（{imageCapture.OversizedImages} 张图片超过 8 MiB，导入时会压缩后写回）";
+            status += $"（{imageCapture.OversizedImages} 张图片无法写回笔记，导入时只保留在压缩包中）";
         }
 
         if (imageCapture.ImageCaptureTruncated)
@@ -2117,7 +2117,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             stats.Add(("包含图片", $"{images.Count} 张"));
             if (imageCapture.OversizedImages > 0)
             {
-                stats.Add(("需压缩图片", $"{imageCapture.OversizedImages} 张"));
+                stats.Add(("无法写回图片", $"{imageCapture.OversizedImages} 张"));
             }
         }
         else if (imageSummary.HasAny)
@@ -2166,10 +2166,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
 
             if (imageCapture.OversizedImages > 0)
             {
+                var reasons = imageCapture.UnrestorableReasons;
+                var reasonText = reasons.Count > 0 ? $"（{string.Join("；", reasons)}）" : "";
                 details.Add(
-                    $"{imageCapture.OversizedImages} 张图片超过插件直接写入上限（8 MiB），" +
-                    "导入时会按 PaperTodo 规则压缩到 8 MiB 以内；" +
-                    "GIF/TIFF 等无法安全压缩的格式仍只保留在压缩包中。");
+                    $"{imageCapture.OversizedImages} 张图片无法按 PaperTodo 规则写回笔记{reasonText}，" +
+                    "导入时只保留在压缩包中，不会显示在笔记里。");
             }
 
             if (imageCapture.FailedImageReads > 0)

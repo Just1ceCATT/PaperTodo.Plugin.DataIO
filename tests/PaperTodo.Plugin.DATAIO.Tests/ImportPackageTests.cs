@@ -9,7 +9,9 @@ namespace PaperTodo.Plugin.DataIo.Tests;
 /// <summary>含图片压缩包的导入解析与引用映射。</summary>
 public sealed class ImportPackageTests
 {
-    private static readonly byte[] ImageBytes = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    // 1×1 透明 PNG；导入端会实际解码图片，只有文件头魔数的假数据会被判为无法写回。
+    private static readonly byte[] ImageBytes = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==");
 
     [Fact]
     public void Package_with_too_many_entries_is_rejected_before_opening_archive()

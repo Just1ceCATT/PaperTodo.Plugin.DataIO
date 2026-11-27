@@ -168,7 +168,8 @@ internal sealed record CapturedExportImage(
     string File,
     string Mime,
     byte[] Bytes,
-    bool Restorable)
+    bool Restorable,
+    string UnrestorableReason = "")
 {
     public string Sha256 { get; } =
         Convert.ToHexString(SHA256.HashData(Bytes)).ToLowerInvariant();
