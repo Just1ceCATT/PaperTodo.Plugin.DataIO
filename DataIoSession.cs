@@ -1304,10 +1304,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             .Any(todo => todo.Text.Contains(_searchQuery, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>缺少 papers.create 时，只有已命中更新目标的纸片仍可选择。</summary>
+    /// <summary>缺少 papers.create 时，只有已命中更新目标的纸片仍可选择；无法导入的纸片永远不可选。</summary>
     private bool IsImportSelectable(ImportPaper paper) =>
-        !string.IsNullOrWhiteSpace(paper.UpdateTargetId) ||
-        _gateway.Can(PaperTodoPermissionNames.PapersCreate);
+        paper.SkipReason is null &&
+        (!string.IsNullOrWhiteSpace(paper.UpdateTargetId) ||
+         _gateway.Can(PaperTodoPermissionNames.PapersCreate));
 
     /// <summary>
     /// 命中更新目标、但正文/待办、顺序、提醒与关联都与本地一致：更新是空操作，
@@ -1477,7 +1478,11 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
         var isNote = string.Equals(paper.Source.Type, "note", StringComparison.OrdinalIgnoreCase);
         var warnings = new List<string>();
 
-        if (isNote && paper.Source.ContentAvailable == false)
+        if (paper.SkipReason is { } skipReason)
+        {
+            warnings.Add(skipReason);
+        }
+        else if (isNote && paper.Source.ContentAvailable == false)
         {
             warnings.Add("文件未包含笔记正文");
         }
@@ -1501,7 +1506,7 @@ internal sealed class DataIoSession : IPaperBodySession, IPaperMiniViewProvider
             warnings.Add($"{blocked}；只能选择“新增”");
         }
 
-        if (!selectable)
+        if (!selectable && paper.SkipReason is null)
         {
             warnings.Add("缺少 papers.create 权限，无法新建");
         }

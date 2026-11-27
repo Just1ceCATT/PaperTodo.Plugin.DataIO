@@ -1527,6 +1527,7 @@ internal static class ImportPlanParser
         plan.FileSourceIds.UnionWith(sourceIds);
 
         var now = DateTimeOffset.Now;
+        var unavailableContentNotes = 0;
 
         foreach (var source in document.Papers)
         {
@@ -1672,11 +1673,28 @@ internal static class ImportPlanParser
                 }
             }
 
+            // 正文不可读取的笔记（第三方插件绘制或核心数据缺正文）不能导入：
+            // 旧逻辑会创建一张空笔记，用户备份恢复后误以为内容丢失。
+            string? skipReason = null;
+            if (type == "note" && source.ContentAvailable == false)
+            {
+                unavailableContentNotes++;
+                skipReason = "文件未包含笔记正文（可能由第三方插件提供），无法导入";
+            }
+
             plan.Papers.Add(new ImportPaper
             {
                 Source = source,
-                SafeTitle = safeTitle
+                SafeTitle = safeTitle,
+                SkipReason = skipReason
             });
+        }
+
+        if (unavailableContentNotes > 0)
+        {
+            plan.Warnings.Add(
+                $"{unavailableContentNotes} 张笔记由第三方插件绘制正文或缺少正文，无法导入，已跳过；" +
+                "这些纸片的内容不会出现在导入结果中。");
         }
 
         if (plan.Papers.Count == 0)

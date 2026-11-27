@@ -33,7 +33,7 @@ internal sealed class ImportService
 
         // 纯更新不需要 papers.create；只有确实要新建纸片时才要求该权限并做数量预检。
         var newPaperCount = plan.Papers.Count(
-            paper => string.IsNullOrWhiteSpace(paper.UpdateTargetId));
+            paper => paper.SkipReason is null && string.IsNullOrWhiteSpace(paper.UpdateTargetId));
         if (newPaperCount > 0)
         {
             if (!_gateway.Can(PaperTodoPermissionNames.PapersCreate))
@@ -75,6 +75,13 @@ internal sealed class ImportService
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var importPaper = plan.Papers[i];
+                if (importPaper.SkipReason is { } skipReason)
+                {
+                    // 解析阶段已判定无法导入（第三方正文、正文缺失等）：绝不能再创建空纸片。
+                    result.SkippedTitles.Add($"{DisplayTitle(importPaper)}（{skipReason}）");
+                    continue;
+                }
+
                 _progress?.Report($"正在导入 {i + 1}/{plan.Papers.Count}：{DisplayTitle(importPaper)}");
 
                 try

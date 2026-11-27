@@ -71,6 +71,26 @@ public sealed class TruncatedExportTests
     }
 
     [Fact]
+    public void Note_without_content_is_marked_unimportable()
+    {
+        // 第三方插件绘制的正文无法读取：不能创建一张空笔记冒充恢复成功。
+        var paper = new ExportPaper
+        {
+            SourceId = "s1",
+            Type = "note",
+            Title = "第三方笔记",
+            ContentAvailable = false,
+            Content = ""
+        };
+
+        var plan = ImportPlanParser.Parse(Serialize(paper));
+
+        var imported = Assert.Single(plan.Papers);
+        Assert.NotNull(imported.SkipReason);
+        Assert.Contains(plan.Warnings, warning => warning.Contains("无法导入"));
+    }
+
+    [Fact]
     public void Link_to_paper_outside_file_is_flagged_for_preservation()
     {
         var paper = new ExportPaper
